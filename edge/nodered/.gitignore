@@ -1,0 +1,28 @@
+# ===== EdgeLink 边缘 Node-RED 红线（凭据/运行时/二进制 勿入仓）=====
+# 本目录是边缘 Node-RED 运行目录（现役 D:\nodered）的干净快照。
+# 若日后从边缘机重新同步整个目录，以下规则自动挡掉不可入仓的文件。
+
+# —— 凭据（含解密密钥与密文，绝不能传）——
+**/flows_cred.json
+**/.config.runtime.json
+**/.config.users.json
+**/.config.nodes.json
+**/edge_config_cache.json
+
+# —— 运行时数据 / 日志 ——
+data/edgelink_pg_spool/
+logs/
+
+# —— 二进制 / 依赖 / 缓存 ——
+node.exe
+node_v*.exe
+node_modules/
+npm_cache/
+node-v*.zip
+
+# —— 冗余历史快照（Git 已有历史，无需 .bak；旧版曾含明文凭据）——
+*.backup
+*.bak-*
+*_backup_*.json
+flows_backup.json
+sf-pg-writer-*.json

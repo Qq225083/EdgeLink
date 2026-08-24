@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EdgeLink 本地监控</title>
+<style>
+:root {
+  --bg: #0f1923; --card: #1a2733; --border: #2a3a4a;
+  --text: #b6c2cf; --text-bright: #e2e8f0;
+  --green: #2ecc71; --red: #e74c3c; --yellow: #f39c12;
+  --blue: #3498db; --accent: #00b4d8;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI','Microsoft YaHei',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+.header { background:linear-gradient(135deg,#0a1628 0%,#1a2733 100%); border-bottom:2px solid var(--accent); padding:12px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+.header h1 { font-size:20px; color:var(--text-bright); }
+.header h1 span { color:var(--accent); }
+.status-bar { display:flex; gap:16px; align-items:center; flex-wrap:wrap; font-size:13px; }
+.status-badge { padding:3px 10px; border-radius:12px; font-weight:bold; font-size:12px; }
+.status-badge.online { background:rgba(46,204,113,0.2); color:var(--green); border:1px solid rgba(46,204,113,0.4); }
+.status-badge.offline { background:rgba(231,76,60,0.2); color:var(--red); border:1px solid rgba(231,76,60,0.4); }
+.status-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.status-dot.green { background:var(--green); box-shadow:0 0 8px var(--green); }
+.status-dot.red { background:var(--red); box-shadow:0 0 8px var(--red); }
+.btn { padding:4px 12px; border-radius:4px; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; font-size:12px; transition:all 0.2s; }
+.btn:hover { border-color:var(--accent); color:var(--text-bright); }
+.btn.accent { border-color:var(--accent); color:var(--accent); }
+.btn.green { border-color:var(--green); color:var(--green); }
+.btn.red { border-color:var(--red); color:var(--red); }
+.content { padding:20px 24px; max-width:1400px; margin:0 auto; }
+.summary-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:20px; }
+.summary-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px 18px; text-align:center; }
+.summary-card .value { font-size:28px; font-weight:bold; color:var(--text-bright); }
+.summary-card .value.green { color:var(--green); } .summary-card .value.red { color:var(--red); }
+.summary-card .label { font-size:12px; color:var(--text); margin-top:4px; }
+.section-title { font-size:16px; color:var(--text-bright); margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+.plc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:12px; margin-bottom:24px; }
+.plc-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px; cursor:pointer; transition:all 0.2s; border-left:4px solid transparent; }
+.plc-card:hover { border-color:var(--accent); }
+.plc-card.online { border-left-color:var(--green); }
+.plc-card.offline { border-left-color:var(--red); }
+.plc-card .plc-header { display:flex; justify-content:space-between; align-items:center; }
+.plc-card .plc-name { font-weight:bold; color:var(--text-bright); font-size:15px; }
+.plc-card .plc-meta { font-size:11px; color:var(--text); margin-top:4px; }
+.plc-card .plc-fails { font-size:12px; color:var(--red); margin-top:4px; }
+.plc-card .plc-fails.none { color:var(--green); }
+.plc-card .plc-actions { margin-top:6px; display:flex; gap:6px; }
+.plc-tags { margin-top:10px; padding-top:10px; border-top:1px solid var(--border); display:none; max-height:400px; overflow-y:auto; }
+.plc-card.expanded .plc-tags { display:block; }
+.tag-table { width:100%; border-collapse:collapse; font-size:12px; }
+.tag-table td { padding:2px 6px; border-bottom:1px solid rgba(255,255,255,0.04); white-space:nowrap; }
+.tag-table .tag-name { color:var(--text); max-width:120px; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.tag-table .tag-name:hover { color:var(--accent); text-decoration:underline; }
+.tag-table .tag-value { color:var(--text-bright); font-weight:bold; text-align:right; }
+.tag-table .tag-unit { color:var(--text); font-size:10px; }
+.tag-table .quality-bad { color:var(--red); } .tag-table .quality-warn { color:var(--yellow); }
+.chart-popup { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:var(--card); border:1px solid var(--accent); border-radius:8px; padding:16px; z-index:100; min-width:400px; display:none; }
+.chart-popup .chart-header { display:flex; justify-content:space-between; margin-bottom:10px; }
+.chart-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:99; display:none; }
+.empty-state { text-align:center; color:var(--text); padding:30px; font-size:14px; }
+.refresh-indicator { font-size:11px; color:var(--text); }
+.toast { position:fixed; top:20px; right:20px; padding:8px 16px; border-radius:6px; font-size:13px; z-index:200; animation:fadeOut 2s forwards; }
+.toast.ok { background:rgba(46,204,113,0.2); color:var(--green); border:1px solid rgba(46,204,113,0.4); }
+@keyframes fadeOut { 0%,70% { opacity:1; } 100% { opacity:0; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>EdgeLink <span>本地监控</span></h1>
+  <div class="status-bar">
+    <span id="node-name">Node: --</span>
+    <span id="status-badge" class="status-badge offline">采集未就绪</span>
+    <button class="btn green" onclick="refreshConfig()" title="立即从后端重新拉取配置">刷新配置</button>
+    <button class="btn accent" onclick="exportCSV()">导出CSV</button>
+    <span class="refresh-indicator" id="refresh-time">--</span>
+  </div>
+</div>
+<div class="content">
+  <div id="toast-container"></div>
+
+  <div class="summary-row">
+    <div class="summary-card"><div class="value" id="val-uptime">--</div><div class="label">运行时长</div></div>
+    <div class="summary-card"><div class="value" id="val-memory">--</div><div class="label">内存占用 (MB)</div></div>
+    <div class="summary-card"><div class="value" id="val-devices">--</div><div class="label">管理设备</div></div>
+    <div class="summary-card"><div class="value green" id="val-online">--</div><div class="label">在线设备</div></div>
+    <div class="summary-card"><div class="value red" id="val-offline">--</div><div class="label">离线设备</div></div>
+  </div>
+
+  <div class="section-title"><span>PLC 设备状态 <span style="font-weight:normal;font-size:12px;color:var(--text)">（点击展开，点标签名查看历史）</span></span></div>
+  <div id="plc-container" class="plc-grid"><div class="empty-state">加载中...</div></div>
+
+  <div class="section-title" style="margin-top:20px;"><span>PG 写入统计</span> <span style="font-weight:normal;font-size:12px;color:var(--text)" id="pg-detail"></span></div>
+  <div class="summary-row" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+    <div class="summary-card"><div class="value" id="val-pg-total" style="font-size:22px">--</div><div class="label">累计写入条数</div></div>
+    <div class="summary-card"><div class="value" id="val-pg-fail" style="font-size:22px">--</div><div class="label">累计失败条数</div></div>
+    <div class="summary-card"><div class="value" id="val-pg-queue" style="font-size:22px">--</div><div class="label">缓冲队列</div></div>
+    <div class="summary-card"><div class="value" id="val-pg-latency" style="font-size:22px">--</div><div class="label">上次写入延迟</div></div>
+    <div class="summary-card"><div class="value" id="val-pg-status" style="font-size:16px">--</div><div class="label">写入状态</div></div>
+  </div>
+</div>
+
+<div class="chart-overlay" id="chart-overlay" onclick="closeChart()"></div>
+<div class="chart-popup" id="chart-popup">
+  <div class="chart-header">
+    <strong id="chart-title" style="color:var(--text-bright)">历史趋势</strong>
+    <button class="btn" onclick="closeChart()">关闭</button>
+  </div>
+  <canvas id="chart-canvas" width="380" height="200" style="width:100%;border-radius:4px;background:#0a1628;"></canvas>
+</div>
+
+<script>
+var BASE = window.location.origin;
+var API_KEY = 'b89b5ecd206b1aceac02d059bf7a64528f224813b196fa50d76b780521ae51d7';  // 与后端 .env MONITOR_API_KEY 一致（bootstrap 会把它下发为 edge_apiKey）
+var REFRESH_MS = 5000;
+function apiHeaders() { return {'x-api-key': API_KEY, 'Content-Type': 'application/json'}; }
+
+function $(id) { return document.getElementById(id); }
+function formatUptime(s) {
+  if (s < 60) return s + '秒';
+  if (s < 3600) return Math.floor(s/60) + '分' + (s%60) + '秒';
+  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  return h + '小时' + m + '分';
+}
+function formatTime(iso) { if (!iso) return '--'; return iso.replace('T',' ').substring(5,19); }
+function escapeHtml(s) { if (!s) return ''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function toast(msg, cls) {
+  var t = document.createElement('div'); t.className = 'toast ' + (cls||'ok'); t.textContent = msg;
+  $('toast-container').appendChild(t);
+  setTimeout(function(){ t.remove(); }, 2500);
+}
+
+// ─── Data Fetching ───
+async function fetchStatus() {
+  try {
+    var r = await fetch(BASE + '/api/v10/monitor/status', {headers: apiHeaders()});
+    var d = await r.json();
+    renderStatus(d);
+  } catch(e) { console.error('status:', e); }
+}
+function formatNumber(n) { if (!n) return '0'; return Number(n).toLocaleString(); }
+
+// ─── Status Rendering ───
+function renderStatus(data) {
+  $('node-name').textContent = 'Node #' + data.nodeId + ' | IP:' + data.hostPcIp;
+  if (data.configReady) {
+    $('status-badge').className = 'status-badge online';
+    $('status-badge').innerHTML = '<span class="status-dot green"></span>运行中';
+  } else {
+    $('status-badge').className = 'status-badge offline';
+    $('status-badge').innerHTML = '<span class="status-dot red"></span>等待配置';
+  }
+  $('val-uptime').textContent = formatUptime(data.uptimeSeconds || 0);
+  $('val-memory').textContent = data.memoryUsageMb || 0;
+  $('val-devices').textContent = data.deviceCount;
+  $('val-online').textContent = data.onlineCount;
+  $('val-offline').textContent = data.deviceCount - data.onlineCount;
+  // PG stats
+  $('val-pg-total').textContent = formatNumber(data.pgSuccessCount || 0);
+  $('val-pg-fail').textContent = formatNumber(data.pgFailCount || 0);
+  $('val-pg-queue').textContent = (data.pgQueueSize || 0);
+  $('val-pg-latency').textContent = (data.pgLatencyMs || 0) + ' ms';
+  var pgStatusEl = $('val-pg-status');
+  if (data.pgLastError) {
+    pgStatusEl.textContent = '异常';
+    pgStatusEl.className = 'value red';
+  } else if (data.pgWriting) {
+    pgStatusEl.textContent = '写入中';
+    pgStatusEl.className = 'value';
+    pgStatusEl.style.color = 'var(--yellow)';
+  } else {
+    pgStatusEl.textContent = '正常';
+    pgStatusEl.className = 'value green';
+  }
+  var detail = '';
+  if (data.pgLastWriteTs) detail += '上次写入:' + formatTime(data.pgLastWriteTs) + ' ';
+  if (data.lastConfigRefresh) detail += '配置刷新:' + formatTime(data.lastConfigRefresh);
+  $('pg-detail').textContent = detail;
+  renderDevices(data.devices || []);
+  $('refresh-time').textContent = '刷新:' + formatTime(data.ts);
+}
+
+// ─── Device Rendering ───
+function renderDevices(devices) {
+  var c = $('plc-container');
+  if (!devices.length) { c.innerHTML = '<div class="empty-state">暂无设备</div>'; return; }
+  var h = '';
+  devices.forEach(function(d) {
+    var cls = d.online ? 'online' : 'offline';
+    h += '<div class="plc-card ' + cls + ' expanded" id="plc-' + d.id + '" onclick="toggleDevice(' + d.id + ')">';
+    h += '<div class="plc-header">';
+    h += '<span class="plc-name">' + escapeHtml(d.name) + '</span>';
+    h += '<span class="status-dot ' + (d.online ? 'green' : 'red') + '"></span>';
+    h += '</div>';
+    h += '<div class="plc-meta">' + escapeHtml(d.comType||'--') + ' | ' + (d.plcIp||'--') + ':' + (d.plcPort||'--') + ' | ' + d.tagCount + '点位</div>';
+    if (d.consecutiveFails > 0) {
+      h += '<div class="plc-fails">连续失败:' + d.consecutiveFails + '次</div>';
+    } else {
+      h += '<div class="plc-fails none">通信正常</div>';
+    }
+    // Action buttons
+    h += '<div class="plc-actions" onclick="event.stopPropagation()">';
+    if (!d.online) h += '<button class="btn green" onclick="ackAlarm(' + d.id + ')">确认告警</button> ';
+    h += '</div>';
+    h += '<div class="plc-tags" id="tags-' + d.id + '"><div class="empty-state">加载中...</div></div>';
+    h += '</div>';
+  });
+  c.innerHTML = h;
+  loadAllDeviceData();
+}
+
+// ─── Ack Alarm ───
+async function ackAlarm(deviceId) {
+  try {
+    await fetch(BASE + '/api/v10/monitor/alarms/clear', {
+      method: 'POST', headers: apiHeaders(),
+      body: JSON.stringify({deviceId: deviceId})
+    });
+    toast('告警已确认');
+    setTimeout(fetchStatus, 500);
+  } catch(e) { toast('确认失败',''); }
+}
+
+// ─── Refresh Config ───
+async function refreshConfig() {
+  try {
+    await fetch(BASE + '/api/v10/monitor/config/refresh', { method:'POST', headers: apiHeaders() });
+    toast('配置刷新已触发，约3秒后生效');
+    setTimeout(fetchStatus, 3000);
+  } catch(e) { toast('刷新失败',''); }
+}
+
+// ─── CSV Export ───
+function exportCSV() {
+  var rows = [['设备','标签','原始值','工程值','单位','质量','在线']];
+  var cards = document.querySelectorAll('.plc-card');
+  cards.forEach(function(card) {
+    var name = card.querySelector('.plc-name').textContent;
+    var online = card.classList.contains('online') ? '是' : '否';
+    var tagsDiv = card.querySelector('.plc-tags');
+    if (!tagsDiv) return;
+    var trs = tagsDiv.querySelectorAll('tr');
+    trs.forEach(function(tr) {
+      var cells = tr.querySelectorAll('td');
+      for (var s = 0; s < 2; s++) { // 2 columns
+        var base = s * 4;
+        if (cells[base] && cells[base].textContent.trim()) {
+          rows.push([name,
+            (cells[base].textContent||'').trim(),
+            (cells[base+1] ? cells[base+1].textContent : '').trim(),
+            (cells[base+1] ? cells[base+1].textContent : '').trim(),
+            (cells[base+2] ? cells[base+2].textContent : '').trim(),
+            (cells[base+1] && cells[base+1].className.indexOf('quality-bad')>=0 ? 'BAD' : cells[base+1] && cells[base+1].className.indexOf('quality-warn')>=0 ? 'WARN' : 'GOOD'),
+            online
+          ]);
+        }
+      }
+    });
+  });
+  var csv = '﻿' + rows.map(function(r){ return r.map(function(c){ return '"'+c+'"'; }).join(','); }).join('\n');
+  var blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'edgelink_' + new Date().toISOString().replace(/[:.]/g,'-').substring(0,19) + '.csv';
+  a.click(); toast('CSV 已导出');
+}
+
+// ─── Toggle & Load Device Data ───
+async function toggleDevice(id) {
+  var card = $('plc-' + id);
+  if (!card) return;
+  if (card.classList.contains('expanded')) { card.classList.remove('expanded'); return; }
+  card.classList.add('expanded');
+  await loadDeviceData(id);
+}
+async function loadAllDeviceData() {
+  var cards = document.querySelectorAll('.plc-card');
+  for (var i = 0; i < cards.length; i++) {
+    var did = parseInt(cards[i].id.replace('plc-',''));
+    if (did) await loadDeviceData(did);
+  }
+}
+async function loadDeviceData(deviceId) {
+  var d = $('tags-' + deviceId); if (!d) return;
+  try {
+    var r = await fetch(BASE + '/api/v10/monitor/device/' + deviceId, {headers: apiHeaders()});
+    var data = await r.json();
+    if (data.error) { d.innerHTML = '<div class="empty-state">' + data.error + '</div>'; return; }
+    var vals = data.latestValues || [];
+    if (!vals.length) { d.innerHTML = '<div class="empty-state">暂无采集数据</div>'; return; }
+    var half = Math.ceil(vals.length / 2);
+    var h = '<table class="tag-table">';
+    for (var row = 0; row < half; row++) {
+      h += '<tr>';
+      h += renderTagTd(vals[row], deviceId);
+      h += '<td style="width:16px"></td>';
+      h += renderTagTd(vals[row + half], deviceId);
+      h += '</tr>';
+    }
+    h += '</table>';
+    d.innerHTML = h;
+  } catch(e) { d.innerHTML = '<div class="empty-state">加载失败</div>'; }
+}
+
+function renderTagTd(v, deviceId) {
+  if (!v) return '<td></td><td></td><td></td>';
+  var qCls = v.quality > 0 ? (v.quality === 2 ? ' quality-bad' : ' quality-warn') : '';
+  var nm = escapeHtml(v.tag_name || v.tag_address || '--');
+  if (nm.length > 14) nm = nm.substring(0,13) + '..';
+  var val = v.eng_value !== undefined ? v.eng_value : v.raw_value;
+  var tagId = v.tag_id || '';
+  return '<td class="tag-name" onclick="event.stopPropagation();showChart(' + deviceId + ',' + tagId + ',\'' + nm.replace(/'/g,'') + '\')" title="点击查看历史曲线">' + nm + '</td>'
+    + '<td class="tag-value' + qCls + '">' + val + '</td>'
+    + '<td class="tag-unit">' + escapeHtml(v.unit||'') + '</td>';
+}
+
+// ─── History Chart ───
+var chartDeviceId, chartTagId;
+async function showChart(deviceId, tagId, name) {
+  chartDeviceId = deviceId; chartTagId = tagId;
+  $('chart-title').textContent = name + ' (历史趋势)';
+  $('chart-overlay').style.display = 'block';
+  $('chart-popup').style.display = 'block';
+  try {
+    var r = await fetch(BASE + '/api/v10/monitor/history/' + deviceId + '/' + tagId + '?limit=300', {headers: apiHeaders()});
+    var d = await r.json();
+    drawChart(d.points || [], name);
+  } catch(e) { drawChart([], name); }
+}
+function closeChart() {
+  $('chart-overlay').style.display = 'none';
+  $('chart-popup').style.display = 'none';
+}
+function drawChart(points, name) {
+  var c = $('chart-canvas'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (points.length < 2) {
+    ctx.fillStyle = '#888'; ctx.font = '13px sans-serif';
+    ctx.fillText('数据不足 (需2个点以上)', 120, 100);
+    return;
+  }
+  var W = c.width, H = c.height, pad = {t:15,r:10,b:25,l:50};
+  var vals = points.map(function(p){ return p.eng !== undefined ? p.eng : p.raw; });
+  var min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
+  var range = max - min || 1;
+  min -= range * 0.1; max += range * 0.1; range = max - min;
+
+  // Grid
+  ctx.strokeStyle = '#1a3040'; ctx.lineWidth = 1;
+  for (var i = 0; i <= 4; i++) {
+    var y = pad.t + (H - pad.t - pad.b) * i / 4;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillStyle = '#666'; ctx.font = '10px sans-serif';
+    ctx.fillText((max - range * i / 4).toFixed(1), 2, y + 3);
+  }
+  // Line
+  var xStep = (W - pad.l - pad.r) / (points.length - 1);
+  ctx.strokeStyle = '#00b4d8'; ctx.lineWidth = 2; ctx.beginPath();
+  points.forEach(function(p, i) {
+    var x = pad.l + i * xStep;
+    var y = pad.t + (H - pad.t - pad.b) * (1 - ((p.eng !== undefined ? p.eng : p.raw) - min) / range);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  // Time labels
+  ctx.fillStyle = '#888'; ctx.font = '9px sans-serif';
+  var ts0 = points[0].ts||'', tsN = points[points.length-1].ts||'';
+  ctx.fillText(ts0.substring(11,19), pad.l, H - 5);
+  ctx.fillText(tsN.substring(11,19), W - pad.r - 40, H - 5);
+}
+
+// ─── Poll ───
+setInterval(fetchStatus, REFRESH_MS);
+fetchStatus();
+</script>
+</body>
+</html>

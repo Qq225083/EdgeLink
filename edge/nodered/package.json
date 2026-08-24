@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "node-red": "^4.1.11",
+    "node-red-contrib-edgelink-modbus": "file:node-red-contrib-edgelink-modbus",
+    "node-red-contrib-edgelink-pg": "file:node-red-contrib-edgelink-pg",
+    "node-red-contrib-mitsubishi": "file:../nodered - 副本/node-red-contrib-mitsubishi",
+    "node-red-contrib-postgresql": "^0.15.4",
+    "node-red-node-mysql": "^3.0.0",
+    "pg": "^8.22.0"
+  }
+}
