@@ -1,0 +1,90 @@
+[
+    {
+        "id": "9fe2755f346006c9",
+        "type": "tab",
+        "label": "流程 2",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "1e9f55da14d60bb6",
+        "type": "inject",
+        "z": "9fe2755f346006c9",
+        "name": "单行写入",
+        "props": [
+            {
+                "p": "payload",
+                "v": "{\"sensor\": \"temp\", \"value\": 25.5}",
+                "vt": "json"
+            },
+            {
+                "p": "topic",
+                "v": "sensor_data",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 450,
+        "y": 240,
+        "wires": [
+            [
+                "6c6b2260b665b44b"
+            ]
+        ]
+    },
+    {
+        "id": "6c6b2260b665b44b",
+        "type": "edgelink-pg-store",
+        "z": "9fe2755f346006c9",
+        "name": "",
+        "pgConfig": "de9898268e1d3604",
+        "tableName": "plc_data",
+        "batchSize": 100,
+        "bufferMax": 5000,
+        "flushInterval": 5000,
+        "retryBufferMax": 1000,
+        "retryInterval": 5000,
+        "autoCreateTable": false,
+        "useTimescaleDB": false,
+        "x": 760,
+        "y": 220,
+        "wires": [
+            [
+                "ed85e90c881c7155"
+            ]
+        ]
+    },
+    {
+        "id": "ed85e90c881c7155",
+        "type": "debug",
+        "z": "9fe2755f346006c9",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1080,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "de9898268e1d3604",
+        "type": "edgelink-pg-config",
+        "name": "PG-本地12",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "database": "postgres",
+        "user": "postgres",
+        "password": "",
+        "maxConnections": 10,
+        "idleTimeout": 30000
+    }
+]

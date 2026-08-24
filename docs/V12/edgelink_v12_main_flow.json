@@ -1,0 +1,1131 @@
+[
+ {
+  "id": "2609f416db83bdd1",
+  "type": "tab",
+  "label": "EdgeLink v12 采集",
+  "disabled": false,
+  "info": "EdgeLink v12.1 — 全npm节点架构\n\nv12.1 fixes: OOM(消息风暴) + 4E帧(序列号) + URL编码 + deviceId + pool泄漏 + buffer限流\nConfig: inject → sf-config-manager → MQTT\nCollect: scheduler → router → mitsubishi-read / modbus-read → data-processor → MQTT + edgelink-pg-store\nMonitor: sf-monitor + sf-local-api"
+ },
+ {
+  "id": "d13fa5c3f8b66387",
+  "type": "subflow",
+  "name": "sf-local-api",
+  "info": "本地监控 HTTP API v10 (独立子Flow, 与 sf-monitor 解耦)\n\n6 个端点, /api/monitor/ 前缀:\n- GET  /api/monitor/status — 节点状态+设备摘要\n- GET  /api/monitor/device/:id — 设备详情+最新点位\n- GET  /api/monitor/alerts — 最近告警\n- GET  /api/monitor/history/:deviceId/:tagId — 点位历史\n- POST /api/monitor/alarms/clear — 清除告警\n- POST /api/monitor/config/refresh — 手动刷新配置 → Output 触发sf-config-manager\n\n⚠ 重要: http-in节点全局注册, 本子Flow只能拖1个实例, 否则路由冲突\n\nv10 P1修正: 从sf-monitor拆出, 避免心跳逻辑与HTTP路由耦合",
+  "category": "edgelink-v10",
+  "in": [],
+  "out": [
+   {
+    "wires": [
+     {
+      "id": "0badfa160082bdb5",
+      "port": 1
+     }
+    ]
+   }
+  ],
+  "env": [],
+  "meta": {},
+  "color": "#80B1D3"
+ },
+ {
+  "id": "460782f9f254b482",
+  "type": "subflow",
+  "name": "sf-data-processor",
+  "info": "数据管道 v10: 换算/死区/质量码/历史缓存/双输出路由\n\n输入: msg.payload = { deviceId, deviceName, success, data: {tagId: {rawValue, quality, ts}}, error, driverType, plcIp, plcPort }\n输出1 (MQTT): { topic, payload, qos } → edgelink-v10/data/{nodeId}/{deviceId}\n输出2 (PG): { payload: { pgRecords: [...] } } → sf-pg-writer\n\nv10 P0修正:\n- triggerKind=2 变化检测由主Flow调度器负责，本节点不做过滤\n- device-comm 仅状态变化时推入 edge_commPending（在线↔离线）\n- deadband 过滤减少无效MQTT\n- lastGoodTags 合并更新（保留未读到tag的历史值）",
+  "category": "edgelink-v10",
+  "in": [
+   {
+    "wires": [
+     {
+      "id": "67942f3272f4ef55"
+     }
+    ]
+   }
+  ],
+  "out": [
+   {
+    "wires": [
+     {
+      "id": "67942f3272f4ef55",
+      "port": 0
+     }
+    ]
+   },
+   {
+    "wires": [
+     {
+      "id": "67942f3272f4ef55",
+      "port": 1
+     }
+    ]
+   }
+  ],
+  "env": [],
+  "meta": {},
+  "color": "#FDD0A2"
+ },
+ {
+  "id": "ef13b883a5871c8a",
+  "type": "subflow",
+  "name": "sf-config-manager",
+  "info": "配置管理中心 v10: IP检测 + JWT登录 + nodeId注册 + 设备发现 + 5min刷新 + MQTT上线\n\n输入触发:\n- inject(部署后2s): 首次启动\n- inject(每300s): 周期刷新\n- msg.payload = {action:'reauth'}: JWT过期强制重登\n\n输出1: msg.config = { jwt, nodeId, hostPcIp, devices: [...] }\n输出2: MQTT节点上线消息\n\n内部流程:\nfn-cm-init (IP检测+锁+登录准备) → http-cm-login (POST /login)\n  → fn-cm-discover (JWT解析 + heartbeat反查nodeId + 拉取全局点位 → 分组 → 过滤 → 输出)\n\nv10.1 修复:\n- P1#10: JWT解析失败时使用 http.request 直接重试登录（替代无效的 node.send([null,null])）\n- P1#11: 配置完成后释放 edge_config_manager_lock",
+  "category": "edgelink-v10",
+  "in": [
+   {
+    "wires": [
+     {
+      "id": "2c152e40b4141864"
+     }
+    ]
+   }
+  ],
+  "out": [
+   {
+    "wires": [
+     {
+      "id": "65c1544c88d3546d",
+      "port": 0
+     }
+    ]
+   },
+   {
+    "wires": [
+     {
+      "id": "65c1544c88d3546d",
+      "port": 1
+     }
+    ]
+   }
+  ],
+  "env": [
+   {
+    "name": "BACKEND_HOST",
+    "type": "str",
+    "value": "127.0.0.1"
+   },
+   {
+    "name": "BACKEND_PORT",
+    "type": "num",
+    "value": "9099"
+   }
+  ],
+  "meta": {},
+  "color": "#C6DBEF"
+ },
+ {
+  "id": "7b5603f8b42934ab",
+  "type": "edgelink-pg-config",
+  "name": "EdgeLink PG",
+  "host": "127.0.0.1",
+  "port": 5432,
+  "database": "postgres",
+  "user": "postgres",
+  "password": "",
+  "maxConnections": 10,
+  "idleTimeout": 30000
+ },
+ {
+  "id": "1591130e8f1cac2c",
+  "type": "modbus-config",
+  "name": "Modbus-1",
+  "host": "127.0.0.1",
+  "port": "5502",
+  "unitId": 1,
+  "timeout": 3000,
+  "maxRetries": 2,
+  "retryInterval": 300
+ },
+ {
+  "id": "99ddb5a6be2d488c",
+  "type": "mitsubishi-config",
+  "name": "MC-PLC",
+  "host": "192.168.1.3",
+  "port": 5007,
+  "frame": "3E",
+  "networkNo": 0,
+  "stationNo": 0,
+  "timeout": 3000,
+  "maxRetries": 2,
+  "retryInterval": 300
+ },
+ {
+  "id": "e4ab22d0d6b3309c",
+  "type": "mqtt-broker",
+  "name": "EMQX v12",
+  "broker": "127.0.0.1",
+  "port": "1883",
+  "clientid": "edgelink-v12.1",
+  "username": "$(EDGE_MQTT_USERNAME)",
+  "password": "$(EDGE_MQTT_PASSWORD)",
+  "autoConnect": true,
+  "usetls": false,
+  "protocolVersion": "4",
+  "keepalive": "30",
+  "cleansession": true,
+  "autoUnsubscribe": true,
+  "birthQos": "0",
+  "willTopic": "edgelink/notify/broadcast",
+  "willQos": "0",
+  "willRetain": "false",
+  "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"msg\":\"[LWT] Node-RED采集节点断开 — 具体节点将由后端检测确认\"}"
+ },
+ {
+  "id": "6f0b651f15a342ef",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "GET 节点状态",
+  "url": "/api/v10/monitor/status",
+  "method": "get",
+  "x": 100,
+  "y": 100,
+  "wires": [
+   [
+    "63d510acca1062e2"
+   ]
+  ]
+ },
+ {
+  "id": "63d510acca1062e2",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "节点状态汇总",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar nodeId = global.get('edge_nodeId') || 0;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar devices = global.get('edge_devices') || [];\nvar commStatus = global.get('edge_commStatus') || {};\nvar configReady = global.get('edge_configReady') || false;\nvar startTime = global.get('edge_startTime');\nif (!startTime) { startTime = new Date().toISOString(); global.set('edge_startTime', startTime); }\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? parseFloat((pr.memoryUsage().rss / 1024 / 1024).toFixed(1)) : 0; } catch (e) { mem = 0; }\n\nvar deviceList = devices.map(function (d) {\n    var s = commStatus[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        online: (s.consecutiveFails || 0) === 0,\n        consecutiveFails: s.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\nvar uptime = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);\nvar pgSuccessCount = global.get('edge_pg_success_count') || 0;\nvar pgFailCount = global.get('edge_pg_fail_count') || 0;\nvar pgLatency = global.get('edge_pg_last_latency_ms') || 0;\nvar pgLastError = global.get('edge_pg_last_error') || '';\nvar pgLastWrite = global.get('edge_pg_last_write_ts') || '';\nvar pgWriting = global.get('edge_pg_writing') || false;\nvar lastConfigRefresh = global.get('edge_last_config_ts') || '';\nmsg.payload = {\n    nodeId: nodeId, hostPcIp: hostPcIp,\n    configReady: configReady, uptimeSeconds: uptime, memoryUsageMb: mem,\n    deviceCount: devices.length,\n    onlineCount: deviceList.filter(function (d) { return d.online; }).length,\n    devices: deviceList,\n    pgQueueSize: (global.get('edge_pg_queue') || []).length,\n    pgSuccessCount: pgSuccessCount,\n    pgFailCount: pgFailCount,\n    pgLatencyMs: pgLatency,\n    pgLastError: pgLastError,\n    pgLastWriteTs: pgLastWrite,\n    pgWriting: pgWriting,\n    lastConfigRefresh: lastConfigRefresh,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 100,
+  "wires": [
+   [
+    "5800ea55d07a45a8"
+   ]
+  ]
+ },
+ {
+  "id": "5800ea55d07a45a8",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应状态",
+  "x": 540,
+  "y": 100,
+  "wires": []
+ },
+ {
+  "id": "c8fd80af223020bd",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "GET 设备详情",
+  "url": "/api/v10/monitor/device/:id",
+  "method": "get",
+  "x": 100,
+  "y": 180,
+  "wires": [
+   [
+    "6df10f01c6451b8a"
+   ]
+  ]
+ },
+ {
+  "id": "6df10f01c6451b8a",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "设备详情",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar deviceId = parseInt(msg.req.params.id);\nvar devices = global.get('edge_devices') || [];\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar commStatus = global.get('edge_commStatus') || {};\n\nvar device = null;\nfor (var i = 0; i < devices.length; i++) {\n    if (devices[i].id === deviceId) { device = devices[i]; break; }\n}\nif (!device) {\n    msg.payload = { error: 'Device not found' };\n    msg.statusCode = 404;\n    return msg;\n}\nvar status = commStatus[deviceId] || {};\nvar tags = lastGoodTags[deviceId] || [];\nmsg.payload = {\n    id: device.id, name: device.deviceName,\n    comType: device.comType, plcIp: device.plcIp, plcPort: device.plcPort,\n    online: (status.consecutiveFails || 0) === 0,\n    consecutiveFails: status.consecutiveFails || 0,\n    tagCount: (device.tags || []).length,\n    latestValues: tags,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 180,
+  "wires": [
+   [
+    "3b51a66fc0c06cf0"
+   ]
+  ]
+ },
+ {
+  "id": "3b51a66fc0c06cf0",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应设备",
+  "x": 540,
+  "y": 180,
+  "wires": []
+ },
+ {
+  "id": "6f2c4c0c9301f794",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "GET 告警列表",
+  "url": "/api/v10/monitor/alerts",
+  "method": "get",
+  "x": 100,
+  "y": 260,
+  "wires": [
+   [
+    "d0a15f9252491144"
+   ]
+  ]
+ },
+ {
+  "id": "d0a15f9252491144",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "告警列表",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar alerts = global.get('edge_recentAlerts') || [];\nmsg.payload = {\n    alerts: alerts.slice(-10).reverse(),\n    ts: new Date().toISOString()\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 260,
+  "wires": [
+   [
+    "b49e7680feeebe74"
+   ]
+  ]
+ },
+ {
+  "id": "b49e7680feeebe74",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应告警",
+  "x": 540,
+  "y": 260,
+  "wires": []
+ },
+ {
+  "id": "32bbfa8fe3b4509d",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "GET 点位历史",
+  "url": "/api/v10/monitor/history/:deviceId/:tagId",
+  "method": "get",
+  "x": 100,
+  "y": 340,
+  "wires": [
+   [
+    "76c3899acb88337a"
+   ]
+  ]
+ },
+ {
+  "id": "76c3899acb88337a",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "点位历史",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar deviceId = parseInt(msg.req.params.deviceId);\nvar tagId = parseInt(msg.req.params.tagId);\nvar limit = parseInt(msg.req.query.limit) || 300;\nvar history = global.get('edge_historyData') || {};\nvar devHistory = history[deviceId] || {};\nvar tagHistory = devHistory[tagId] || [];\nmsg.payload = {\n    deviceId: deviceId, tagId: tagId,\n    points: tagHistory.slice(-limit)\n};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 340,
+  "wires": [
+   [
+    "4594c14b4c35b3cd"
+   ]
+  ]
+ },
+ {
+  "id": "4594c14b4c35b3cd",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应历史",
+  "x": 540,
+  "y": 340,
+  "wires": []
+ },
+ {
+  "id": "f8d0a879a1592209",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "POST 清除告警",
+  "url": "/api/v10/monitor/alarms/clear",
+  "method": "post",
+  "x": 100,
+  "y": 420,
+  "wires": [
+   [
+    "6d2d60a1c8f9112f"
+   ]
+  ]
+ },
+ {
+  "id": "6d2d60a1c8f9112f",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "清除告警",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar body = {};\ntry { body = msg.payload ? JSON.parse(typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload)) : {}; } catch (e) {}\nvar deviceId = body.deviceId || parseInt((msg.req.query || {}).deviceId) || 0;\n\nif (deviceId <= 0) {\n    msg.payload = { ok: false, error: 'deviceId is required (must be > 0)' };\n    msg.statusCode = 400;\n    return msg;\n}\nvar la = global.get('edge_lastAlarmTime') || {};\ndelete la['dev_' + deviceId];\nglobal.set('edge_lastAlarmTime', la);\nvar ra = global.get('edge_recentAlerts') || [];\nglobal.set('edge_recentAlerts', ra.filter(function (a) { return a.deviceId !== deviceId; }));\n\nmsg.payload = { ok: true, deviceId: deviceId };\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 420,
+  "wires": [
+   [
+    "465bf613bbeb0789"
+   ]
+  ]
+ },
+ {
+  "id": "465bf613bbeb0789",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应清除",
+  "x": 540,
+  "y": 420,
+  "wires": []
+ },
+ {
+  "id": "c234b8db2f893787",
+  "type": "http in",
+  "z": "d13fa5c3f8b66387",
+  "name": "POST 刷新配置",
+  "url": "/api/v10/monitor/config/refresh",
+  "method": "post",
+  "x": 100,
+  "y": 500,
+  "wires": [
+   [
+    "0badfa160082bdb5"
+   ]
+  ]
+ },
+ {
+  "id": "0badfa160082bdb5",
+  "type": "function",
+  "z": "d13fa5c3f8b66387",
+  "name": "触发配置刷新",
+  "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\");\nif (!apiKey) { msg.payload = { error: 'edge_apiKey not configured' }; msg.statusCode = 500; return msg; }\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\n// Clear JWT → trigger full re-login in sf-config-manager\nglobal.set('edge_jwt', '');\nglobal.set('edge_configReady', false);\nmsg.payload = { ok: true, msg: 'Config refresh triggered' };\n// Output 0: HTTP response, Output 1: reauth signal to sf-config-manager\nreturn [msg, { payload: { action: 'reauth' } }];",
+  "outputs": 2,
+  "noerr": 0,
+  "libs": [],
+  "x": 320,
+  "y": 500,
+  "wires": [
+   [
+    "800e435fd0154b80"
+   ],
+   []
+  ]
+ },
+ {
+  "id": "800e435fd0154b80",
+  "type": "http response",
+  "z": "d13fa5c3f8b66387",
+  "name": "响应刷新",
+  "x": 540,
+  "y": 500,
+  "wires": []
+ },
+ {
+  "id": "67942f3272f4ef55",
+  "type": "function",
+  "z": "460782f9f254b482",
+  "name": "数据管道处理",
+  "func": "// === sf-data-processor v10: 换算 + 死区 + 质量码 + 历史 + 双输出 ===\nvar result = msg.payload;\nif (!result) { node.send([null, null]); return; }\n\nvar DEBUG = global.get('edge_debug') || false;\n\n// === Per-device processing guard (prevents read-modify-write race) ===\nvar procGuard = global.get('edge_proc_guard') || {};\nvar guardEntry = procGuard[result.deviceId];\n// If locked but expired (>30s), force release (uncaught exception recovery)\nif (guardEntry && (Date.now() - guardEntry.ts > 30000)) {\n    delete procGuard[result.deviceId];\n    guardEntry = undefined;\n}\nif (guardEntry) {\n    // 🔧 Drop duplicate — scheduler will re-collect this device next cycle\n    if (DEBUG) node.warn('[DP] ProcGuard locked for device ' + result.deviceId + ', dropping duplicate');\n    return;\n}\nprocGuard[result.deviceId] = { ts: Date.now() };\n\ntry {\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar tagConfigs = global.get('edge_tagConfigs') || {};\nvar devTags = tagConfigs[result.deviceId] || [];\nvar now = new Date().toISOString();\nvar nowMs = Date.now();\n\n// === State references ===\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar historyData = global.get('edge_historyData') || {};\nvar commStatus = global.get('edge_commStatus') || {};\nvar commPending = global.get('edge_commPending') || [];\nvar lastBadSend = global.get('edge_lastBadSend') || {};\n\nvar devId = result.deviceId;\nvar devName = result.deviceName || ('PLC-' + devId);\n// 获取设备 triggerKind（0=握手 1=固定周期 2=变化触发）\nvar devices = global.get('edge_devices') || [];\nvar devInfo = null;\nfor (var di = 0; di < devices.length; di++) {\n    if (devices[di].id === devId) { devInfo = devices[di]; break; }\n}\nvar triggerKind = devInfo ? (devInfo.triggerKind || 1) : 1;\n\n// ===== FAILURE PATH =====\nif (!result.success) {\n    var status = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\n    status.consecutiveFails = (status.consecutiveFails || 0) + 1;\n    status.lastFailTime = nowMs;\n\n    // P0-3: Only push to pending on state change (online → offline)\n    if (status.lastState !== 'offline') {\n        status.lastState = 'offline';\n        commPending.push({\n            deviceId: devId,\n            success: false,\n            error: result.error || 'communication failure',\n            consecutiveFails: status.consecutiveFails,\n            ts: now\n        });\n        global.set('edge_commPending', commPending);\n        if (DEBUG) node.warn('[DP] Device ' + devName + ' state: online → offline');\n        // Publish PLC_OFFLINE alarm via MQTT (v9.1 parity)\n        var alarmMsg = {\n            topic: 'edgelink/alarm/plc_offline/' + devId,\n            payload: JSON.stringify({\n                alert_type: 'PLC_OFFLINE',\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                msg: devName + ' communication failure: ' + (result.error || 'unknown'),\n                ts: now\n            }),\n            qos: 1,\n            retain: false\n        };\n        var alerts = global.get('edge_recentAlerts') || [];\n        alerts.push({\n            alertType: 'PLC_OFFLINE',\n            deviceId: devId,\n            deviceName: devName,\n            msg: result.error || 'communication failure',\n            ts: now\n        });\n        if (alerts.length > 20) alerts = alerts.slice(-20);\n        global.set('edge_recentAlerts', alerts);\n    }\n    commStatus[devId] = status;\n    global.set('edge_commStatus', commStatus);\n\n    // Re-publish last-good values with BAD quality (throttled: max every 30s)\n    var shouldSendBad = !lastBadSend[devId] || (nowMs - lastBadSend[devId] > 30000);\n    var mqttMsg = null;\n    if (shouldSendBad && lastGoodTags[devId] && lastGoodTags[devId].length > 0) {\n        lastBadSend[devId] = nowMs;\n        global.set('edge_lastBadSend', lastBadSend);\n        var badVals = JSON.parse(JSON.stringify(lastGoodTags[devId]));\n        badVals.forEach(function (v) { v.quality = 'BAD'; });\n        mqttMsg = {\n            topic: 'edgelink/data/' + nodeId + '/' + devId,\n            payload: JSON.stringify({\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                ts: now,\n                value_count: badVals.length,\n                values: badVals,\n                quality: 'BAD'\n            }),\n            qos: 1,\n            retain: false\n        };\n    }\n\n    delete procGuard[devId];\n    global.set('edge_proc_guard', procGuard);\n    // Send alarm + BAD data as array so mqtt-out publishes both\n    // 🔧 修复#2：mqttOut 直接嵌进输出数组会变成\"数组当消息\"（mqtt-out 拿不到 topic 丢失）——嵌套一层逐条扇出\n    var mqttOut = alarmMsg ? (mqttMsg ? [alarmMsg, mqttMsg] : [alarmMsg]) : (mqttMsg ? [mqttMsg] : []);\n    node.send([mqttOut.length ? mqttOut : null, null]);\n    node.status({ fill: 'red', shape: 'ring', text: devName + ' OFFLINE' });\n    return;\n}\n\n// ===== SUCCESS PATH =====\n\n// Reset comm status on success\nvar prevStatus = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\nvar wasOffline = prevStatus.lastState === 'offline';\ncommStatus[devId] = { consecutiveFails: 0, lastState: 'online', lastSuccessTime: nowMs };\nglobal.set('edge_commStatus', commStatus);\n\n// P0-3: Push to pending on recovery (offline → online)\nif (wasOffline) {\n    commPending.push({\n        deviceId: devId,\n        success: true,\n        error: '',\n        consecutiveFails: 0,\n        ts: now\n    });\n    global.set('edge_commPending', commPending);\n    if (DEBUG) node.warn('[DP] Device ' + devName + ' state: offline → online (recovered)');\n}\n\nvar stdData = result.data || {};\nvar tagValues = [];\nvar pgRecords = [];\nvar validCount = 0;\nvar skippedCount = 0;\n\n// Process each tag\n(devTags.length > 0 ? devTags : []).forEach(function (tag) {\n    var entry = stdData[tag.id];\n    if (!entry || entry.rawValue === undefined || entry.rawValue === null) {\n        // Tag not in this read, mark as missing\n        tagValues.push({\n            tag_id: tag.id,\n            tag_address: tag.regAddr || '',\n            tag_name: tag.name || '',\n            raw_value: null,\n            eng_value: null,\n            unit: tag.unit || '',\n            quality: 'UNCERTAIN',\n            ts: now\n        });\n        return;\n    }\n\n    // Step 1: Transform (linear: y=a·x+b; slope_offset: 量程映射)\n    var eng = entry.rawValue;\n    var tform = tag.tform || tag.transformType || 'none';\n    var quality = entry.quality || 'GOOD';\n    if (typeof quality === 'number') {\n        quality = quality === 0 ? 'GOOD' : (quality === 1 ? 'BAD' : 'UNCERTAIN');\n    }\n    if (tform === 'linear') {\n        // 🔧 Day5: slope=0 合法，不能用 || 兜底\n        var _slope = (tag.slope !== undefined && tag.slope !== null) ? tag.slope : ((tag.transformSlopeA !== undefined && tag.transformSlopeA !== null) ? tag.transformSlopeA : 1);\n        var _offset = (tag.offset !== undefined && tag.offset !== null) ? tag.offset : ((tag.transformOffsetB !== undefined && tag.transformOffsetB !== null) ? tag.transformOffsetB : 0);\n        eng = entry.rawValue * _slope + _offset;\n    } else if (tform === 'slope_offset') {\n        var rawMin = tag.rawValueMin;\n        var rawMax = tag.rawValueMax;\n        var engMin = tag.engValueMin;\n        var engMax = tag.engValueMax;\n        if (rawMin == null || rawMax == null || engMin == null || engMax == null || rawMin === rawMax) {\n            quality = 'UNCERTAIN';\n            eng = entry.rawValue;\n        } else {\n            var ratio = (entry.rawValue - rawMin) / (rawMax - rawMin);\n            eng = engMin + ratio * (engMax - engMin);\n        }\n    }\n    eng = parseFloat(parseFloat(eng).toFixed(2));\n\n    // Step 2: Deadband filtering（数值死区：abs(eng - prev) < deadband）\n    var prevVals = lastGoodTags[devId] || [];\n    var prev = null;\n    for (var pi = 0; pi < prevVals.length; pi++) {\n        if (prevVals[pi].tag_id === tag.id) { prev = prevVals[pi]; break; }\n    }\n    var deadband = tag.deadband || 0;\n    var forceInterval = tag.reportForceIntervalMs || 5000;\n\n    // triggerKind=2 变化触发：值未变化则跳过\n    if (triggerKind === 2 && prev) {\n        var prevEng = prev.eng_value;\n        if (prevEng !== null && prevEng !== undefined && Math.abs(eng - prevEng) < 0.0001) {\n            skippedCount++;\n            return;\n        }\n    }\n\n    if (prev && deadband > 0) {\n        var delta = Math.abs(eng - (prev.eng_value || 0));\n        var prevTs = prev.ts ? new Date(prev.ts).getTime() : 0;\n        if (delta < deadband && (nowMs - prevTs) < forceInterval) {\n            skippedCount++;\n            return; // Skip: value within deadband, not forced yet\n        }\n    }\n\n    // Step 3: Quality code 已在 Step 1 中统一处理\n\n    var tv = {\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        register_type: tag.regType || '',\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        ts: now\n    };\n    tagValues.push(tv);\n    validCount++;\n\n    // Step 4: PG record\n    pgRecords.push({\n        ts: now,\n        node_id: nodeId,\n        device_id: devId,\n        device_name: devName,\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        register_type: tag.regType || '',\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        host_pc_ip: hostPcIp\n    });\n\n    // Step 5: History cache\n    if (!historyData[devId]) historyData[devId] = {};\n    if (!historyData[devId][tag.id]) historyData[devId][tag.id] = [];\n    historyData[devId][tag.id].push({ ts: now, raw: entry.rawValue, eng: eng, q: quality });\n    if (historyData[devId][tag.id].length > 100) {\n        historyData[devId][tag.id] = historyData[devId][tag.id].slice(-100);\n    }\n});\n\n// === 计算点位（派生点位）：值=同设备来源点位的 和/平均/最大/最小（源失效用最近有效值续算） ===\nvar calcTagList = (devInfo && devInfo.calcTags) || [];\ncalcTagList.forEach(function (ct) {\n    var prevGoodList = lastGoodTags[devId] || [];\n    var vals = [];\n    var anyStale = false;\n    (ct.sourceIds || []).forEach(function (sid) {\n        var v = null;\n        var vq = null;\n        for (var fi = 0; fi < tagValues.length; fi++) {\n            if (tagValues[fi].tag_id === sid) { v = tagValues[fi].eng_value; vq = tagValues[fi].quality; break; }\n        }\n        if (v === null || v === undefined) {\n            for (var pj = 0; pj < prevGoodList.length; pj++) {\n                if (prevGoodList[pj].tag_id === sid) { v = prevGoodList[pj].eng_value; vq = prevGoodList[pj].quality; break; }\n            }\n        }\n        if (v !== null && v !== undefined) {\n            vals.push(v);\n            if (vq !== 'GOOD') anyStale = true;\n        }\n    });\n    if (vals.length === 0) {\n        return;  // 所有来源从未有值：本轮跳过\n    }\n    var calc = 0;\n    if (ct.calcOp === 'avg') {\n        vals.forEach(function (x) { calc += x; });\n        calc = calc / vals.length;\n    } else if (ct.calcOp === 'min') {\n        calc = Math.min.apply(null, vals);\n    } else if (ct.calcOp === 'max') {\n        calc = Math.max.apply(null, vals);\n    } else {\n        vals.forEach(function (x) { calc += x; });  // sum 默认\n    }\n    calc = parseFloat(parseFloat(calc).toFixed(2));\n    var calcQuality = (anyStale || vals.length < (ct.sourceIds || []).length) ? 'UNCERTAIN' : 'GOOD';\n\n    // 与采集点位同一过滤管道：变化触发 / 数值死区\n    // 🔧 变化判定用独立 edge_lastCalc 记录上一次计算值——lastGoodTags 的合并只收 GOOD 质量位，\n    //    计算点位因源点位未本轮刷新而常带 UNCERTAIN，会永远进不了 lastGood，导致与过期值比较而重复插入\n    var lastCalc = global.get('edge_lastCalc') || {};\n    var prevCalcEng = (lastCalc[ct.id] !== undefined) ? lastCalc[ct.id] : null;\n    var prevCalcTs = lastCalc[ct.id + '_ts'] || 0;\n    if (triggerKind === 2 && prevCalcEng !== null) {\n        if (Math.abs(calc - prevCalcEng) < 0.0001) {\n            skippedCount++;\n            return;\n        }\n    }\n    var calcDeadband = ct.deadband || 0;\n    var calcForce = ct.reportForceIntervalMs || 5000;\n    if (prevCalcEng !== null && calcDeadband > 0) {\n        var calcDelta = Math.abs(calc - prevCalcEng);\n        if (calcDelta < calcDeadband && (nowMs - prevCalcTs) < calcForce) {\n            skippedCount++;\n            return;\n        }\n    }\n    lastCalc[ct.id] = calc;\n    lastCalc[ct.id + '_ts'] = nowMs;\n    global.set('edge_lastCalc', lastCalc);\n\n    var ctv = {\n        tag_id: ct.id, tag_address: 'CALC', tag_name: ct.name || '',\n        raw_value: calc, register_type: 'CALC', eng_value: calc,\n        unit: ct.unit || '', quality: calcQuality, ts: now\n    };\n    tagValues.push(ctv);\n    validCount++;\n    pgRecords.push({\n        ts: now, node_id: nodeId, device_id: devId, device_name: devName,\n        tag_id: ct.id, tag_address: 'CALC', tag_name: ct.name || '',\n        raw_value: calc, register_type: 'CALC', eng_value: calc,\n        unit: ct.unit || '', quality: calcQuality, host_pc_ip: hostPcIp\n    });\n});\n\n// Update lastGoodTags — 🔧 合并更新 + 标记未读到tag为quality=2\nvar prevGood = lastGoodTags[devId] || [];\nvar newGood = tagValues.filter(function (v) { return v.quality === 'GOOD'; });  // 🔧 Day5: 质量码是字符串，!==2 永真导致坏值污染 lastGood；只保留 GOOD\nvar prevMap = {};\n// Mark all previous as stale (quality=2), then overwrite with fresh reads\nprevGood.forEach(function (pg) {\n    prevMap[pg.tag_id] = { tag_id: pg.tag_id, tag_address: pg.tag_address, tag_name: pg.tag_name,\n        raw_value: pg.raw_value, eng_value: pg.eng_value, unit: pg.unit,\n        quality: 'UNCERTAIN', ts: pg.ts };  // 🔧 Day5: stale 标记用字符串（全链质量码词汇统一 OPC UA 语义）\n});\nnewGood.forEach(function (ng) { prevMap[ng.tag_id] = ng; });\nvar merged = [];\nfor (var k in prevMap) {\n    if (Object.prototype.hasOwnProperty.call(prevMap, k)) merged.push(prevMap[k]);\n}\nlastGoodTags[devId] = merged;\nglobal.set(\"edge_lastGoodTags\", lastGoodTags);\nglobal.set(\"edge_historyData\", historyData);\n\n// PG success counter is incremented by sf-pg-writer after successful write only\n\n// === Build outputs ===\nvar mqttMsg = null;\nif (tagValues.length > 0) {\n    mqttMsg = {\n        topic: 'edgelink/data/' + nodeId + '/' + devId,\n        payload: JSON.stringify({\n            node_id: nodeId,\n            device_id: devId,\n            device_name: devName,\n            host_pc_ip: hostPcIp,\n            ts: now,\n            value_count: validCount,\n            values: tagValues\n        }),\n        qos: 1,\n        retain: false\n    };\n}\n\nvar pgMsg = null;\nif (pgRecords.length > 0) {\n    pgMsg = { payload: { pgRecords: pgRecords } };\n}\n\nif (DEBUG && validCount > 0) {\n    node.status({ fill: 'green', shape: 'dot', text: devName + ' ' + validCount + ' vals' + (skippedCount > 0 ? ' (' + skippedCount + ' skipped)' : '') });\n}\n\n} finally {\ndelete procGuard[devId];\nglobal.set('edge_proc_guard', procGuard);\n}\nnode.send([mqttMsg, pgMsg]);\nreturn;",
+  "outputs": 2,
+  "timeout": "",
+  "noerr": 0,
+  "initialize": "",
+  "finalize": "",
+  "libs": [],
+  "x": 200,
+  "y": 100,
+  "wires": [
+   [
+    "2ad518f49b8130fb"
+   ],
+   [
+    "8b8e7d1da5129a06"
+   ]
+  ]
+ },
+ {
+  "id": "2ad518f49b8130fb",
+  "type": "debug",
+  "z": "460782f9f254b482",
+  "name": "Output1: MQTT",
+  "active": true,
+  "console": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "x": 440,
+  "y": 80,
+  "wires": []
+ },
+ {
+  "id": "8b8e7d1da5129a06",
+  "type": "debug",
+  "z": "460782f9f254b482",
+  "name": "Output2: PG",
+  "active": true,
+  "console": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "x": 440,
+  "y": 140,
+  "wires": []
+ },
+ {
+  "id": "2c152e40b4141864",
+  "type": "function",
+  "z": "ef13b883a5871c8a",
+  "name": "IP检测 + 登录准备",
+  "func": "// === sf-config-manager Step 1: IP检测 + 单例锁 + 分路径 + 登录请求 ===\nvar DEBUG = global.get('edge_debug') || false;\nvar isReauth = (msg.payload && msg.payload.action === 'reauth');\nvar existingJwt = global.get('edge_jwt') || '';\n\n// === Singleton lock (60s expiry) ===\nvar lock = global.get('edge_config_manager_lock');\nif (lock && (Date.now() - lock.ts < 60000)) {\n    if (isReauth) {\n        // Reauth: wait until current init finishes (max 30s)\n        if (Date.now() - lock.ts < 30000) {\n            if (DEBUG) node.warn('[CM] Re-auth waiting for active init (' + (Date.now() - lock.ts) + 'ms old)');\n            setTimeout(function () { node.send(msg); }, 2000);\n            return null;\n        }\n        // Force takeover after 30s\n        if (DEBUG) node.warn('[CM] Lock expired, force takeover for reauth');\n    } else {\n        if (DEBUG) node.warn('[CM] Another init in progress, skip');\n        return null;\n    }\n}\nglobal.set('edge_config_manager_lock', { ts: Date.now(), nodeId: node.id });\n\n// 🔧 P1#9: Reauth guard removed — always honor reauth requests\n// (reauth comes from 401 detection; skipping causes data gaps)\n\nvar isFirstRun = !existingJwt && !isReauth;\nvar isRefresh = !isReauth && !isFirstRun;\n\n// === IP Detection (skip virtual NICs) ===\n// P1: 优先使用环境变量 edge_hostPcIp / EDGE_HOST_PC_IP（支持 ip:port 多实例区分），未设置才自动检测\nvar envHostPcIp = global.get('edge_hostPcIp') || global.get('EDGE_HOST_PC_IP') || '';\nvar detectedIp = '';\n\nif (envHostPcIp) {\n    // 环境变量已设置，直接使用（支持 10.81.1.100 或 10.81.1.100:1881）\n    detectedIp = envHostPcIp;\n    if (DEBUG) node.warn('[CM] Using env edge_hostPcIp=' + detectedIp);\n} else {\n    detectedIp = '127.0.0.1';\n    try {\n        var os = global.get('os');\n        if (os) {\n            var nets = os.networkInterfaces();\n            // 🔧 #31: 按网卡名称排除虚拟适配器，不再按私网网段排除（172.16/12 等可能是企业真实内网）\n            var VIRTUAL_IFACE_KEYWORDS = ['vethernet', 'vmware', 'virtualbox', 'vbox', 'docker', 'br-', 'wsl', 'hyper-v', 'loopback'];\n            function isVirtualIface(ifName) {\n                var lower = String(ifName).toLowerCase();\n                for (var k = 0; k < VIRTUAL_IFACE_KEYWORDS.length; k++) {\n                    if (lower.indexOf(VIRTUAL_IFACE_KEYWORDS[k]) !== -1) return true;\n                }\n                return false;\n            }\n            function isVirtual(addr) {\n                // 仅排除链路本地地址（169.254.x.x），私网网段一律视为候选\n                return addr.indexOf('169.254.') === 0;\n            }\n            var candidates = [];\n            for (var name in nets) {\n                if (!nets.hasOwnProperty(name)) continue;\n                var iface = nets[name];\n                for (var i = 0; i < iface.length; i++) {\n                    var netInfo = iface[i];\n                    if (netInfo.family === 'IPv4' && !netInfo.internal && !isVirtual(netInfo.address) && !isVirtualIface(name)) {\n                        candidates.push(netInfo.address);\n                    }\n                }\n            }\n            for (var j = 0; j < candidates.length; j++) {\n                if (candidates[j].indexOf('10.') === 0 || candidates[j].indexOf('192.168.') === 0) {\n                    detectedIp = candidates[j];\n                    break;\n                }\n            }\n            if (detectedIp === '127.0.0.1' && candidates.length > 0) {\n                detectedIp = candidates[0];\n                if (DEBUG) node.warn('[CM] No 192.168/10.x, using ' + detectedIp);\n            }\n        }\n    } catch (e) {\n        if (DEBUG) node.warn('[CM] IP detection failed: ' + e.message);\n    }\n}\n\nvar hostPcIp = detectedIp;\n// 🔧 #98: 自动获取实际监听端口，支持一台 PC 多实例；已含端口则不重复追加（否则每次 init 都会再拼一次 :port）\nvar actualPort = global.get('uiPort') || env.get('PORT') || 1880;  // Node-RED function 沙箱无 process 对象，env 变量须用 env.get()\n// 防御：旧版本曾把端口重复追加（IP:port:port...），规范化为 IP:port\nvar hpParts = hostPcIp.split(':');\nif (hpParts.length > 2) {\n    hostPcIp = hpParts[0] + ':' + hpParts[1];\n}\nif (hostPcIp.indexOf(':') === -1) {\n    hostPcIp = hostPcIp + ':' + actualPort;\n}\nglobal.set('edge_hostPcIp', hostPcIp);\n\n// 🔧 #98: 计算机器指纹（hostname + MACs），用于 IP 变更时自动映射\nfunction computeFingerprint() {\n    try {\n        var os = global.get('os');\n        var crypto = global.get('crypto');  // 由 settings.js functionGlobalContext 注入（沙箱内 require 不可用）\n        var hostname = os.hostname();\n        var macs = [];\n        var nets = os.networkInterfaces();\n        for (var name in nets) {\n            nets[name].forEach(function(iface) {\n                if (!iface.internal && iface.mac && iface.mac !== '00:00:00:00:00:00') {\n                    macs.push(iface.mac);\n                }\n            });\n        }\n        var raw = hostname + '|' + macs.sort().join(',');\n        return crypto.createHash('sha256').update(raw).digest('hex');\n    } catch (e) {\n        return '';\n    }\n}\nvar machineFingerprint = computeFingerprint();\n\n// 🔧 停用态自愈：节点处于停用标记时，本周期不再走登录/发现，\n// 改为复查 bootstrap 是否已重新启用；已启用则清标记并继续正常流程，未启用则保持停止。\nif (global.get('edge_nodeDisabled')) {\n    var _dh = global.get('http');\n    var _dHost = global.get('edge_backendHost') || '127.0.0.1';\n    var _dPort = global.get('edge_backendPort') || 9099;\n    var _dPath = '/plc/config/bootstrap?host_pc_ip=' + encodeURIComponent(hostPcIp) + '&secret_key=' + encodeURIComponent(global.get('edge_bootstrapSecret') || '');\n    if (DEBUG) node.warn('[CM] 节点处于停用态，复查 bootstrap 是否重新启用...');\n    var _dReq = _dh.request({ hostname: _dHost, port: _dPort, path: _dPath, method: 'GET', timeout: 5000 }, function (res) {\n        var body = '';\n        res.on('data', function (d) { body += d; });\n        res.on('end', function () {\n            var reEnabled = false;\n            try {\n                var data = JSON.parse(body);\n                reEnabled = (data.code === 200 && !!data.data);\n            } catch (e) {}\n            if (reEnabled) {\n                node.warn('[CM] ✅ 节点已被重新启用，恢复采集');\n                global.set('edge_nodeDisabled', false);\n                // 清除缓存文件中的停用标记\n                try {\n                    var _fs3 = global.get('fs'); var _path3 = global.get('path');\n                    if (_fs3 && _path3) {\n                        var _cf3 = _path3.join(global.get('userDir') || '.', 'edge_config_cache.json');\n                        var _cc3 = {};\n                        if (_fs3.existsSync(_cf3)) { try { _cc3 = JSON.parse(_fs3.readFileSync(_cf3, 'utf8')); } catch (e3) {} }\n                        _cc3.disabled = false;\n                        _fs3.writeFileSync(_cf3, JSON.stringify(_cc3, null, 2));\n                    }\n                } catch (e) {}\n                node.send(proceedWithLogin());\n            } else {\n                // 仍未启用：保持停止，释放锁，等待下一周期\n                global.set('edge_config_manager_lock', null);\n                node.status({ fill: 'red', shape: 'ring', text: 'DISABLED by server' });\n                node.send([null, null]);\n            }\n        });\n    });\n    _dReq.on('error', function () {\n        global.set('edge_config_manager_lock', null);\n        node.send([null, null]);\n    });\n    _dReq.on('timeout', function () {\n        _dReq.destroy();\n        global.set('edge_config_manager_lock', null);\n        node.send([null, null]);\n    });\n    _dReq.end();\n    return null;\n}\n\n// === Bootstrap 配置拉取（v2.0 两阶段：/auto 注册 + /bootstrap 获取配置） ===\n// 🔧 bootstrapKey/Secret 从 settings.js functionGlobalContext 读取（边缘节点密钥页面预下发）\nvar bootstrapKey = global.get('edge_bootstrapKey') || '';\nvar bootstrapSecret = global.get('edge_bootstrapSecret') || '';\nif (isFirstRun) {\n    var http = global.get('http');\n    var bHost = global.get('edge_backendHost') || '127.0.0.1';\n    var bPort = global.get('edge_backendPort') || 9099;\n    var bPath = '/plc/config/bootstrap?host_pc_ip=' + encodeURIComponent(hostPcIp) + '&secret_key=' + encodeURIComponent(bootstrapSecret);  // 🔧 后端按 (host_pc_ip, secret_key) 校验，node_key 由响应返回\n    \n    if (DEBUG) node.warn('[CM] First run, fetching bootstrap from ' + bHost + ':' + bPort);\n    \n    var bReq = http.request({\n        hostname: bHost,\n        port: bPort,\n        path: bPath,\n        method: 'GET',\n        timeout: 5000\n    }, function(res) {\n        var body = '';\n        res.on('data', function(d) { body += d; });\n        res.on('end', function() {\n            try {\n                var data = JSON.parse(body);\n                if (data.code === 200 && data.data) {\n                    var cfg = data.data;\n                    global.set('edge_apiKey', cfg.apiKey || '');\n                    global.set('edge_backendUser', cfg.backendUser || '');\n                    global.set('edge_backendPass', cfg.backendPass || '');\n                    global.set('edge_mqttConfig', cfg.mqtt || {});\n                    if (cfg.hostPcIp) global.set('edge_hostPcIp', cfg.hostPcIp);\n                    if (DEBUG) node.warn('[CM] Bootstrap OK, hostPcIp=' + global.get('edge_hostPcIp'));\n                } else {\n                    if (DEBUG) node.warn('[CM] Bootstrap failed: ' + (data.msg || 'unknown'));\n                    // 🔧 节点已被后端停用：进入停用态，不走本地凭据兜底（kill switch 重启持久化路径）\n                    if (data.msg && data.msg.indexOf('停用') >= 0) {\n                        node.warn('[CM] ⚠ 本节点已被后端停用，采集停止（等待重新启用）');\n                        global.set('edge_nodeDisabled', true);\n                        global.set('edge_devices', []);\n                        global.set('edge_tagConfigs', {});\n                        global.set('edge_configReady', false);\n                        global.set('edge_config_manager_lock', null);\n                        try {\n                            var _fs2 = global.get('fs'); var _path2 = global.get('path');\n                            if (_fs2 && _path2) {\n                                var _cf = _path2.join(global.get('userDir') || '.', 'edge_config_cache.json');\n                                var _cc = {};\n                                if (_fs2.existsSync(_cf)) { try { _cc = JSON.parse(_fs2.readFileSync(_cf, 'utf8')); } catch (e2) {} }\n                                _cc.disabled = true;\n                                _fs2.writeFileSync(_cf, JSON.stringify(_cc, null, 2));\n                            }\n                        } catch (e) {}\n                        return null;\n                    }\n                }\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] Bootstrap parse error: ' + e.message);\n            }\n            node.send(proceedWithLogin());\n            return;\n        });\n    });\n    \n    bReq.on('error', function(e) {\n        if (DEBUG) node.warn('[CM] Bootstrap error: ' + e.message);\n        node.send(proceedWithLogin());\n        return;\n    });\n    \n    bReq.on('timeout', function() {\n        bReq.destroy();\n        if (DEBUG) node.warn('[CM] Bootstrap timeout');\n        node.send(proceedWithLogin());\n        return;\n    });\n    \n    bReq.end();\n    return null;\n}\n\n// === Default config (allow settings.js overrides) ===\nreturn proceedWithLogin();\n\nfunction proceedWithLogin() {\n    global.set('edge_backendHost', global.get('edge_backendHost') || '127.0.0.1');\n    global.set('edge_backendPort', global.get('edge_backendPort') || 9099);\n    var apiKey = global.get('edge_apiKey') || global.get('EDGE_API_KEY') || '';\nvar backendUser = global.get('edge_backendUser') || global.get('EDGE_BACKEND_USER') || '';\nvar backendPass = global.get('edge_backendPass') || global.get('EDGE_BACKEND_PASS') || '';\n\nif (!apiKey || !backendUser || !backendPass) {\n    node.error('[CM] 缺少必需配置：edge_apiKey / edge_backendUser / edge_backendPass，请通过 settings.js 的 functionGlobalContext 或环境变量配置后重启 Node-RED');\n    global.set('edge_config_manager_lock', null);\n    return null;\n}\n\nglobal.set('edge_apiKey', apiKey);\nglobal.set('edge_backendUser', backendUser);\nglobal.set('edge_backendPass', backendPass);\nglobal.set('edge_enabledStatus', global.get('edge_enabledStatus') || '0');\nglobal.set('edge_debug', DEBUG);\n\n// === First run: initialize all state globals ===\nif (isFirstRun) {\n    global.set('edge_devices', []);\n    global.set('edge_tagConfigs', {});\n    global.set('edge_commStatus', {});\n    global.set('edge_lastGoodTags', {});\n    global.set('edge_historyData', {});\n    global.set('edge_pg_queue', []);\n    global.set('edge_pg_success_count', 0);\n    global.set('edge_pg_fail_count', 0);\n    global.set('edge_pg_last_error', null);\n    global.set('edge_pg_writing', false);\n    global.set('edge_pg_last_write_ts', '');\n    global.set('edge_pg_batch_size', 200);\n    global.set('edge_commPending', []);\n    global.set('edge_lastBadSend', {});\n    global.set('edge_handshakeFlags', {});\n    global.set('edge_triggerLastRaw', {});\n    global.set('edge_triggerForceTimes', {});\n    global.set('edge_recentAlerts', []);\n    global.set('edge_lastAlarmTime', {});\n    global.set('edge_startTime', new Date().toISOString());\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', false);\n    if (DEBUG) node.warn('[CM] First run, hostPcIp=' + hostPcIp);\n}\n\n// === Refresh path: keep configReady=true, don't interrupt collection ===\nif (isRefresh) {\n    if (DEBUG) node.warn('[CM] Periodic refresh, configReady stays true');\n}\n\n// === Reauth path: clear JWT, full re-login ===\nif (isReauth) {\n    global.set('edge_jwt', '');\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', true);\n    if (DEBUG) node.warn('[CM] 401 reauth, full re-login');\n}\n\n// === Build login request ===\nvar user = global.get('edge_backendUser');\nvar pass = global.get('edge_backendPass');\nvar host = global.get('edge_backendHost');\nvar port = global.get('edge_backendPort');\n\nmsg.url = 'http://' + host + ':' + port + '/login';\nmsg.payload = 'username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass);\n\nreturn msg;\n}",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 200,
+  "y": 100,
+  "wires": [
+   [
+    "be4727a74008ff80"
+   ]
+  ]
+ },
+ {
+  "id": "be4727a74008ff80",
+  "type": "http request",
+  "z": "ef13b883a5871c8a",
+  "name": "POST /login",
+  "method": "POST",
+  "ret": "txt",
+  "url": "",
+  "headers": [
+   {
+    "keyType": "other",
+    "keyValue": "Content-Type",
+    "valueType": "other",
+    "valueValue": "application/x-www-form-urlencoded"
+   }
+  ],
+  "x": 440,
+  "y": 100,
+  "wires": [
+   [
+    "65c1544c88d3546d"
+   ]
+  ]
+ },
+ {
+  "id": "65c1544c88d3546d",
+  "type": "function",
+  "z": "ef13b883a5871c8a",
+  "name": "JWT解析 + nodeId + 点位发现",
+  "func": "// === sf-config-manager Step 2: JWT解析 + nodeId反查 + 拉取全局点位 + 分组输出 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar DEBUG = global.get('edge_debug') || false;\nvar myHostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar apiKey = global.get('edge_apiKey');\nif (!apiKey) { node.error('[CM] edge_apiKey not configured'); global.set('edge_config_manager_lock', null); return null; }\n\n// 1. Parse JWT from login response\nvar jwtToken = '';\ntry {\n    var r = JSON.parse(msg.payload);\n    jwtToken = (r.data && r.data.token) ? r.data.token : (r.token || '');\n} catch (e) {\n    jwtToken = '';\n}\n\n// 🔧 #97/Day7: 启动时先读本地配置缓存（前移到 JWT 校验之前）——后端不可用时也能用最近配置继续采集\ntry {\n    var fs = global.get('fs');\n    var path = global.get('path');\n    var cacheFile = path.join(global.get('userDir') || '.', 'edge_config_cache.json');\n    if (fs.existsSync(cacheFile)) {\n        var cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));\n        if (cached && cached.disabled === true) {\n            // 🔧 节点处于停用状态（缓存标记），保持停止，不加载缓存配置\n            global.set('edge_nodeDisabled', true);\n            global.set('edge_devices', []);\n            global.set('edge_tagConfigs', {});\n            global.set('edge_configReady', false);\n            if (DEBUG) node.warn('[CM] 节点处于停用状态（缓存标记），保持停止');\n        } else if (cached && cached.devices && cached.tagConfigs) {\n            global.set('edge_devices', cached.devices);\n            global.set('edge_tagConfigs', cached.tagConfigs);\n            global.set('edge_configReady', true);\n            if (DEBUG) node.warn('[CM] Loaded config from cache, ' + cached.devices.length + ' devices');\n        }\n    }\n} catch (e) {\n    if (DEBUG) node.warn('[CM] Config cache read failed: ' + e.message);\n}\n\nif (!jwtToken) {\n    if (DEBUG) node.warn('[CM] JWT FAIL: ' + (msg.payload || '').substring(0, 80));\n    global.set('edge_config_manager_lock', null);\n    // 🔧 P1#10: 使用 http.request 直接重试登录（替代无效的 node.send）\n    retryLogin();\n    return null;\n}\n\nglobal.set('edge_jwt', jwtToken);\nglobal.set('edge_reauthInProgress', false);\nif (DEBUG) node.warn('[CM] JWT OK, hostPcIp=' + myHostPcIp);\n\n\n// 2. Discover/register nodeId via heartbeat\nfunction discoverNodeId(callback) {\n    var nodeParams = 'host_pc_ip=' + encodeURIComponent(myHostPcIp)\n        + '&node_ip=' + encodeURIComponent(myHostPcIp)\n        + '&running_flows=5&memory_usage_mb=' + (Math.round(((global.get('process')||{memoryUsage:function(){return{rss:0}}}).memoryUsage().rss||0)/1048576)||0);\n    var nodeOpts = {\n        hostname: HOST, port: PORT,\n        path: '/monitor/heartbeat?' + nodeParams,\n        method: 'POST',\n        headers: {\n            'X-API-Key': apiKey,\n            'Authorization': 'Bearer ' + jwtToken,\n            'Content-Type': 'application/json'\n        }\n    };\n\n    var nr = http.request(nodeOpts, function (res) {\n        var b = '';\n        res.on('data', function (d) { b += d; });\n        res.on('end', function () {\n            try {\n                var j = JSON.parse(b);\n                var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n                if (nid > 0) {\n                    global.set('edge_nodeId', nid);\n                    if (DEBUG) node.warn('[CM] Node registered, nodeId=' + nid);\n                    callback(nid);\n                } else {\n                    // 🔧 P1-18: 后端未返回有效 nodeId → 不再编造哈希 id（幽灵 node_id 数据源头），本轮放弃待重试\n                    if (DEBUG) node.warn('[CM] nodeId missing in heartbeat response, abort this round');\n                    callback(0);\n                }\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] nodeId parse err: ' + e.message);\n                callback(0);\n            }\n        });\n    });\n    nr.setTimeout(5000, function () {\n        nr.removeAllListeners();\n        nr.destroy();\n        if (DEBUG) node.warn('[CM] nodeId request timeout');\n        callback(0);\n    });\n    nr.on('error', function (e) {\n        if (DEBUG) node.warn('[CM] nodeId err: ' + e.message);\n        callback(0);\n    });\n    nr.write('{}');\n    nr.end();\n}\n\n// 3. Fetch global tag list (paged, 5000/page — backend caps page_size at 5000) + group by deviceId + filter\nfunction discoverTags(nodeId) {\n    var PAGE_SIZE = 5000;\n    var allRecords = [];\n    fetchTagPage(1);\n\n    function fetchTagPage(pageNum) {\n        // 熔断：超过 200 页（100 万点位）必定是分页参数未生效，按失败处理，防止无限翻页打满后端\n        if (pageNum > 200) {\n            node.warn('[CM] Tag paging exceeded 200 pages, aborting (backend paging params not honored?)');\n            global.set('edge_config_manager_lock', null);\n            global.set('edge_configReady', false);\n            global.set('edge_last_config_ts', new Date().toISOString());\n            node.send([null, null]);\n            return;\n        }\n        var tagPath = '/plc/config/snapshot/list?pageSize=' + PAGE_SIZE + '&pageNum=' + pageNum;  // 发布即版本：边缘只拉已发布快照，数据库实时表不再是配置源  // 🔧 FastAPI 按 camelCase alias 绑定查询参数，snake_case 会被忽略（导致永远返回第1页）\n        var tagReq = http.request({\n            hostname: HOST, port: PORT, path: tagPath, method: 'GET',\n            headers: { 'Authorization': 'Bearer ' + jwtToken }\n        }, function (res) {\n            var body = '';\n            res.on('data', function (d) { body += d; });\n            res.on('end', function () {\n                var r;\n                try {\n                    r = JSON.parse(body);\n                } catch (e) {\n                    node.warn('[CM] Tag API parse error: ' + e.message);\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', false);\n                    global.set('edge_last_config_ts', new Date().toISOString());\n                    node.send([null, null]);\n                    return;\n                }\n                if (r.code !== 200) {\n                    node.warn('[CM] Tag API returned code ' + (r.code || 'unknown') + ', will retry on refresh');\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', false);\n                    global.set('edge_last_config_ts', new Date().toISOString());\n                    node.send([null, null]);\n                    return;\n                }\n                if (r.snapshotVersion !== undefined && r.snapshotVersion !== null) {\n                    global.set('edge_configVersion', r.snapshotVersion);  // 发布即版本：记录已应用快照版本，随心跳上报\n                }\n                var pageRows = r.rows || [];\n                allRecords = allRecords.concat(pageRows);\n                // hasNext 优先；行数等于页大小时也再拉一页（末页恰好满页时空页收尾）\n                if (r.hasNext === true || pageRows.length === PAGE_SIZE) {\n                    fetchTagPage(pageNum + 1);\n                    return;\n                }\n                processTagRecords(allRecords);\n            });\n        });\n        tagReq.on('error', function (e) {\n            node.warn('[CM] Tag fetch error: ' + e.message);\n            global.set('edge_config_manager_lock', null);\n            global.set('edge_configReady', false);\n            global.set('edge_last_config_ts', new Date().toISOString());\n            node.send([null, null]);\n        });\n        tagReq.setTimeout(10000, function () {\n            tagReq.removeAllListeners();\n            tagReq.destroy();\n            node.warn('[CM] Tag fetch timeout');\n            global.set('edge_config_manager_lock', null);\n            global.set('edge_configReady', false);\n            global.set('edge_last_config_ts', new Date().toISOString());\n            node.send([null, null]);\n        });\n        tagReq.end();\n    }\n\n    function processTagRecords(records) {\n        // 🔧 节点已被后端停用时，忽略本次配置拉取，保持停止状态\n        if (global.get('edge_nodeDisabled')) {\n            node.warn('[CM] 节点已停用，忽略本次配置拉取（等待重新启用）');\n            global.set('edge_devices', []);\n            global.set('edge_tagConfigs', {});\n            global.set('edge_configReady', false);\n            global.set('edge_config_manager_lock', null);\n            node.send([null, null]);\n            return;\n        }\n        try {\n                if (records.length === 0) {\n                    node.warn('[CM] No tags in system');\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', false);\n                global.set('edge_last_config_ts', new Date().toISOString());\n                    node.send([null, null]);\n                    return;\n                }\n\n                // Group by deviceId\n                var byDevice = {};\n                records.forEach(function (t) {\n                    var did = t.deviceId || 1;\n                    var key = String(did);\n                    if (!byDevice[key]) {\n                        byDevice[key] = {\n                            id: did,\n                            deviceName: t.deviceName || ('PLC-' + did),\n                            hostPcIp: t.hostPcIp || myHostPcIp,\n                            plcIp: t.plcIp || '127.0.0.1',\n                            plcPort: t.plcPort || 5007,\n                            comType: t.comType || 'MC_Protocol',\n                            driverCode: t.driverCode || '',\n                            driverConfig: t.driverConfig || {},\n                            protocolParams: {},\n                            tags: [],\n                            calcTags: [],\n                            scanIntervalMs: t.scanIntervalMs || 1000,\n                            commTimeoutMs: t.commTimeoutMs || 3000,\n                            retryCount: t.retryCount || 2,\n                            retryIntervalMs: t.retryIntervalMs || 500,\n                            triggerKind: t.triggerKind || 1,\n                            status: t.status || t.deviceStatus || '0'\n                        };\n                        // Merge protocolParams：平铺字段铺底，设备级(protocolParams1)/点位级(protocolParams) JSON 依次覆盖\n                        // 列撞名修正：行内 protocolParams=点位级、protocolParams1=设备级（SQL 同名列去重）；\n                        // 连接级参数（protocol/commCode/unitId 等）在设备级——此前从未被读取，udp/ascii/unitId 到不了边缘\n                        var pp = {\n                            mcFrame: t.mcFrame || '3E',\n                            stationNo: t.stationNo || 0,\n                            networkNo: t.networkNo || 0,\n                            plcSeries: t.plcSeries || 'Q'\n                        };\n                        try {\n                            if (t.protocolParams1) {\n                                var devPp = typeof t.protocolParams1 === 'string' ? JSON.parse(t.protocolParams1) : t.protocolParams1;\n                                if (devPp && typeof devPp === 'object') { for (var dk in devPp) { pp[dk] = devPp[dk]; } }\n                            }\n                            if (t.protocolParams) {\n                                var tagPp = typeof t.protocolParams === 'string' ? JSON.parse(t.protocolParams) : t.protocolParams;\n                                if (tagPp && typeof tagPp === 'object') { for (var tk in tagPp) { pp[tk] = tagPp[tk]; } }\n                            }\n                        } catch (e) {}\n                        byDevice[key].protocolParams = pp;\n                    }\n                    // 计算点位分流：不参与驱动读取，挂设备级 calcTags 由数据管道求值\n                    if (t.calcOp) {\n                        var srcIds = t.calcSourceIds;\n                        if (typeof srcIds === 'string') { try { srcIds = JSON.parse(srcIds); } catch (e) { srcIds = []; } }\n                        byDevice[key].calcTags.push({\n                            id: t.id,\n                            name: t.tagName,\n                            calcOp: String(t.calcOp).toLowerCase(),\n                            sourceIds: srcIds || [],\n                            unit: t.engUnit || '',\n                            deadband: t.reportDeadbandMs || 0,\n                            reportForceIntervalMs: t.reportForceIntervalMs || 5000,\n                            tform: t.transformType || 'none',\n                            slope: (t.transformSlopeA !== undefined && t.transformSlopeA !== null) ? t.transformSlopeA : 1,\n                            offset: (t.transformOffsetB !== undefined && t.transformOffsetB !== null) ? t.transformOffsetB : 0\n                        });\n                        return;\n                    }\n                    // Parse address：与 MC 包 parseDeviceAddress 对齐——W/B 及非 FX 系列的 X/Y 为 16 进制（保留 A-F），\n                    // FX/iQ-F 系列的 X/Y 为 8 进制，其余 10 进制（此前一律 8 进制，Q/L/iQ-R 的 X/Y hex 地址会被解析错）\n                    var rt0 = t.registerType || 'D';\n                    var seriesKey = String(t.plcSeries || '').toUpperCase().replace(/[^A-Z0-9]/g, '');\n                    var isFx = seriesKey.indexOf('FX') === 0 || seriesKey.indexOf('IQF') === 0;\n                    var isHexDev = (rt0 === 'W' || rt0 === 'B') || ((rt0 === 'X' || rt0 === 'Y') && !isFx);\n                    var addrStr = String(t.registerAddress === undefined || t.registerAddress === null ? '' : t.registerAddress);\n                    var addr;\n                    if (isHexDev) {\n                        var hs = addrStr.replace(/[^0-9A-Fa-f]/g, '');\n                        addr = hs ? parseInt(hs, 16) : -1;\n                    } else {\n                        var ds = addrStr.replace(/\\D/g, '');\n                        if (ds && (rt0 === 'X' || rt0 === 'Y') && /[89]/.test(ds)) {\n                            addr = -1;  // 八进制地址含 8/9 非法（对齐 MC 包：拒绝而非静默截断）\n                        } else {\n                            addr = ds ? parseInt(ds, ((rt0 === 'X' || rt0 === 'Y') ? 8 : 10)) : -1;\n                        }\n                    }\n                    if (isNaN(addr)) addr = -1;  // 🔧 Day9/P1-19: 非法地址置 -1 让协议节点校验拦截（旧 ||0 会把 \"ABC\" 静默变成读 0 地址）\n\n                    byDevice[key].tags.push({\n                        id: t.id,\n                        addr: addr,\n                        regAddr: t.registerAddress || '',\n                        regType: t.registerType || 'D',\n                        name: t.tagName,\n                        dataType: t.dataType || 'INT16',\n                        // 🔧 Day5: 空值默认 LITTLE_ENDIAN（MC 线序即小端；旧默认 BIG_ENDIAN 会把 16 位值字节交换）/ LOW_FIRST（三菱低字在前）\n                        byteOrder: t.byteOrder || 'LITTLE_ENDIAN',\n                        wordOrder: t.wordOrder || 'LOW_FIRST',\n                        bitOffset: t.bitOffset || 0,\n                        tform: t.transformType || 'none',\n                        slope: (t.transformSlopeA !== undefined && t.transformSlopeA !== null) ? t.transformSlopeA : 1,  // 🔧 Day5: slope=0 合法\n                        offset: (t.transformOffsetB !== undefined && t.transformOffsetB !== null) ? t.transformOffsetB : 0,\n                        rawValueMin: t.rawValueMin,\n                        rawValueMax: t.rawValueMax,\n                        engValueMin: t.engValueMin,\n                        engValueMax: t.engValueMax,\n                        unit: t.engUnit || '',\n                        deadband: t.reportDeadbandMs || 0,\n                        reportForceIntervalMs: t.reportForceIntervalMs || 5000\n                    });\n                });\n\n                // Filter: only enabled devices on this PC\n                var ENABLED_STATUS = global.get('edge_enabledStatus') || '0';\n                var myDevices = [];\n                var myTagConfigs = {};\n                Object.keys(byDevice).forEach(function (did) {\n                    var dev = byDevice[did];\n                    if (String(dev.status) !== ENABLED_STATUS) return;\n                    if (dev.hostPcIp !== myHostPcIp) return;\n                    // MC devices need at least one valid register\n                    if (dev.comType === 'MC_Protocol') {\n                        var validTags = dev.tags.filter(function (t) { return t.addr >= 0; });\n                        if (validTags.length === 0) {\n                            if (DEBUG) node.warn('[CM] Device ' + dev.deviceName + ' has no valid registers, skipped');\n                            return;\n                        }\n                    }\n\n                    // Set timeout/retry on device object\n                    dev.timeout = dev.commTimeoutMs;\n                    dev.maxRetries = dev.retryCount;\n                    dev.retryInterval = dev.retryIntervalMs;\n\n                    myDevices.push(dev);\n                    myTagConfigs[dev.id] = dev.tags;\n                });\n\n                global.set('edge_devices', myDevices);\n                global.set('edge_tagConfigs', myTagConfigs);\n                global.set('edge_configReady', true);\n                global.set('edge_last_config_ts', new Date().toISOString());\n                // 🔧 #97: 缓存配置到本地文件，后端崩溃时重启也能用最近配置继续采集\n                try {\n                    var fs = global.get('fs');\n                    var path = global.get('path');\n                    var cacheFile = path.join(global.get('userDir') || '.', 'edge_config_cache.json');\n                    fs.writeFileSync(cacheFile, JSON.stringify({\n                        devices: myDevices,\n                        tagConfigs: myTagConfigs,\n                        ts: Date.now()\n                    }, null, 2));\n                    if (DEBUG) node.warn('[CM] Config cached to ' + cacheFile);\n                } catch (e) {\n                    if (DEBUG) node.warn('[CM] Config cache write failed: ' + e.message);\n                }\n                // 🔧 P1-2: Cleanup historyData + lastGoodTags for removed devices/tags\n                (function cleanupStaleData() {\n                    var validDevIds = {};\n                    myDevices.forEach(function (d) { validDevIds[d.id] = true; });\n                    var validTagIds = {};\n                    myDevices.forEach(function (d) {\n                        (d.tags || []).forEach(function (t) { validTagIds[t.id] = true; });\n                    });\n                    // Clean historyData\n                    var hd = global.get('edge_historyData') || {};\n                    Object.keys(hd).forEach(function (did) {\n                        if (!validDevIds[did]) { delete hd[did]; return; }\n                        Object.keys(hd[did] || {}).forEach(function (tid) {\n                            if (!validTagIds[tid]) delete hd[did][tid];\n                        });\n                    });\n                    global.set('edge_historyData', hd);\n                    // Clean lastGoodTags — remove stale device entries and tag entries\n                    var lgt = global.get('edge_lastGoodTags') || {};\n                    Object.keys(lgt).forEach(function (did) {\n                        if (!validDevIds[did]) { delete lgt[did]; return; }\n                        lgt[did] = (lgt[did] || []).filter(function (v) { return validTagIds[v.tag_id]; });\n                    });\n                    global.set('edge_lastGoodTags', lgt);\n                    // Clean commStatus — remove stale device entries\n                    var cs = global.get('edge_commStatus') || {};\n                    Object.keys(cs).forEach(function (did) {\n                        if (!validDevIds[did]) { delete cs[did]; }\n                    });\n                    global.set('edge_commStatus', cs);\n                    // Clean commPending — remove entries for devices no longer present\n                    var cp = global.get('edge_commPending') || [];\n                    cp = cp.filter(function (entry) { return validDevIds[entry.deviceId]; });\n                    global.set('edge_commPending', cp);\n                })();\n// 🔧 P1#11: 配置完成，释放锁\n                global.set('edge_config_manager_lock', null);\n\n                if (DEBUG) {\n                    node.warn('[CM] Discovered ' + myDevices.length + ' devices (nodeId=' + nodeId + '):');\n                    myDevices.forEach(function (d) {\n                        node.warn('  ' + d.deviceName + ' (' + d.plcIp + ':' + d.plcPort + ') ' + d.tags.length + ' tags comType=' + d.comType);\n                    });\n                }\n\n                // Output 1: config for main flow scheduler\n                var configMsg = {\n                    payload: {\n                        jwt: jwtToken,\n                        nodeId: nodeId,\n                        hostPcIp: myHostPcIp,\n                        devices: myDevices\n                    }\n                };\n\n                // Output 2: MQTT node online\n                var now = new Date().toISOString();\n                var devList = myDevices.map(function (d) {\n                    return { device_id: d.id, device_name: d.deviceName, tag_count: d.tags.length };\n                });\n                var mqttMsg = {\n                    topic: 'edgelink/nodes/' + nodeId + '/status',\n                    payload: JSON.stringify({\n                        node_id: nodeId,\n                        host_pc_ip: myHostPcIp,\n                        status: 'online',\n                        device_count: myDevices.length,\n                        devices: devList,\n                        ts: now\n                    }),\n                    qos: 1,\n                    retain: true\n                };\n\n                node.send([configMsg, mqttMsg]);\n                if (DEBUG) node.warn('[CM] Config complete, ' + myDevices.length + ' devices ready');\n\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] Tag parsing error: ' + e.message);\n                global.set('edge_config_manager_lock', null);\n                node.send([null, null]);\n            }\n    }\n}\n\n// 🔧 P1#10: 全局状态防重入（多实例重试互斥）\nvar _r = global.get('edge_retryState') || {};\nif (Date.now() - (_r.lastAttempt || 0) < 5000) { return; }\n_r.attempt = (_r.attempt || 0) + 1;\n_r.lastAttempt = Date.now();\nglobal.set('edge_retryState', _r);\n\nfunction retryLogin() {\n    var _r = global.get('edge_retryState') || {};\n    if (_r.attempt >= 5) {\n        if (_r.attempt === 5) { node.warn('[CM] Login retry exhausted (5x), next in 120s'); }\n        _r.attempt++;\n        _r.delay = 120000;\n        global.set('edge_retryState', _r);\n        setTimeout(function() {\n            var _r2 = global.get('edge_retryState') || {};\n            _r2.attempt = 0; _r2.delay = 10000;\n            global.set('edge_retryState', _r2);\n            retryLogin();\n        }, 120000);\n        return;\n    }\n    _r.attempt++;\n    var thisDelay = _r.delay || 10000;\n    _r.delay = Math.min((_r.delay || 10000) * 2, 60000);\n    global.set('edge_retryState', _r);\n    setTimeout(function () {\n        var user = global.get('edge_backendUser');\n        var pass = global.get('edge_backendPass');\n        var host = global.get('edge_backendHost') || '127.0.0.1';\n        var port = global.get('edge_backendPort') || 9099;\n        var retryOpts = {\n            hostname: host, port: port, path: '/login', method: 'POST',\n            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }\n        };\n        if (DEBUG) node.warn('[CM] Retry login in ' + (thisDelay/1000) + 's (attempt ' + _r.attempt + '/5)...');\n        var retryReq = http.request(retryOpts, function (res) {\n            var b = '';\n            res.on('data', function (d) { b += d; });\n            res.on('end', function () {\n                var newJwt = '';\n                try {\n                    var r = JSON.parse(b);\n                    newJwt = (r.data && r.data.token) ? r.data.token : (r.token || '');\n                } catch (e) {}\n                if (newJwt) {\n                    var _r2 = global.get('edge_retryState') || {};\n                    _r2.attempt = 0; _r2.delay = 10000;\n                    global.set('edge_retryState', _r2);\n                    global.set('edge_jwt', newJwt);\n                    global.set('edge_reauthInProgress', false);\n                    if (DEBUG) node.warn('[CM] Retry login OK, discovering...');\n                    discoverNodeId(function (nid) {\n                    // 🔧 P1-18: nodeId 获取失败即放弃本轮（30s 后自动重试），不编造幽灵 id\n                    if (nid > 0) { discoverTags(nid); return; }\n                    node.warn('[CM] nodeId unavailable after login retry, abort this round');\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', false);\n                    global.set('edge_last_config_ts', new Date().toISOString());\n                    node.send([null, null]);\n                });\n                } else {\n                    if (DEBUG) node.warn('[CM] Retry login failed (attempt ' + _r.attempt + '/5), retrying...');\n                    retryLogin();\n                }\n            });\n        });\n        retryReq.setTimeout(5000, function () {\n            retryReq.destroy();\n            if (DEBUG) node.warn('[CM] Retry login timeout (attempt ' + _r.attempt + '/5)');\n            retryLogin();\n        });\n        retryReq.on('error', function () {\n            if (DEBUG) node.warn('[CM] Retry login network error (attempt ' + _r.attempt + '/5)');\n            retryLogin();\n        });\n        retryReq.write('username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass));\n        retryReq.end();\n    }, thisDelay);\n}\n\n// Execute: nodeId → tags\ndiscoverNodeId(function (nid) {\n    // 🔧 P1-18: nodeId 获取失败即放弃本轮（30s 后自动重试），不编造幽灵 id\n    if (nid > 0) { discoverTags(nid); return; }\n    node.warn('[CM] nodeId unavailable, abort config pull this round');\n    global.set('edge_config_manager_lock', null);\n    global.set('edge_configReady', false);\n    global.set('edge_last_config_ts', new Date().toISOString());\n    node.send([null, null]);\n});\n\nreturn null;",
+  "outputs": 2,
+  "noerr": 0,
+  "libs": [],
+  "x": 680,
+  "y": 100,
+  "wires": [
+   [],
+   []
+  ]
+ },
+ {
+  "id": "fa6568bf38123aad",
+  "type": "debug",
+  "z": "ef13b883a5871c8a",
+  "name": "Login Response",
+  "active": false,
+  "console": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "x": 680,
+  "y": 160,
+  "wires": []
+ },
+ {
+  "id": "0436f50c71986b82",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 1. 配置管线 ====",
+  "x": 120,
+  "y": 40,
+  "wires": []
+ },
+ {
+  "id": "da2851aad1f1a5c7",
+  "type": "inject",
+  "z": "2609f416db83bdd1",
+  "name": "启动(2s)",
+  "props": [],
+  "repeat": "",
+  "crontab": "",
+  "once": true,
+  "onceDelay": 2,
+  "topic": "",
+  "x": 160,
+  "y": 100,
+  "wires": [
+   [
+    "4faca782338b2564"
+   ]
+  ]
+ },
+ {
+  "id": "787354352d01b8ee",
+  "type": "inject",
+  "z": "2609f416db83bdd1",
+  "name": "30s兜底刷新",
+  "props": [
+   {
+    "p": "payload"
+   }
+  ],
+  "repeat": "30",
+  "once": false,
+  "payload": "{}",
+  "payloadType": "json",
+  "x": 160,
+  "y": 160,
+  "wires": [
+   [
+    "4faca782338b2564"
+   ]
+  ]
+ },
+ {
+  "id": "f1a2b3c4d5e6f708",
+  "type": "mqtt in",
+  "z": "2609f416db83bdd1",
+  "name": "配置刷新通知",
+  "topic": "edgelink/notify/broadcast",
+  "qos": "1",
+  "broker": "e4ab22d0d6b3309c",
+  "inputs": 0,
+  "x": 160,
+  "y": 220,
+  "wires": [
+   [
+    "f2a3b4c5d6e7f809"
+   ]
+  ],
+  "datatype": "auto-detect"
+ },
+ {
+  "id": "f2a3b4c5d6e7f809",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "过滤本机CONFIG_REFRESH",
+  "func": "var p = msg.payload;\nif (!p || !p.alert_type) { return null; }\n\nvar myNodeId = global.get('edge_nodeId') || 0;\nvar myIp = global.get('edge_hostPcIp') || '';\n\n// 🔧 节点停用/启用下发（kill switch）：后端在密钥停用时实时推送 NODE_STATUS\nif (p.alert_type === 'NODE_STATUS') {\n    // 🔧 Day7/P1-6: 空 host_pc_ip 不再放行（广播误伤全部节点）；优先 node_id 精确匹配\n    if (p.node_id && p.node_id > 0) {\n        if (p.node_id !== myNodeId) { return null; }\n    } else {\n        if (!p.host_pc_ip || p.host_pc_ip !== myIp) { return null; }\n    }\n    var disabled = (p.alert_msg === 'disabled');\n    global.set('edge_nodeDisabled', disabled);\n    // 持久化到配置缓存文件：Node-RED 重启后仍能记住停用状态\n    try {\n        var _fs = global.get('fs');\n        var _path = global.get('path');\n        if (_fs && _path) {\n            var cacheFile = _path.join(global.get('userDir') || '.', 'edge_config_cache.json');\n            var cache = {};\n            if (_fs.existsSync(cacheFile)) { try { cache = JSON.parse(_fs.readFileSync(cacheFile, 'utf8')); } catch (e) {} }\n            cache.disabled = disabled;\n            _fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 2));\n        }\n    } catch (e) {}\n    if (disabled) {\n        // 立即清空采集配置：调度器无设备可采 → 采集停止、PG 写入停止\n        global.set('edge_devices', []);\n        global.set('edge_tagConfigs', {});\n        global.set('edge_configReady', false);\n        node.warn('[CM] ⚠ 本节点已被后端停用，采集已停止（等待重新启用）');\n        node.status({ fill: 'red', shape: 'ring', text: 'DISABLED by server' });\n        return null;\n    }\n    node.warn('[CM] ✅ 本节点已重新启用，重新拉取配置');\n    return { payload: {} };\n}\n\nif (p.alert_type !== 'CONFIG_REFRESH') { return null; }\n\n// P1#17: 优先按 node_id 精确匹配；node_id 缺失时回退到 host_pc_ip\nif (p.node_id && p.node_id > 0) {\n    if (p.node_id !== myNodeId) { return null; }\n} else {\n    if (p.host_pc_ip && p.host_pc_ip !== myIp) { return null; }\n}\n\n// 触发配置管理中心刷新（复用现有 JWT 路径）\nreturn { payload: {} };",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 360,
+  "y": 220,
+  "wires": [
+   [
+    "4faca782338b2564"
+   ]
+  ]
+ },
+ {
+  "id": "4faca782338b2564",
+  "type": "subflow:ef13b883a5871c8a",
+  "z": "2609f416db83bdd1",
+  "name": "配置管理中心",
+  "x": 400,
+  "y": 120,
+  "wires": [
+   [
+    "7ea162576aa3bd16"
+   ],
+   [
+    "292cdd6123b54dc0"
+   ]
+  ]
+ },
+ {
+  "id": "7ea162576aa3bd16",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "配置就绪",
+  "func": "var d=global.get(\"edge_devices\")||[];node.status({fill:\"green\",shape:\"dot\",text:d.length+\" devs\"});return msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 660,
+  "y": 120,
+  "wires": [
+   []
+  ]
+ },
+ {
+  "id": "292cdd6123b54dc0",
+  "type": "mqtt out",
+  "z": "2609f416db83bdd1",
+  "name": "节点上线",
+  "topic": "",
+  "qos": "1",
+  "retain": "true",
+  "broker": "e4ab22d0d6b3309c",
+  "x": 660,
+  "y": 180,
+  "wires": []
+ },
+ {
+  "id": "6a1390951acd516b",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 2. 采集管线 (npm节点) =====",
+  "x": 120,
+  "y": 260,
+  "wires": []
+ },
+ {
+  "id": "5e38e874ed4bd1f2",
+  "type": "inject",
+  "z": "2609f416db83bdd1",
+  "name": "1秒触发",
+  "props": [
+   {
+    "p": "payload"
+   }
+  ],
+  "repeat": "1",
+  "crontab": "",
+  "once": true,
+  "onceDelay": 10,
+  "topic": "",
+  "payload": "{}",
+  "payloadType": "json",
+  "x": 160,
+  "y": 320,
+  "wires": [
+   [
+    "73c70350d51c69f9"
+   ]
+  ]
+ },
+ {
+  "id": "73c70350d51c69f9",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "调度器",
+  "func": "var d=global.get(\"edge_devices\")||[];\nif(!d.length){node.status({fill:\"grey\",shape:\"dot\",text:\"no devs\"});return null;}\nvar now=Date.now(),last=global.get(\"edge_deviceLastScan\")||{};\nvar commSt=global.get(\"edge_commStatus\")||{};\nvar out=[];\nd.forEach(function(v){\n  var iv=v.scanIntervalMs||1000;\n  // 离线退避：连续失败>3次，扫描间隔翻倍，最大60s\n  var cs=commSt[v.id]||{};\n  var fails=cs.consecutiveFails||0;\n  if(fails>3){iv=Math.min(iv*(1+fails-3),60000);}\n  var prev=last[v.id];\n  if(prev && (now-prev)<iv) return;\n  last[v.id]=now;\n  out.push({payload:{id:v.id,deviceName:v.deviceName,comType:v.comType,plcIp:v.plcIp,plcPort:v.plcPort,driverCode:v.driverCode||'',driverConfig:v.driverConfig||{},protocolParams:v.protocolParams||{},tags:v.tags||[],timeout:v.commTimeoutMs||3000,maxRetries:v.retryCount||2,retryInterval:v.retryIntervalMs||300}});\n});\nglobal.set(\"edge_deviceLastScan\",last);\nnode.status({fill:\"green\",shape:\"dot\",text:out.length+\"/\"+d.length+\" devs\"});\nreturn out.length?[out]:null;  // 🔧 修复P0-1：单输出 function 返回 flat 数组只发 out[0]（多设备饿死），嵌套数组才逐条扇出",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 380,
+  "y": 320,
+  "wires": [
+   [
+    "3ebdaf5c1f89f23c"
+   ]
+  ]
+ },
+ {
+  "id": "3ebdaf5c1f89f23c",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "driverCode分流",
+  "func": "// driverCode 动态分流：按 plc_driver.node_red_node_type 路由到对应驱动节点\nvar d=msg.payload;\nif(!d){return null;}\nvar dc=String(d.driverCode||'').toLowerCase();\nif(!dc){\n    // 兼容旧数据：按 comType 推断\n    var ct=String(d.comType||'').toLowerCase().replace(/[^a-z0-9]/g,'');\n    if(ct.indexOf('modbus')>-1||ct.indexOf('modbustcp')>-1) dc='modbus_tcp';\n    else if(ct.indexOf('mc')>-1||ct.indexOf('got')>-1) dc='mitsubishi_mc';\n    else if(ct.indexOf('s7')>-1) dc='siemens_s7';  // 🔧 2026-08-23: S7 comType 回退识别（快照未带 driverCode 的旧快照兼容）\n}\nif(dc.indexOf('mitsubishi')>-1) return [msg,null,null];\nif(dc.indexOf('modbus')>-1) return [null,msg,null];\nif(dc.indexOf('s7')>-1) return [null,null,msg];  // 🔧 2026-08-23: S7 驱动（siemens_s7 → s7-read）\n// 未知驱动：记录警告并丢弃，避免错误路由\nnode.warn('[Router] Unknown driverCode: '+d.driverCode+' for device '+d.deviceName);\nreturn null;",
+  "outputs": 3,
+  "noerr": 0,
+  "libs": [],
+  "x": 580,
+  "y": 320,
+  "wires": [
+   [
+    "cc912cd714f86f9a"
+   ],
+   [
+    "9805a9652af7837c"
+   ],
+   [
+    "s7read00000000001"
+   ]
+  ]
+ },
+ {
+  "id": "cc912cd714f86f9a",
+  "type": "mitsubishi-read",
+  "z": "2609f416db83bdd1",
+  "name": "MC读取",
+  "plc": "99ddb5a6be2d488c",
+  "serialNo": 0,
+  "tags": "[]",
+  "x": 800,
+  "y": 280,
+  "wires": [
+   [
+    "7d3dc66cacfaf698",
+    "15beb34496aa3f31"
+   ]
+  ]
+ },
+ {
+  "id": "9805a9652af7837c",
+  "type": "modbus-read",
+  "z": "2609f416db83bdd1",
+  "name": "Modbus读取",
+  "modbus": "1591130e8f1cac2c",
+  "tags": "[]",
+  "x": 800,
+  "y": 360,
+  "wires": [
+   [
+    "7d3dc66cacfaf698",
+    "945348202a2fb7b6"
+   ]
+  ]
+ },
+ {
+  "id": "7d3dc66cacfaf698",
+  "type": "subflow:460782f9f254b482",
+  "z": "2609f416db83bdd1",
+  "name": "数据管道",
+  "x": 1060,
+  "y": 320,
+  "wires": [
+   [
+    "aef850f034b0f8da"
+   ],
+   [
+    "5c1f5be83e1217f6"
+   ]
+  ]
+ },
+ {
+  "id": "aef850f034b0f8da",
+  "type": "mqtt out",
+  "z": "2609f416db83bdd1",
+  "name": "MQTT实时数据",
+  "topic": "",
+  "qos": "1",
+  "retain": "false",
+  "broker": "e4ab22d0d6b3309c",
+  "x": 1320,
+  "y": 280,
+  "wires": []
+ },
+ {
+  "id": "5c1f5be83e1217f6",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "PG格式转换",
+  "func": "var p=msg.payload;\nif(!p||!p.pgRecords||!p.pgRecords.length)return null;\n// 数值清洗：boolean→1/0，NaN/Infinity→null，数字字符串→数值，其它非法值→null（NULL 不会毒化整批 INSERT）\nfunction num(v){if(v==null)return null;if(typeof v==='boolean')return v?1:0;if(typeof v==='number')return isFinite(v)?v:null;if(v==='')return null;var n=Number(v);return isNaN(n)?null:n;}\nvar rows=[];\nfor(var i=0;i<p.pgRecords.length;i++){\n  var r=p.pgRecords[i];\n  rows.push({insert_time:r.ts||r.insert_time||new Date().toISOString(),node_id:r.node_id||r.nodeId||null,device_id:r.device_id||r.deviceId||\"\",device_name:r.device_name||r.deviceName||\"\",tag_id:r.tag_id||r.tagId||\"\",tag_address:r.tag_address||r.tagAddr||\"\",tag_name:r.tag_name||r.tagName||\"\",register_type:r.register_type||r.regType||\"\",raw_value:num(r.raw_value),eng_value:num(r.eng_value),unit:r.unit||\"\",quality:(function(q){if(q==null)return 0;if(typeof q==='number')return q;var s=String(q).toUpperCase();if(s==='GOOD')return 0;if(s==='BAD')return 1;if(s==='UNCERTAIN')return 2;var v=parseInt(s,10);return isNaN(v)?0:v;})(r.quality)  /* 🔧 quality 列为 NUMERIC，字符串 'GOOD' 会导致整批 INSERT 被丢弃 */,host_pc_ip:r.host_pc_ip||r.hostPcIp||\"\"});\n}\nmsg.payload={rows:rows};\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 1240,
+  "y": 360,
+  "wires": [
+   [
+    "3ac5d811e78e0453"
+   ]
+  ]
+ },
+ {
+  "id": "3ac5d811e78e0453",
+  "type": "edgelink-pg-store",
+  "z": "2609f416db83bdd1",
+  "name": "PG批量写入",
+  "pgConfig": "7b5603f8b42934ab",
+  "tableName": "edgelink.plc_data",
+  "batchSize": 100,
+  "bufferMax": 5000,
+  "flushInterval": 5000,
+  "retryBufferMax": 1000,
+  "retryInterval": 5000,
+  "autoCreateTable": true,
+  "useTimescaleDB": false,
+  "x": 1440,
+  "y": 360,
+  "wires": [
+   [
+    "569be941deb2e793"
+   ]
+  ]
+ },
+ {
+  "id": "881401746908098a",
+  "type": "debug",
+  "z": "2609f416db83bdd1",
+  "name": "PG输出",
+  "active": true,
+  "tosidebar": true,
+  "console": false,
+  "complete": "payload",
+  "targetType": "msg",
+  "statusVal": "",
+  "statusType": "auto",
+  "x": 1620,
+  "y": 360,
+  "wires": []
+ },
+ {
+  "id": "81cc415077f4d4fa",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 3. 握手触发 =====",
+  "x": 120,
+  "y": 460,
+  "wires": []
+ },
+ {
+  "id": "b9c470c5ca6888f7",
+  "type": "mqtt in",
+  "z": "2609f416db83bdd1",
+  "name": "握手触发",
+  "topic": "edgelink/trigger/scan/#",
+  "qos": "1",
+  "broker": "e4ab22d0d6b3309c",
+  "inputs": 0,
+  "x": 160,
+  "y": 520,
+  "wires": [
+   [
+    "16df5a6d82a22775"
+   ]
+  ],
+  "datatype": "auto-detect"
+ },
+ {
+  "id": "16df5a6d82a22775",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "解析握手",
+  "func": "var id=0;try{var p=typeof msg.payload===\"string\"?JSON.parse(msg.payload):msg.payload;id=p.deviceId||0;}catch(e){var m=(msg.topic||\"\").match(/trigger\\/scan\\/(\\d+)/);if(m)id=parseInt(m[1])||0;}if(id>0){var f=global.get(\"edge_handshakeFlags\")||{};f[id]=true;global.set(\"edge_handshakeFlags\",f);}return null;",
+  "outputs": 0,
+  "noerr": 0,
+  "libs": [],
+  "x": 380,
+  "y": 520,
+  "wires": []
+ },
+ {
+  "id": "046b4603fa7f767f",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 4. 监控管线 (30s) =====",
+  "x": 120,
+  "y": 680,
+  "wires": []
+ },
+ {
+  "id": "ad239826116664f1",
+  "type": "inject",
+  "z": "2609f416db83bdd1",
+  "name": "30秒监控",
+  "props": [
+   {
+    "p": "payload"
+   }
+  ],
+  "repeat": "30",
+  "once": true,
+  "onceDelay": 30,
+  "payload": "{}",
+  "payloadType": "json",
+  "x": 160,
+  "y": 740,
+  "wires": [
+   [
+    "sub-v12-monitor"
+   ]
+  ]
+ },
+ {
+  "id": "4dd57503e3a939e9",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 5. 本地监控 API =====",
+  "x": 120,
+  "y": 820,
+  "wires": []
+ },
+ {
+  "id": "99dccb61c1160d20",
+  "type": "subflow:d13fa5c3f8b66387",
+  "z": "2609f416db83bdd1",
+  "name": "本地监控API",
+  "x": 420,
+  "y": 880,
+  "wires": [
+   [
+    "4faca782338b2564"
+   ]
+  ]
+ },
+ {
+  "id": "9c487cdd913bf233",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "=== EdgeLink v12.1 | 3npm + 4subflow | 2026-07-04 ===",
+  "info": "npm: mitsubishi-read v1.2.0 + modbus-read v1.1.0 + edgelink-pg-store v1.1.0\nsubflow: config-manager + data-processor + monitor + local-api\nv12.1: OOM fix(lock skip) + 4E fix(serialNo) + URL encoding + deviceId(id first) + PG pool fix + buffer limits",
+  "x": 120,
+  "y": 960,
+  "wires": []
+ },
+ {
+  "id": "15beb34496aa3f31",
+  "type": "debug",
+  "z": "2609f416db83bdd1",
+  "name": "debug 4",
+  "active": false,
+  "tosidebar": true,
+  "console": false,
+  "tostatus": false,
+  "complete": "false",
+  "statusVal": "",
+  "statusType": "auto",
+  "x": 1080,
+  "y": 200,
+  "wires": []
+ },
+ {
+  "id": "945348202a2fb7b6",
+  "type": "debug",
+  "z": "2609f416db83bdd1",
+  "name": "debug 6",
+  "active": false,
+  "tosidebar": true,
+  "console": false,
+  "tostatus": false,
+  "complete": "false",
+  "statusVal": "",
+  "statusType": "auto",
+  "x": 1120,
+  "y": 560,
+  "wires": []
+ },
+ {
+  "id": "569be941deb2e793",
+  "type": "function",
+  "z": "2609f416db83bdd1",
+  "name": "PG计数更新",
+  "func": "// 从 edgelink-pg-store 输出更新全局计数\nvar p = msg.payload || {};\nvar sc = global.get('edge_pg_success_count') || 0;\nvar fc = global.get('edge_pg_fail_count') || 0;\nif (p.inserted) {\n    global.set('edge_pg_success_count', sc + p.inserted);\n    global.set('edge_pg_last_write_ts', new Date().toISOString());\n    global.set('edge_pg_writing', false);\n}\n// 🔧 Day7/P1-13: spool 重放的行计入成功（此前 replayed 无人统计，success 长期低估）\nif (p.replayed) {\n    global.set('edge_pg_success_count', (global.get('edge_pg_success_count') || 0) + p.replayed);\n    global.set('edge_pg_last_write_ts', new Date().toISOString());\n}\nif (p.failed) {\n    global.set('edge_pg_fail_count', fc + p.failed);\n    global.set('edge_pg_last_error', p.error || '');\n}\nif (p.buffered != null) {\n    global.set('edge_pg_last_latency_ms', p.roundTimeMs || 0);\n    // 🔧 Day7: 死指标接线——队列积压上报（01 节点状态汇总的 pgQueueSize 此前恒 0）\n    global.set('edge_pg_queue', (p.buffered || 0) + (p.retryBuffered || 0));\n}\nreturn msg;",
+  "outputs": 1,
+  "noerr": 0,
+  "libs": [],
+  "x": 1620,
+  "y": 400,
+  "wires": [
+   [
+    "881401746908098a"
+   ]
+  ]
+ },
+ {
+  "id": "sf-monitor",
+  "type": "subflow",
+  "name": "sf-monitor",
+  "info": "监控与心跳 v10: 30s心跳 + device-comm批量 + PG统计 + 401reauth\n\n输入: inject(30s) → 触发心跳 + 批量上报\n输出1: MQTT心跳消息\n输出2: reauth触发 (401时)\n\n⚠ HTTP API 已拆出 → sf-local-api (6端点, /api/v10/monitor/)\n\nv10 P0修正:\n- device-comm 仅状态变化时上报 (edge_commPending由sf-data-processor推入)\n- 消费频率与心跳一致(30s)\n- 401检测 → Output2 → 主Flow回连sf-config-manager",
+  "category": "edgelink-v10",
+  "in": [
+   {
+    "wires": [
+     {
+      "id": "sf-mon-fn-heartbeat"
+     }
+    ]
+   }
+  ],
+  "out": [
+   {
+    "wires": [
+     {
+      "id": "sf-mon-fn-heartbeat",
+      "port": 0
+     }
+    ]
+   },
+   {
+    "wires": [
+     {
+      "id": "sf-mon-fn-heartbeat",
+      "port": 1
+     }
+    ]
+   }
+  ],
+  "env": [],
+  "meta": {},
+  "color": "#FB8072"
+ },
+ {
+  "id": "sf-mon-fn-heartbeat",
+  "type": "function",
+  "z": "sf-monitor",
+  "name": "心跳 + 批量上报",
+  "func": "// === sf-monitor: 30s心跳 + device-comm批量消费 + PG统计 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar jwt = global.get('edge_jwt') || '';\nvar DEBUG = global.get('edge_debug') || false;\nvar apiKey = global.get('edge_apiKey');\nif (!apiKey) { node.error('[CM] edge_apiKey not configured'); global.set('edge_config_manager_lock', null); return null; }\nvar devices = global.get('edge_devices') || [];\n\nvar now = new Date().toISOString();\n\n// Phase E: pendingOps ensures async 401 detection completes before node.send\nvar pendingOps = 1;  // 🔧 P1: consumed by tryFinalSend below; reportPgStats and consumeDeviceComm each add their share\nvar reauthNeeded = false;\nvar _sent = false;\nfunction tryFinalSend() {\n    if (_sent) return;\n    pendingOps--;\n    if (pendingOps <= 0) {\n        _sent = true;\n        var reauthMsg = reauthNeeded ? { payload: { action: 'reauth' } } : null;\n        node.send([mqttMsg, reauthMsg]);\n    }\n}\n\nif (!global.get('edge_configReady')) {\n    node.status({ fill: 'grey', shape: 'dot', text: 'wait config' });\n    return [null, null];\n}\n\n// === Memory usage ===\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? Math.round(pr.memoryUsage().rss / 1024 / 1024) : 0; } catch (e) { mem = 0; }\n\n// === Build MQTT heartbeat (Output 1) ===\n// === 所有设备定期上报 online（修复离线判定滞后）===\nfunction reportAllDevicesOnline() {\n    var devs = global.get('edge_devices') || [];\n    var commStat = global.get('edge_commStatus') || {};\n    try {\n    devs.forEach(function(d) {\n        var cs = commStat[d.id] || {};\n        // 有最近成功记录且连续失败为0 → online\n        var ok = (cs.consecutiveFails || 0) === 0 && cs.lastSuccessTime;\n        // 每个设备单独上报\n        var dp = 'node_id=' + encodeURIComponent(nodeId) + '&device_id=' + encodeURIComponent(d.id)\n            + '&success=' + (ok ? 'true' : 'false')\n            + '&error_msg=' + encodeURIComponent(ok ? '' : 'no recent success');\n        var opts = {\n            hostname: HOST, port: PORT, path: '/monitor/device-comm?' + dp, method: 'POST',\n            headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n        };\n        var r = http.request(opts, function(res) { res.resume(); });\n        r.setTimeout(2000, function() { r.destroy(); });\n        r.on('error', function() {});\n        r.write('{}');\n        r.end();\n    });\n    if (DEBUG && devs.length > 0) node.warn('[Monitor] Reported ' + devs.length + ' devices online');\n    } catch(ex) { node.warn('[Monitor] reportAllDevicesOnline error: ' + ex.message); }\n}\n\nvar devList = devices.map(function (d) {\n    var status = (global.get('edge_commStatus') || {})[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName,\n        online: (status.consecutiveFails || 0) === 0,\n        consecutiveFails: status.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\n\nvar mqttMsg = {\n    topic: 'edgelink/heartbeat/' + nodeId,\n    payload: JSON.stringify({\n        node_id: nodeId, host_pc_ip: hostPcIp,\n        device_count: devices.length, devices: devList,\n        running_flows: 5, memory_usage_mb: mem, status: 'online', ts: now\n    }),\n    qos: 1, retain: false\n};\n\n// === HTTP Heartbeat (async) ===\n// === #88: 健康指标（PG 写入统计 + 磁盘 spool 积压）===\nvar pgSuccess = global.get('edge_pg_success_count') || 0;\nvar pgFail = global.get('edge_pg_fail_count') || 0;\nvar spoolBytes = 0;\ntry {\n    var _fs = global.get('fs');\n    var _path = global.get('path');\n    if (_fs && _path) {\n        var spoolDir = _path.join(global.get('userDir') || '.', 'edgelink_pg_spool');\n        if (_fs.existsSync(spoolDir)) {\n            _fs.readdirSync(spoolDir).forEach(function (fname) {\n                try { spoolBytes += _fs.statSync(_path.join(spoolDir, fname)).size; } catch (e) {}\n            });\n        }\n    }\n} catch (e) { spoolBytes = 0; }\n\nvar params = 'host_pc_ip=' + encodeURIComponent(hostPcIp)\n    + '&node_ip=' + encodeURIComponent(hostPcIp)\n    + '&running_flows=5&memory_usage_mb=' + mem\n    + '&pg_success_count=' + pgSuccess + '&pg_fail_count=' + pgFail + '&spool_bytes=' + spoolBytes\n    + (global.get('edge_configVersion') ? '&config_version=' + global.get('edge_configVersion') : '');  // 🔧 捎带已应用快照版本\n\nvar hbOpts = {\n    hostname: HOST, port: PORT, path: '/monitor/heartbeat?' + params, method: 'POST',\n    headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n};\n\nvar hbReq = http.request(hbOpts, function (res) {\n    var b = '';\n    res.on('data', function (d) { b += d; });\n    res.on('end', function () {\n        if (res.statusCode === 401 && !global.get('edge_reauthInProgress')) {\n            node.warn('[Monitor] JWT expired (401), trigger re-login');\n            global.set('edge_jwt', '');\n            global.set('edge_configReady', false);\n            global.set('edge_reauthInProgress', true);\n            reauthNeeded = true;\n        }\n        try {\n            var j = JSON.parse(b);\n            var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n            if (nid > 0 && nid !== nodeId) {\n                global.set('edge_nodeId', nid);\n                if (DEBUG) node.warn('[Monitor] nodeId updated: ' + nodeId + ' → ' + nid);\n            }\n            // 🔧 Day7/P1-6: kill switch 轮询兜底——心跳响应携带 disabled 标志，每周期比对\n            var disabledFlag = !!(j.data && j.data.disabled);\n            var curDisabled = !!global.get('edge_nodeDisabled');\n            if (disabledFlag !== curDisabled) {\n                global.set('edge_nodeDisabled', disabledFlag);\n                try {\n                    var _fs2 = global.get('fs'); var _path2 = global.get('path');\n                    if (_fs2 && _path2) {\n                        var cf = _path2.join(global.get('userDir') || '.', 'edge_config_cache.json');\n                        var cc = {};\n                        if (_fs2.existsSync(cf)) { try { cc = JSON.parse(_fs2.readFileSync(cf, 'utf8')); } catch (e2) {} }\n                        cc.disabled = disabledFlag;\n                        _fs2.writeFileSync(cf, JSON.stringify(cc, null, 2));\n                    }\n                } catch (e3) {}\n                if (disabledFlag) {\n                    global.set('edge_devices', []);\n                    global.set('edge_tagConfigs', {});\n                    global.set('edge_configReady', false);\n                    node.warn('[Monitor] ⚠ 本节点已被后端停用（心跳轮询发现），采集已停止');\n                } else {\n                    global.set('edge_configReady', false);\n                    node.warn('[Monitor] ✅ 本节点已重新启用（心跳轮询发现），等待下轮配置刷新');\n                }\n            }\n        } catch (e) {}\n        reportAllDevicesOnline();\n        node.status({ fill: res.statusCode === 200 ? 'green' : 'red', shape: 'dot', text: 'HB ' + res.statusCode });\n        consumeDeviceComm(tryFinalSend);\n        reportPgStats(tryFinalSend);\n        tryFinalSend();\n    });\n});\nhbReq.setTimeout(5000, function () {\n    hbReq.destroy();\n    reportAllDevicesOnline();\n    consumeDeviceComm(tryFinalSend);\n    reportPgStats(tryFinalSend);\n    tryFinalSend();\n});\nhbReq.on('error', function (e) {\n    if (DEBUG) node.warn('[Monitor] HB err: ' + e.message);\n    reportAllDevicesOnline();\n    consumeDeviceComm(tryFinalSend);\n    reportPgStats(tryFinalSend);\n    tryFinalSend();\n});\nhbReq.write('{}');\nhbReq.end();\n\n// === Device-comm consumer: drain edge_commPending (30s batch) ===\nfunction consumeDeviceComm(done) {\n    var pending = global.get('edge_commPending') || [];\n    if (pending.length === 0) { return; }  // 🔧 Don't call done() — nothing to consume, doesn't count\n    global.set('edge_commPending', []);\n    pendingOps += pending.length;\n    if (DEBUG) node.warn('[Monitor] Draining ' + pending.length + ' device-comm events');\n    pending.forEach(function (item) {\n        var itemDone = false;\n        function itemFinish() {\n            if (itemDone) return;\n            itemDone = true;\n            if (done) done();\n        }\n        var p = 'node_id=' + encodeURIComponent(nodeId) + '&device_id=' + encodeURIComponent(item.deviceId)\n            + '&success=' + (item.success ? 'true' : 'false')\n            + '&error_msg=' + encodeURIComponent(item.error || '');\n        var opts = {\n            hostname: HOST, port: PORT, path: '/monitor/device-comm?' + p, method: 'POST',\n            headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n        };\n        var req = http.request(opts, function (res) {\n            if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n            res.resume();\n            itemFinish();\n        });\n        req.setTimeout(3000, function () { req.destroy(); itemFinish(); });\n        req.on('error', function () { itemFinish(); });\n        req.write('{}');\n        req.end();\n    });\n}\n\n// === PG Write Stats reporter ===\nfunction reportPgStats(done) {\n    pendingOps++;  // 🔧 P1: count this async op\n    var pgDone = false;\n    function pgFinish() {\n        if (pgDone) return;\n        pgDone = true;\n        if (done) done();\n    }\n    var pgCount = global.get('edge_pg_success_count') || 0;\n    var pgFailCount = global.get('edge_pg_fail_count') || 0;\n    var pgPrev = global.get('edge_pg_prev_count') || 0;\n    var pgFailPrev = global.get('edge_pg_fail_prev') || 0;\n    var writeCount = pgCount - pgPrev;\n    var failCount = pgFailCount - pgFailPrev;\n    global.set('edge_pg_prev_count', pgCount);\n    global.set('edge_pg_fail_prev', pgFailCount);\n    var lastError = global.get('edge_pg_last_error') || '';\n    var success = (failCount === 0);\n    var p = 'node_id=' + encodeURIComponent(nodeId) + '&success=' + (success ? 'true' : 'false') + '&latency_ms=' + (global.get('edge_pg_last_latency_ms') || 5)\n        + '&write_count=' + writeCount + '&device_count=' + devices.length + '&error_msg=' + encodeURIComponent(lastError);\n    var opts = {\n        hostname: HOST, port: PORT, path: '/monitor/pg-write?' + p, method: 'POST',\n        headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n    };\n    var req = http.request(opts, function (res) {\n        if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n        res.resume();\n        pgFinish();\n    });\n    req.setTimeout(3000, function () { req.destroy(); pgFinish(); });\n    req.on('error', function () { pgFinish(); });\n    req.write('{}');\n    req.end();\n}\n\nreturn null;",
+  "outputs": 2,
+  "noerr": 0,
+  "libs": [],
+  "x": 200,
+  "y": 100,
+  "wires": [
+   [],
+   []
+  ]
+ },
+ {
+  "id": "sub-v12-monitor",
+  "type": "subflow:sf-monitor",
+  "z": "2609f416db83bdd1",
+  "name": "监控与心跳",
+  "x": 420,
+  "y": 740,
+  "wires": [
+   [
+    "mqtt-v12-heartbeat"
+   ],
+   [
+    "4faca782338b2564"
+   ]
+  ]
+ },
+ {
+  "id": "mqtt-v12-heartbeat",
+  "type": "mqtt out",
+  "z": "2609f416db83bdd1",
+  "name": "MQTT心跳",
+  "topic": "",
+  "qos": "1",
+  "retain": "false",
+  "broker": "e4ab22d0d6b3309c",
+  "x": 700,
+  "y": 720,
+  "wires": []
+ },
+ {
+  "id": "cmt-v12-monitor",
+  "type": "comment",
+  "z": "2609f416db83bdd1",
+  "name": "===== 4. 监控管线 (30s) =====",
+  "x": 120,
+  "y": 680,
+  "wires": []
+ },
+ {
+  "id": "s7cfg000000000001",
+  "type": "s7-config",
+  "z": "2609f416db83bdd1",
+  "name": "S7 默认配置",
+  "host": "127.0.0.1",
+  "port": 102,
+  "rack": 0,
+  "slot": 1,
+  "x": 780,
+  "y": 420,
+  "wires": []
+ },
+ {
+  "id": "s7read00000000001",
+  "type": "s7-read",
+  "z": "2609f416db83bdd1",
+  "name": "S7读取",
+  "s7": "s7cfg000000000001",
+  "tags": "[]",
+  "deviceId": "",
+  "x": 800,
+  "y": 420,
+  "wires": [
+   [
+    "7d3dc66cacfaf698"
+   ]
+  ]
+ }
+]

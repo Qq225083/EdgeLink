@@ -1,0 +1,76 @@
+[
+    {
+        "id": "mysql-config",
+        "type": "MySQLdatabase",
+        "name": "RuoYi PLC DB",
+        "host": "127.0.0.1",
+        "port": "3308",
+        "db": "ruoyi",
+        "user": "root",
+        "password": "",
+        "charset": "utf8mb4"
+    },
+    {
+        "id": "inject-timer",
+        "type": "inject",
+        "name": "每3秒轮询",
+        "props": [],
+        "repeat": "3",
+        "once": true,
+        "crontab": "",
+        "x": 90, "y": 100,
+        "wires": [["set-sql"]]
+    },
+    {
+        "id": "set-sql",
+        "type": "function",
+        "name": "SQL → msg.topic",
+        "func": "// ⚠️ SQL 写在 function 里，不配置在 mysql 节点的 query 属性中\n// 原因: mysql 节点的 query 在导出 flow 时会丢失！\n\nmsg.topic = `\nSELECT d.id AS device_id, d.device_name, d.device_code,\n       d.plc_brand, d.plc_series, d.com_type,\n       d.plc_ip, d.plc_port, d.mc_frame,\n       d.station_no, d.network_no,\n       d.scan_interval_ms, d.comm_timeout_ms,\n       d.retry_count, d.trigger_kind,\n       t.id AS tag_id, t.tag_name,\n       t.register_type, t.register_address,\n       t.data_type, t.unit\nFROM plc_device d\nJOIN plc_tag t ON d.id = t.device_id\nWHERE d.status = '0' AND d.del_flag = '0'\n  AND t.status = '0' AND t.del_flag = '0'\nORDER BY d.id, t.sort_order, t.id\n`;\nreturn msg;",
+        "outputs": 1,
+        "x": 270, "y": 100,
+        "wires": [["sql-query"]]
+    },
+    {
+        "id": "sql-query",
+        "type": "mysql",
+        "name": "拉取活跃PLC配置",
+        "mysql": "mysql-config",
+        "x": 470, "y": 100,
+        "wires": [["parse-and-mock"]]
+    },
+    {
+        "id": "parse-and-mock",
+        "type": "function",
+        "name": "分组 + 生成模拟值",
+        "func": "// 输入: SQL 查询结果 (msg.payload = rows array)\n// 输出: 按设备分组，每个点位附加模拟值\n\nconst rows = msg.payload || [];\nconst devices = {};\n\nfor (const row of rows) {\n    const did = row.device_id;\n    if (!devices[did]) {\n        devices[did] = {\n            device_id: did,\n            device_name: row.device_name,\n            device_code: row.device_code,\n            plc_brand: row.plc_brand,\n            plc_series: row.plc_series,\n            com_type: row.com_type,\n            plc_ip: row.plc_ip,\n            plc_port: row.plc_port,\n            mc_frame: row.mc_frame,\n            station_no: row.station_no,\n            network_no: row.network_no,\n            scan_interval_ms: row.scan_interval_ms,\n            comm_timeout_ms: row.comm_timeout_ms,\n            retry_count: row.retry_count,\n            trigger_kind: row.trigger_kind,\n            tags: []\n        };\n    }\n\n    let mockValue;\n    switch ((row.data_type || '').toUpperCase()) {\n        case 'INT16':\n            mockValue = Math.floor(Math.random() * 65535) - 32768;\n            break;\n        case 'INT32':\n            mockValue = Math.floor(Math.random() * 4294967295) - 2147483648;\n            break;\n        case 'FLOAT':\n            mockValue = parseFloat((Math.random() * 1000).toFixed(2));\n            break;\n        case 'BIT':\n            mockValue = Math.random() > 0.5 ? 1 : 0;\n            break;\n        default:\n            mockValue = Math.floor(Math.random() * 100);\n    }\n\n    devices[did].tags.push({\n        tag_id: row.tag_id,\n        tag_name: row.tag_name,\n        register_type: row.register_type,\n        register_address: row.register_address,\n        data_type: row.data_type,\n        unit: row.unit || '',\n        value: mockValue,\n        timestamp: new Date().toISOString()\n    });\n}\n\nconst result = Object.values(devices);\nmsg.payload = result;\nmsg.deviceCount = result.length;\nmsg.tagCount = rows.length;\n\nnode.status({\n    fill: 'green',\n    shape: 'dot',\n    text: `${result.length}设备 ${rows.length}点位 @ ${new Date().toLocaleTimeString()}`\n});\n\nreturn msg;",
+        "outputs": 1,
+        "x": 690, "y": 100,
+        "wires": [["debug-output", "http-out"]]
+    },
+    {
+        "id": "debug-output",
+        "type": "debug",
+        "name": "PLC模拟数据",
+        "active": true,
+        "console": false,
+        "complete": "payload",
+        "x": 930, "y": 60,
+        "wires": []
+    },
+    {
+        "id": "http-out",
+        "type": "http response",
+        "name": "HTTP API 输出",
+        "x": 930, "y": 140,
+        "wires": []
+    },
+    {
+        "id": "http-in",
+        "type": "http in",
+        "name": "GET /api/plc/data",
+        "url": "/api/plc/data",
+        "method": "get",
+        "x": 90, "y": 180,
+        "wires": [["set-sql"]]
+    }
+]

@@ -1,0 +1,283 @@
+[
+  {
+    "id": "sf-local-api",
+    "type": "subflow",
+    "name": "sf-local-api",
+    "info": "本地监控 HTTP API v10 (独立子Flow, 与 sf-monitor 解耦)\n\n6 个端点, /api/monitor/ 前缀:\n- GET  /api/monitor/status — 节点状态+设备摘要\n- GET  /api/monitor/device/:id — 设备详情+最新点位\n- GET  /api/monitor/alerts — 最近告警\n- GET  /api/monitor/history/:deviceId/:tagId — 点位历史\n- POST /api/monitor/alarms/clear — 清除告警\n- POST /api/monitor/config/refresh — 手动刷新配置 → Output 触发sf-config-manager\n\n⚠ 重要: http-in节点全局注册, 本子Flow只能拖1个实例, 否则路由冲突\n\nv10 P1修正: 从sf-monitor拆出, 避免心跳逻辑与HTTP路由耦合",
+    "category": "edgelink-v10",
+    "in": [],
+    "out": [
+      {
+        "wires": [
+          {
+            "id": "sf-api-fn-refresh",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {},
+    "color": "#80B1D3",
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-status",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "GET 节点状态",
+    "url": "/api/v10/monitor/status",
+    "method": "get",
+    "x": 100,
+    "y": 100,
+    "wires": [
+      [
+        "sf-api-fn-status"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-status",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "节点状态汇总",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar nodeId = global.get('edge_nodeId') || 0;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar devices = global.get('edge_devices') || [];\nvar commStatus = global.get('edge_commStatus') || {};\nvar configReady = global.get('edge_configReady') || false;\nvar startTime = global.get('edge_startTime');\nif (!startTime) { startTime = new Date().toISOString(); global.set('edge_startTime', startTime); }\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? parseFloat((pr.memoryUsage().rss / 1024 / 1024).toFixed(1)) : 0; } catch (e) { mem = 0; }\n\nvar deviceList = devices.map(function (d) {\n    var s = commStatus[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        online: (s.consecutiveFails || 0) === 0,\n        consecutiveFails: s.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\nvar uptime = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);\nmsg.payload = {\n    nodeId: nodeId, hostPcIp: hostPcIp,\n    configReady: configReady, uptimeSeconds: uptime, memoryUsageMb: mem,\n    deviceCount: devices.length,\n    onlineCount: deviceList.filter(function (d) { return d.online; }).length,\n    devices: deviceList,\n    pgQueueSize: (global.get('edge_pg_queue') || []).length,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 100,
+    "wires": [
+      [
+        "sf-api-resp-status"
+      ]
+    ]
+  },
+  {
+    "id": "sf-api-resp-status",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应状态",
+    "x": 540,
+    "y": 100,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-device",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "GET 设备详情",
+    "url": "/api/v10/monitor/device/:id",
+    "method": "get",
+    "x": 100,
+    "y": 180,
+    "wires": [
+      [
+        "sf-api-fn-device"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-device",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "设备详情",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar deviceId = parseInt(msg.req.params.id);\nvar devices = global.get('edge_devices') || [];\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar commStatus = global.get('edge_commStatus') || {};\n\nvar device = null;\nfor (var i = 0; i < devices.length; i++) {\n    if (devices[i].id === deviceId) { device = devices[i]; break; }\n}\nif (!device) {\n    msg.payload = { error: 'Device not found' };\n    msg.statusCode = 404;\n    return msg;\n}\nvar status = commStatus[deviceId] || {};\nvar tags = lastGoodTags[deviceId] || [];\nmsg.payload = {\n    id: device.id, name: device.deviceName,\n    comType: device.comType, plcIp: device.plcIp, plcPort: device.plcPort,\n    online: (status.consecutiveFails || 0) === 0,\n    consecutiveFails: status.consecutiveFails || 0,\n    tagCount: (device.tags || []).length,\n    latestValues: tags,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 180,
+    "wires": [
+      [
+        "sf-api-resp-device"
+      ]
+    ]
+  },
+  {
+    "id": "sf-api-resp-device",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应设备",
+    "x": 540,
+    "y": 180,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-alerts",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "GET 告警列表",
+    "url": "/api/v10/monitor/alerts",
+    "method": "get",
+    "x": 100,
+    "y": 260,
+    "wires": [
+      [
+        "sf-api-fn-alerts"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-alerts",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "告警列表",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar alerts = global.get('edge_recentAlerts') || [];\nmsg.payload = {\n    alerts: alerts.slice(-10).reverse(),\n    ts: new Date().toISOString()\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 260,
+    "wires": [
+      [
+        "sf-api-resp-alerts"
+      ]
+    ]
+  },
+  {
+    "id": "sf-api-resp-alerts",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应告警",
+    "x": 540,
+    "y": 260,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-history",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "GET 点位历史",
+    "url": "/api/v10/monitor/history/:deviceId/:tagId",
+    "method": "get",
+    "x": 100,
+    "y": 340,
+    "wires": [
+      [
+        "sf-api-fn-history"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-history",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "点位历史",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar deviceId = parseInt(msg.req.params.deviceId);\nvar tagId = parseInt(msg.req.params.tagId);\nvar limit = parseInt(msg.req.query.limit) || 300;\nvar history = global.get('edge_historyData') || {};\nvar devHistory = history[deviceId] || {};\nvar tagHistory = devHistory[tagId] || [];\nmsg.payload = {\n    deviceId: deviceId, tagId: tagId,\n    points: tagHistory.slice(-limit)\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 340,
+    "wires": [
+      [
+        "sf-api-resp-history"
+      ]
+    ]
+  },
+  {
+    "id": "sf-api-resp-history",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应历史",
+    "x": 540,
+    "y": 340,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-alarm-clear",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "POST 清除告警",
+    "url": "/api/v10/monitor/alarms/clear",
+    "method": "post",
+    "x": 100,
+    "y": 420,
+    "wires": [
+      [
+        "sf-api-fn-alarm-clear"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-alarm-clear",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "清除告警",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\nvar body = {};\ntry { body = msg.payload ? JSON.parse(typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload)) : {}; } catch (e) {}\nvar deviceId = body.deviceId || parseInt((msg.req.query || {}).deviceId) || 0;\n\nif (deviceId <= 0) {\n    msg.payload = { ok: false, error: 'deviceId is required (must be > 0)' };\n    msg.statusCode = 400;\n    return msg;\n}\nvar la = global.get('edge_lastAlarmTime') || {};\ndelete la['dev_' + deviceId];\nglobal.set('edge_lastAlarmTime', la);\nvar ra = global.get('edge_recentAlerts') || [];\nglobal.set('edge_recentAlerts', ra.filter(function (a) { return a.deviceId !== deviceId; }));\n\nmsg.payload = { ok: true, deviceId: deviceId };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 420,
+    "wires": [
+      [
+        "sf-api-resp-alarm-clear"
+      ]
+    ]
+  },
+  {
+    "id": "sf-api-resp-alarm-clear",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应清除",
+    "x": 540,
+    "y": 420,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-api-http-refresh",
+    "type": "http in",
+    "z": "sf-local-api",
+    "name": "POST 刷新配置",
+    "url": "/api/v10/monitor/config/refresh",
+    "method": "post",
+    "x": 100,
+    "y": 500,
+    "wires": [
+      [
+        "sf-api-fn-refresh"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-api-fn-refresh",
+    "type": "function",
+    "z": "sf-local-api",
+    "name": "触发配置刷新",
+    "func": "\n// === API Key auth ===\nvar apiKey = global.get(\"edge_apiKey\") || \"\";\nvar reqKey = (msg.req && msg.req.headers && msg.req.headers[\"x-api-key\"]) || \"\";\nif (reqKey !== apiKey) {\n    msg.payload = { error: \"Unauthorized\" };\n    msg.statusCode = 401;\n    return msg;\n}\n// Clear JWT → trigger full re-login in sf-config-manager\nglobal.set('edge_jwt', '');\nglobal.set('edge_configReady', false);\nmsg.payload = { ok: true, msg: 'Config refresh triggered' };\n// Output 0: HTTP response, Output 1: reauth signal to sf-config-manager\nreturn [msg, { payload: { action: 'reauth' } }];",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 500,
+    "wires": [
+      [
+        "sf-api-resp-refresh"
+      ],
+      []
+    ]
+  },
+  {
+    "id": "sf-api-resp-refresh",
+    "type": "http response",
+    "z": "sf-local-api",
+    "name": "响应刷新",
+    "x": 540,
+    "y": 500,
+    "wires": [],
+    "func": ""
+  }
+]

@@ -1,0 +1,168 @@
+{
+  "_comment": "EdgeLink EMQX 配置声明式备份（评审项 2.8）。恢复方式：见 docs/edgelink_mqtt_deploy.md 或 Day 9 恢复脚本。MQTT 用户密码无法导出（只写不读），密码在后端/前端 .env 中。 [2026-08-20 补录: edgelink_frontend 增加 edgelink/notify/# 订阅——Day1 遗漏导致前端 MQTT 批量订阅整体失败]",
+  "authentication": [
+    {
+      "backend": "built_in_database",
+      "enable": true,
+      "id": "password_based:built_in_database",
+      "mechanism": "password_based",
+      "password_hash_algorithm": {
+        "name": "sha256",
+        "salt_position": "suffix"
+      },
+      "user_id_type": "username"
+    }
+  ],
+  "authorization_settings": {
+    "cache": {
+      "enable": true,
+      "max_size": 32,
+      "ttl": "1m"
+    },
+    "deny_action": "ignore",
+    "no_match": "deny"
+  },
+  "authorization_sources": {
+    "sources": [
+      {
+        "enable": true,
+        "type": "built_in_database"
+      }
+    ]
+  },
+  "authorization_rules_users": {
+    "data": [
+      {
+        "rules": [
+          {
+            "action": "publish",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/notify/#"
+          }
+        ],
+        "username": "edgelink_backend"
+      },
+      {
+        "rules": [
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/notify/#"
+          },
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/trigger/#"
+          },
+          {
+            "action": "publish",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/alarm/#"
+          },
+          {
+            "action": "publish",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/nodes/#"
+          },
+          {
+            "action": "publish",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/heartbeat/#"
+          }
+        ],
+        "username": "edgelink_edge"
+      },
+      {
+        "rules": [
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/alarm/#"
+          },
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/heartbeat/#"
+          },
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/nodes/#"
+          },
+          {
+            "action": "subscribe",
+            "permission": "allow",
+            "qos": [
+              0,
+              1,
+              2
+            ],
+            "retain": "all",
+            "topic": "edgelink/notify/#"
+          }
+        ],
+        "username": "edgelink_frontend"
+      }
+    ],
+    "meta": {
+      "count": 3,
+      "hasnext": false,
+      "limit": 100,
+      "page": 1
+    }
+  }
+}

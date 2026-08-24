@@ -1,0 +1,88 @@
+[
+  {
+    "id": "sf-data-processor",
+    "type": "subflow",
+    "name": "sf-data-processor",
+    "info": "数据管道 v10: 换算/死区/质量码/历史缓存/双输出路由\n\n输入: msg.payload = { deviceId, deviceName, success, data: {tagId: {rawValue, quality, ts}}, error, driverType, plcIp, plcPort }\n输出1 (MQTT): { topic, payload, qos } → edgelink-v10/data/{nodeId}/{deviceId}\n输出2 (PG): { payload: { pgRecords: [...] } } → sf-pg-writer\n\nv10 P0修正:\n- triggerKind=2 变化检测由主Flow调度器负责，本节点不做过滤\n- device-comm 仅状态变化时推入 edge_commPending（在线↔离线）\n- deadband 过滤减少无效MQTT\n- lastGoodTags 合并更新（保留未读到tag的历史值）",
+    "category": "edgelink-v10",
+    "in": [
+      {
+        "wires": [
+          {
+            "id": "sf-dp-fn-process"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "wires": [
+          {
+            "id": "sf-dp-fn-process",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "wires": [
+          {
+            "id": "sf-dp-fn-process",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {},
+    "color": "#FDD0A2",
+    "func": ""
+  },
+  {
+    "id": "sf-dp-fn-process",
+    "type": "function",
+    "z": "sf-data-processor",
+    "name": "数据管道处理",
+    "func": "// === sf-data-processor v10: 换算 + 死区 + 质量码 + 历史 + 双输出 ===\nvar result = msg.payload;\nif (!result) { node.send([null, null]); return; }\n\n// === Per-device processing guard (prevents read-modify-write race) ===\nvar procGuard = global.get('edge_proc_guard') || {};\nvar guardEntry = procGuard[result.deviceId];\n// If locked but expired (>30s), force release (uncaught exception recovery)\nif (guardEntry && (Date.now() - guardEntry.ts > 30000)) {\n    delete procGuard[result.deviceId];\n    guardEntry = undefined;\n}\nif (guardEntry) {\n    // 🔧 Drop duplicate — scheduler will re-collect this device next cycle\n    if (DEBUG) node.warn('[DP] ProcGuard locked for device ' + result.deviceId + ', dropping duplicate');\n    return;\n}\nprocGuard[result.deviceId] = { ts: Date.now() };\n\ntry {\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar tagConfigs = global.get('edge_tagConfigs') || {};\nvar devTags = tagConfigs[result.deviceId] || [];\nvar now = new Date().toISOString();\nvar nowMs = Date.now();\nvar DEBUG = global.get('edge_debug') || false;\n\n// === State references ===\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar historyData = global.get('edge_historyData') || {};\nvar commStatus = global.get('edge_commStatus') || {};\nvar commPending = global.get('edge_commPending') || [];\nvar lastBadSend = global.get('edge_lastBadSend') || {};\n\nvar devId = result.deviceId;\nvar devName = result.deviceName || ('PLC-' + devId);\n\n// ===== FAILURE PATH =====\nif (!result.success) {\n    var status = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\n    status.consecutiveFails = (status.consecutiveFails || 0) + 1;\n    status.lastFailTime = nowMs;\n\n    // P0-3: Only push to pending on state change (online → offline)\n    if (status.lastState !== 'offline') {\n        status.lastState = 'offline';\n        commPending.push({\n            deviceId: devId,\n            success: false,\n            error: result.error || 'communication failure',\n            consecutiveFails: status.consecutiveFails,\n            ts: now\n        });\n        global.set('edge_commPending', commPending);\n        if (DEBUG) node.warn('[DP] Device ' + devName + ' state: online → offline');\n        // Publish PLC_OFFLINE alarm via MQTT (v9.1 parity)\n        var alarmMsg = {\n            topic: 'edgelink/alarm/plc_offline/' + devId,\n            payload: JSON.stringify({\n                alert_type: 'PLC_OFFLINE',\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                msg: devName + ' communication failure: ' + (result.error || 'unknown'),\n                ts: now\n            }),\n            qos: 1,\n            retain: false\n        };\n        var alerts = global.get('edge_recentAlerts') || [];\n        alerts.push({\n            alertType: 'PLC_OFFLINE',\n            deviceId: devId,\n            deviceName: devName,\n            msg: result.error || 'communication failure',\n            ts: now\n        });\n        if (alerts.length > 20) alerts = alerts.slice(-20);\n        global.set('edge_recentAlerts', alerts);\n    }\n    commStatus[devId] = status;\n    global.set('edge_commStatus', commStatus);\n\n    // Re-publish last-good values with BAD quality (throttled: max every 30s)\n    var shouldSendBad = !lastBadSend[devId] || (nowMs - lastBadSend[devId] > 30000);\n    var mqttMsg = null;\n    if (shouldSendBad && lastGoodTags[devId] && lastGoodTags[devId].length > 0) {\n        lastBadSend[devId] = nowMs;\n        global.set('edge_lastBadSend', lastBadSend);\n        var badVals = JSON.parse(JSON.stringify(lastGoodTags[devId]));\n        badVals.forEach(function (v) { v.quality = 1; });\n        mqttMsg = {\n            topic: 'edgelink/data/' + nodeId + '/' + devId,\n            payload: JSON.stringify({\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                ts: now,\n                value_count: badVals.length,\n                values: badVals,\n                quality: 'BAD'\n            }),\n            qos: 1,\n            retain: false\n        };\n    }\n\n    delete procGuard[devId];\n    global.set('edge_proc_guard', procGuard);\n    // Send alarm + BAD data as array so mqtt-out publishes both\n    var mqttOut = alarmMsg ? (mqttMsg ? [alarmMsg, mqttMsg] : [alarmMsg]) : (mqttMsg || null);\n    node.send([mqttOut, null]);\n    node.status({ fill: 'red', shape: 'ring', text: devName + ' OFFLINE' });\n    return;\n}\n\n// ===== SUCCESS PATH =====\n\n// Reset comm status on success\nvar prevStatus = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\nvar wasOffline = prevStatus.lastState === 'offline';\ncommStatus[devId] = { consecutiveFails: 0, lastState: 'online', lastSuccessTime: nowMs };\nglobal.set('edge_commStatus', commStatus);\n\n// P0-3: Push to pending on recovery (offline → online)\nif (wasOffline) {\n    commPending.push({\n        deviceId: devId,\n        success: true,\n        error: '',\n        consecutiveFails: 0,\n        ts: now\n    });\n    global.set('edge_commPending', commPending);\n    if (DEBUG) node.warn('[DP] Device ' + devName + ' state: offline → online (recovered)');\n}\n\nvar stdData = result.data || {};\nvar tagValues = [];\nvar pgRecords = [];\nvar validCount = 0;\nvar skippedCount = 0;\n\n// Process each tag\n(devTags.length > 0 ? devTags : []).forEach(function (tag) {\n    var entry = stdData[tag.id];\n    if (!entry || entry.rawValue === undefined || entry.rawValue === null) {\n        // Tag not in this read, mark as missing\n        tagValues.push({\n            tag_id: tag.id,\n            tag_address: tag.regAddr || '',\n            tag_name: tag.name || '',\n            raw_value: null,\n            eng_value: null,\n            unit: tag.unit || '',\n            quality: 2,\n            ts: now\n        });\n        return;\n    }\n\n    // Step 1: Transform (slope/offset, linear)\n    var eng = entry.rawValue;\n    var tform = tag.tform || tag.transformType || 'none';\n    if (tform === 'slope_offset' || tform === 'linear') {\n        eng = entry.rawValue * (tag.slope || tag.transformSlopeA || 1) + (tag.offset || tag.transformOffsetB || 0);\n    }\n    eng = parseFloat(parseFloat(eng).toFixed(2));\n\n    // Step 2: Deadband filtering\n    var prevVals = lastGoodTags[devId] || [];\n    var prev = null;\n    for (var pi = 0; pi < prevVals.length; pi++) {\n        if (prevVals[pi].tag_id === tag.id) { prev = prevVals[pi]; break; }\n    }\n    var deadband = tag.deadband || 0;\n    var forceInterval = tag.reportForceIntervalMs || 5000;\n\n    if (prev && deadband > 0) {\n        var delta = Math.abs(eng - (prev.eng_value || 0));\n        var prevTs = prev.ts ? new Date(prev.ts).getTime() : 0;\n        if (delta < deadband && (nowMs - prevTs) < forceInterval) {\n            skippedCount++;\n            return; // Skip: value within deadband, not forced yet\n        }\n    }\n\n    // Step 3: Quality code\n    var quality = entry.quality || 0;\n\n    var tv = {\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        ts: now\n    };\n    tagValues.push(tv);\n    validCount++;\n\n    // Step 4: PG record\n    pgRecords.push({\n        ts: now,\n        node_id: nodeId,\n        device_id: devId,\n        device_name: devName,\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        host_pc_ip: hostPcIp\n    });\n\n    // Step 5: History cache\n    if (!historyData[devId]) historyData[devId] = {};\n    if (!historyData[devId][tag.id]) historyData[devId][tag.id] = [];\n    historyData[devId][tag.id].push({ ts: now, raw: entry.rawValue, eng: eng, q: quality });\n    if (historyData[devId][tag.id].length > 100) {\n        historyData[devId][tag.id] = historyData[devId][tag.id].slice(-100);\n    }\n});\n\n// Update lastGoodTags — 🔧 合并更新 + 标记未读到tag为quality=2\nvar prevGood = lastGoodTags[devId] || [];\nvar newGood = tagValues.filter(function (v) { return v.quality !== 2; });\nvar prevMap = {};\n// Mark all previous as stale (quality=2), then overwrite with fresh reads\nprevGood.forEach(function (pg) {\n    prevMap[pg.tag_id] = { tag_id: pg.tag_id, tag_address: pg.tag_address, tag_name: pg.tag_name,\n        raw_value: pg.raw_value, eng_value: pg.eng_value, unit: pg.unit,\n        quality: 2, ts: pg.ts };\n});\nnewGood.forEach(function (ng) { prevMap[ng.tag_id] = ng; });\nvar merged = [];\nfor (var k in prevMap) {\n    if (Object.prototype.hasOwnProperty.call(prevMap, k)) merged.push(prevMap[k]);\n}\nlastGoodTags[devId] = merged;\nglobal.set(\"edge_lastGoodTags\", lastGoodTags);\nglobal.set(\"edge_historyData\", historyData);\n\n// PG success counter is incremented by sf-pg-writer after successful write only\n\n// === Build outputs ===\nvar mqttMsg = null;\nif (tagValues.length > 0) {\n    mqttMsg = {\n        topic: 'edgelink/data/' + nodeId + '/' + devId,\n        payload: JSON.stringify({\n            node_id: nodeId,\n            device_id: devId,\n            device_name: devName,\n            host_pc_ip: hostPcIp,\n            ts: now,\n            value_count: validCount,\n            values: tagValues\n        }),\n        qos: 1,\n        retain: false\n    };\n}\n\nvar pgMsg = null;\nif (pgRecords.length > 0) {\n    pgMsg = { payload: { pgRecords: pgRecords } };\n}\n\nif (DEBUG && validCount > 0) {\n    node.status({ fill: 'green', shape: 'dot', text: devName + ' ' + validCount + ' vals' + (skippedCount > 0 ? ' (' + skippedCount + ' skipped)' : '') });\n}\n\n} finally {\ndelete procGuard[devId];\nglobal.set('edge_proc_guard', procGuard);\n}\nnode.send([mqttMsg, pgMsg]);\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 200,
+    "y": 100,
+    "wires": [
+      [
+        "sf-dp-dbg-mqtt"
+      ],
+      [
+        "sf-dp-dbg-pg"
+      ]
+    ]
+  },
+  {
+    "id": "sf-dp-dbg-mqtt",
+    "type": "debug",
+    "z": "sf-data-processor",
+    "name": "Output1: MQTT",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 440,
+    "y": 80,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sf-dp-dbg-pg",
+    "type": "debug",
+    "z": "sf-data-processor",
+    "name": "Output2: PG",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 440,
+    "y": 140,
+    "wires": [],
+    "func": ""
+  }
+]

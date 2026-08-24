@@ -1,0 +1,63 @@
+[
+  {
+    "id": "sf-pg-writer",
+    "type": "subflow",
+    "name": "sf-pg-writer",
+    "info": "PG异步写入器 v10: 事件驱动队列 + 自适应批量 + 溢出保护\n\n⚠ 依赖: 需要在 settings.js functionGlobalContext 中暴露 pg 模块:\n    pg: require('pg')\n  安装: cd ~/.node-red && npm install pg\n\n输入: msg.payload.pgRecords = [{ ts, node_id, device_id, tag_id, raw_value, eng_value, quality, ... }]\n输出: msg.payload = { event, count, queueSize, elapsed, error, ... }\n\n核心原则: 绝不阻塞主数据链\n\nP1修正: 事件驱动而非定时器轮询\n- 收到数据 → 入队 → 若空闲则立即触发写入\n- 写入完成 → 检查队列 → 有数据则继续 → 无数据则等待下次输入\n- 写失败时丢弃batch停止循环, 等下次input (防死循环)\n- 队列 > 10000 条时触发溢出告警并丢弃最旧数据\n\nv10.1 修复:\n- P0#3: !pool 时 batch 塞回队头，防止数据丢失\n- P0#1: 溢出边界条件修复（dropCount > queue.length 时同时裁剪 records）\n- P1#2: BATCH_SIZE 持久化到 edge_pg_batch_size，自适应真正生效",
+    "category": "edgelink-v10",
+    "in": [
+      {
+        "wires": [
+          {
+            "id": "sf-pw-fn-enqueue"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "wires": [
+          {
+            "id": "sf-pw-fn-enqueue",
+            "port": 0
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {},
+    "color": "#BEBADA",
+    "func": ""
+  },
+  {
+    "id": "sf-pw-fn-enqueue",
+    "type": "function",
+    "z": "sf-pg-writer",
+    "name": "入队 + 事件驱动写入",
+    "func": "// === sf-pg-writer v10.1: 事件驱动队列 + 自适应批量 ===\nvar pg = global.get('pg');\nvar DEBUG = global.get('edge_debug') || false;\nvar MAX_QUEUE = 10000;  // Max queue size before dropping\n// 🔧 P1#2: BATCH_SIZE 持久化，避免每次入队重置为200\nvar BATCH_SIZE = global.get('edge_pg_batch_size') || 200;\n\nvar records = (msg.payload && msg.payload.pgRecords) ? msg.payload.pgRecords : [];\nif (records.length === 0) {\n    node.status({ fill: 'grey', shape: 'dot', text: 'no records' });\n    return null;\n}\n\n// === Enqueue ===\nvar queue = global.get('edge_pg_queue') || [];\nvar totalLen = queue.length + records.length;\n\nif (totalLen > MAX_QUEUE) {\n    var dropCount = totalLen - MAX_QUEUE;\n    // 🔧 P0#1: 如果 drop 超过队列现有长度，同步裁剪 records\n    if (dropCount >= queue.length) {\n        records = records.slice(dropCount - queue.length);\n        queue = [];\n    } else {\n        queue = queue.slice(dropCount);\n    }\n    node.warn('[PG-Writer] Queue overflow! Dropped ' + dropCount + ' oldest records. Current: ' + (queue.length + records.length));\n    // Alert via global for sf-monitor to pick up\n    var alerts = global.get('edge_recentAlerts') || [];\n    alerts.push({\n        alertType: 'PG_QUEUE_OVERFLOW',\n        deviceId: 0,\n        deviceName: 'PG-Writer',\n        msg: 'Queue overflow, dropped ' + dropCount + ' records',\n        ts: new Date().toISOString()\n    });\n    if (alerts.length > 20) alerts = alerts.slice(-20);\n    global.set('edge_recentAlerts', alerts);\n    // 🔍 输出溢出告警\n    node.send({ payload: { event: 'overflow', dropped: dropCount, queueSize: queue.length } });\n}\n\nqueue = queue.concat(records);\nglobal.set('edge_pg_queue', queue);\n\n// 🔍 输出入队确认（DEBUG模式）\nif (DEBUG) {\n    node.send({ payload: { event: 'enqueued', count: records.length, queueSize: queue.length } });\n}\n\nif (DEBUG) node.status({ fill: 'yellow', shape: 'dot', text: 'Q:' + queue.length });\n\n// === Event-driven write: trigger only if not already writing ===\nif (global.get('edge_pg_writing')) {\n    // Write in progress, data will be picked up after current batch completes\n    return null;\n}\n\n// Start writing\nstartWrite();\nreturn null;\n\n// ===== Internal write function =====\nfunction startWrite() {\n    global.set('edge_pg_writing', true);\n    doWrite();\n}\n\nfunction doWrite() {\n    var q = global.get('edge_pg_queue') || [];\n    if (q.length === 0) {\n        global.set('edge_pg_writing', false);\n        node.status({ fill: 'green', shape: 'dot', text: 'idle' });\n        // 🔍 输出空闲状态\n        node.send({ payload: { event: 'idle' } });\n        return;\n    }\n\n    // Adaptive batch size: bigger queue → bigger batch\n    var batchSize = BATCH_SIZE;\n    if (q.length > 5000) batchSize = 500;\n    else if (q.length > 2000) batchSize = 300;\n\n    var batch = q.splice(0, batchSize);\n    global.set('edge_pg_queue', q);\n\n    node.status({ fill: 'yellow', shape: 'dot', text: 'writing ' + batch.length + '/' + q.length });\n\n    // Check if pg module is available\n    if (!pg) {\n        // No PG driver — just count and clear (development mode)\n        if (DEBUG) node.warn('[PG-Writer] pg not available, discarding ' + batch.length + ' records (dev mode)');\n        var total = global.get('edge_pg_success_count') || 0;\n        global.set('edge_pg_success_count', total + batch.length);\n        // 🔍 输出pg模块不可用\n        node.send({ payload: { event: 'no_pg_module', discarded: batch.length, queueSize: q.length } });\n        finishWrite(true);\n        return;\n    }\n\n    // Build parameterized INSERT\n    var valStrs = [];\n    var params = [];\n    var idx = 0;\n    batch.forEach(function (r) {\n        var vals = [\n            r.ts || new Date().toISOString(), r.node_id, r.device_id, r.device_name,\n            r.tag_id, r.tag_address, r.tag_name,\n            r.raw_value, r.eng_value, r.unit, r.quality, r.host_pc_ip\n        ];\n        var placeholders = vals.map(function () { idx++; return '$' + idx; });\n        valStrs.push('(' + placeholders.join(',') + ')');\n        params = params.concat(vals.map(function (v) { return v === undefined ? null : v; }));\n    });\n\n    var sql = 'INSERT INTO edgelink.plc_data '\n        + '(insert_time,node_id,device_id,device_name,tag_id,tag_address,tag_name,'\n        + 'raw_value,eng_value,unit,quality,host_pc_ip) VALUES ' + valStrs.join(',')\n        + ' ON CONFLICT (insert_time, tag_id) DO NOTHING';\n\n    // Acquire/reuse pg pool\n    var pool = getPool();\n    if (!pool) {\n        // 🔧 P0#3: 无连接池时 batch 塞回队头，不丢数据\n        global.set('edge_pg_writing', false);\n        var qRestore = global.get('edge_pg_queue') || [];\n        global.set('edge_pg_queue', batch.concat(qRestore));\n        var totalQ = batch.length + qRestore.length;\n        node.status({ fill: 'red', shape: 'ring', text: 'no pool (' + totalQ + ' queued)' });\n        // 🔍 输出无连接池\n        node.send({ payload: { event: 'error', reason: 'no_pool', queueSize: totalQ } });\n        return;\n    }\n\n    var writeStart = Date.now();\n    pool.query({ text: sql, values: params }, function (err, result) {\n        var elapsed = Date.now() - writeStart;\n        if (err) {\n            node.warn('[PG-Writer] Write failed (' + elapsed + 'ms): ' + err.message);\n            node.status({ fill: 'red', shape: 'ring', text: 'FAIL ' + err.message.substring(0, 20) });\n            // 🔧 Track failures\n            var fc = global.get('edge_pg_fail_count') || 0;\n            global.set('edge_pg_fail_count', fc + batch.length);\n            global.set('edge_pg_last_error', err.message);\n            // 🔍 输出写入失败\n            node.send({ payload: { event: 'error', reason: 'write_failed', elapsed: elapsed, error: err.message, queueSize: (global.get('edge_pg_queue') || []).length } });\n            finishWrite(false, batch);\n            return;\n        } else {\n            var count = result.rowCount || batch.length;\n            var total = global.get('edge_pg_success_count') || 0;\n            global.set('edge_pg_success_count', total + count);\n            global.set('edge_pg_last_latency_ms', elapsed);\n            global.set('edge_pg_last_error', null);\n            // 🔍 输出写入成功（DEBUG模式）\n            if (DEBUG) {\n                node.send({ payload: { event: 'written', count: count, elapsed: elapsed, queueSize: (global.get('edge_pg_queue') || []).length } });\n            }\n            if (DEBUG) node.status({ fill: 'green', shape: 'dot', text: count + ' OK ' + elapsed + 'ms' });\n        }\n\n        // Adaptive: if write latency > 200ms, reduce batch size for next round\n        if (elapsed > 200 && BATCH_SIZE > 50) {\n            BATCH_SIZE = Math.max(50, BATCH_SIZE - 25);\n        } else if (elapsed < 50 && BATCH_SIZE < 500) {\n            BATCH_SIZE = Math.min(500, BATCH_SIZE + 25);\n        }\n        // 🔧 P1#2: 持久化调整后的 BATCH_SIZE\n        global.set('edge_pg_batch_size', BATCH_SIZE);\n\n        // Event-driven: continue if queue has more data\n        finishWrite(!err);\n    });\n}\n\nfunction getPool() {\n    var pool = global.get('edge_pgPool');\n    var wanted = {\n        host: global.get('edge_pgHost') || '127.0.0.1',\n        port: global.get('edge_pgPort') || 5432,\n        database: global.get('edge_pgDatabase') || 'postgres',\n        user: global.get('edge_pgUser') || 'postgres',\n        password: global.get('edge_pgPassword') || '',\n        max: 5\n    };\n\n    if (pool) {\n        var current = pool.options;\n        if (current.host === wanted.host && current.port === wanted.port &&\n            current.database === wanted.database && current.user === wanted.user &&\n            current.password === wanted.password) {\n            return pool;\n        }\n        try { pool.end(); } catch (e) {}\n        pool = null;\n    }\n\n    if (!pg) return null;\n    if (!wanted.password) {\n        node.error('[PG-Writer] PG password not configured in settings.js (edge_pgPassword)');\n        return null;\n    }\n    try {\n        pool = new pg.Pool(wanted);\n        pool.on('error', function (e) {\n            node.warn('[PG-Writer] Pool error: ' + e.message);\n            global.set('edge_pgPool', null);\n        });\n        global.set('edge_pgPool', pool);\n        // 🔍 输出连接池创建成功\n        node.send({ payload: { event: 'pool_created', host: wanted.host, port: wanted.port, database: wanted.database } });\n        return pool;\n    } catch (e) {\n        node.warn('[PG-Writer] Cannot create pool: ' + e.message);\n        global.set('edge_pgPool', null);\n        // 🔍 输出连接池创建失败\n        node.send({ payload: { event: 'error', reason: 'pool_create_failed', error: e.message } });\n        return null;\n    }\n}\n\nfunction finishWrite(ok, failedBatch) {\n    if (!ok) {\n        // Requeue failed batch at head, retry after backoff (5s)\n        global.set('edge_pg_writing', false);\n        var q = global.get('edge_pg_queue') || [];\n        global.set('edge_pg_queue', (failedBatch || []).concat(q));\n        node.status({ fill: 'red', shape: 'ring', text: 'retry in 5s' });\n        setTimeout(function () {\n            if (!global.get('edge_pg_writing')) startWrite();\n        }, 5000);\n        return;\n    }\n    var q = global.get('edge_pg_queue') || [];\n    if (q.length > 0) {\n        // More data waiting — continue asynchronously to avoid stack overflow\n        setImmediate(doWrite);\n    } else {\n        // Queue empty — go idle, wait for next input\n        global.set('edge_pg_writing', false);\n        node.status({ fill: 'green', shape: 'dot', text: 'idle' });\n    }\n}",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 200,
+    "y": 100,
+    "wires": [
+      [
+        "sf-pw-dbg-status"
+      ]
+    ]
+  },
+  {
+    "id": "sf-pw-dbg-status",
+    "type": "debug",
+    "z": "sf-pg-writer",
+    "name": "PG Writer Status",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 440,
+    "y": 100,
+    "wires": [],
+    "func": ""
+  }
+]

@@ -1,0 +1,480 @@
+[
+  {
+    "id": "tab-v10-phase3",
+    "type": "tab",
+    "label": "EdgeLink v10 采集",
+    "disabled": false,
+    "info": "EdgeLink v10 主编排流程 — Phase 3: 完整版 (7子Flow): 完整采集链路\n\n=== v10 最终架构 ===\nConfig Pipeline:\n  inject(2s/300s) → sf-config-manager → mqtt-out(node online) + global.edge_devices\n\nCollection Pipeline:\n  inject(1s) → fn-scheduler (读 edge_devices, triggerKind过滤)\n    → fn-router (按 comType 分流)\n      → MC_Protocol → sf-mc-driver → sf-data-processor\n      → Modbus_TCP  → sf-modbus-driver → sf-data-processor\n                        ↓\n              ┌────────┼────────┐\n              ↓        ↓\n         mqtt-out(data)  sf-pg-writer\n\nHandshake Trigger:\n  mqtt-in(edgelink-v10/trigger/scan/#) → fn-handshake\n\nv10 MQTT Topic 前缀: edgelink-v10/\nv10 全局变量前缀: edge_",
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-config",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== 1. 配置管线 (启动 + 5min刷新) =====",
+    "info": "sf-config-manager: IP检测 → JWT登录 → nodeId注册 → 拉取点位 → 分组 → 筛选 → 输出配置 + MQTT上线",
+    "x": 120,
+    "y": 40,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "inj-v10-init",
+    "type": "inject",
+    "z": "tab-v10-phase3",
+    "name": "启动触发 (2s)",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "once": true,
+    "onceDelay": 2,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 100,
+    "wires": [
+      [
+        "sub-v10-config-mgr"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "inj-v10-config-refresh",
+    "type": "inject",
+    "z": "tab-v10-phase3",
+    "name": "5分钟刷新",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "300",
+    "once": false,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 160,
+    "wires": [
+      [
+        "sub-v10-config-mgr"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-config-mgr",
+    "type": "subflow:sf-config-manager",
+    "z": "tab-v10-phase3",
+    "name": "配置管理中心",
+    "x": 400,
+    "y": 120,
+    "wires": [
+      [
+        "fn-v10-config-ready"
+      ],
+      [
+        "mqtt-v10-node-online"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "fn-v10-config-ready",
+    "type": "function",
+    "z": "tab-v10-phase3",
+    "name": "配置就绪",
+    "func": "var DEBUG = global.get('edge_debug') || false;\nvar devices = global.get('edge_devices') || [];\nif (DEBUG) node.warn('[Main] Config ready, ' + devices.length + ' devices');\nnode.status({ fill: 'green', shape: 'dot', text: devices.length + ' devs configured' });\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 660,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "mqtt-v10-node-online",
+    "type": "mqtt out",
+    "z": "tab-v10-phase3",
+    "name": "节点上线 v10",
+    "topic": "",
+    "qos": "1",
+    "retain": "true",
+    "broker": "cfg-mqtt-v10",
+    "x": 660,
+    "y": 180,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-collect",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== 2. 采集管线 (1s, 协议可插拔) =====",
+    "info": "调度器 → comType分流 → MC Driver / Modbus Driver → Data Processor → MQTT数据 + PG写入\n\nP0修正:\n- triggerKind=2 过滤保留在调度器(本Flow)\n- 字段平铺, 使用 id 不是 deviceId\n- device-comm 仅状态变化时推入 edge_commPending",
+    "x": 120,
+    "y": 260,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "inj-v10-scan",
+    "type": "inject",
+    "z": "tab-v10-phase3",
+    "name": "1秒采集触发",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "1",
+    "once": true,
+    "onceDelay": 10,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 320,
+    "wires": [
+      [
+        "fn-v10-scheduler"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "fn-v10-scheduler",
+    "type": "function",
+    "z": "tab-v10-phase3",
+    "name": "调度器: 过滤+分流",
+    "func": "// === v10 调度器: 读 edge_devices, triggerKind过滤, 输出单设备消息 ===\nvar configReady = global.get('edge_configReady') || false;\nif (!configReady) { node.status({ fill: 'grey', shape: 'dot', text: 'wait config' }); return null; }\n\nvar devices = global.get('edge_devices') || [];\nif (devices.length === 0) { node.status({ fill: 'grey', shape: 'dot', text: 'no devices' }); return null; }\n\nvar now = Date.now();\nvar deviceLastScan = global.get('edge_deviceLastScan') || {};\n\nvar DEBUG = global.get('edge_debug') || false;\nvar handshakeFlags = global.get('edge_handshakeFlags') || {};\nvar triggerLastRaw = global.get('edge_triggerLastRaw') || {};\nvar triggerForceTimes = global.get('edge_triggerForceTimes') || {};\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\n\nvar activeDevices = [];\nvar skippedTrig2 = 0;\nvar skippedTrig1 = 0;\nvar skippedHandshake = 0;\n\ndevices.forEach(function (d) {\n    if (d.triggerKind === 0) {\n        if (!handshakeFlags[d.id]) { skippedHandshake++; return; }\n        delete handshakeFlags[d.id];\n        global.set('edge_handshakeFlags', handshakeFlags);\n        // Handshake-triggered: bypass interval, collect immediately\n        deviceLastScan[d.id] = now;\n        activeDevices.push({\n            id: d.id, deviceName: d.deviceName, comType: d.comType,\n            plcIp: d.plcIp, plcPort: d.plcPort,\n            protocolParams: d.protocolParams || {},\n            tags: d.tags || [],\n            timeout: d.commTimeoutMs || d.timeout || 3000,\n            maxRetries: d.retryCount || d.maxRetries || 2,\n            retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n            triggerKind: d.triggerKind || 1\n        });\n        return;\n    }\n    if (d.triggerKind === 2) {\n        var forceDue = !triggerForceTimes[d.id] || (now - triggerForceTimes[d.id] >= 5000);\n        if (!forceDue && lastGoodTags[d.id]) {\n            var prevVals = triggerLastRaw[d.id] || {};\n            var changed = false;\n            for (var i = 0; i < lastGoodTags[d.id].length; i++) {\n                if (prevVals[lastGoodTags[d.id][i].tag_id] !== lastGoodTags[d.id][i].raw_value) { changed = true; break; }\n            }\n            if (!changed) { skippedTrig2++; return; }\n        }\n        if (forceDue) { triggerForceTimes[d.id] = now; global.set('edge_triggerForceTimes', triggerForceTimes); }\n        if (lastGoodTags[d.id]) {\n            var newVals = {};\n            lastGoodTags[d.id].forEach(function (v) { newVals[v.tag_id] = v.raw_value; });\n            triggerLastRaw[d.id] = newVals;\n            global.set('edge_triggerLastRaw', triggerLastRaw);\n        }\n    }\n    // Per-device scan interval — with backoff for offline devices\n    var dInt = d.scanIntervalMs || 1000;\n    // 🔧 P2: Backoff for offline devices (consecutiveFails > 3 → 30s interval)\n    var commSt = (global.get('edge_commStatus') || {})[d.id] || {};\n    if ((commSt.consecutiveFails || 0) > 3) { dInt = d.scanIntervalMs || 30000; if (dInt < 30000) dInt = 30000; }\n    var dLast = deviceLastScan[d.id] || 0;\n    if (now - dLast < dInt) { skippedTrig1 = (skippedTrig1 || 0) + 1; return; }\n    deviceLastScan[d.id] = now;\n\n    activeDevices.push({\n        id: d.id, deviceName: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        protocolParams: d.protocolParams || {},\n        tags: d.tags || [],\n        timeout: d.commTimeoutMs || d.timeout || 3000,\n        maxRetries: d.retryCount || d.maxRetries || 2,\n        retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n        triggerKind: d.triggerKind || 1\n    });\n});\n\nglobal.set('edge_deviceLastScan', deviceLastScan);\n\nif (activeDevices.length === 0) {\n    var st = devices.length + ' devs';\n    if (skippedTrig2 > 0) st += ' (' + skippedTrig2 + ' unchanged)';\n    if (skippedTrig1 > 0) st += ' (' + skippedTrig1 + ' not-due)';\n    if (skippedHandshake > 0) st += ' (' + skippedHandshake + ' wait-trigger)';\n    node.status({ fill: 'green', shape: 'dot', text: st });\n    return null;\n}\n\nreturn activeDevices.map(function (d) { return { payload: d }; });",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 380,
+    "y": 320,
+    "wires": [
+      [
+        "fn-v10-router",
+        "dbg-v10-scheduler-out"
+      ]
+    ]
+  },
+  {
+    "id": "fn-v10-router",
+    "type": "function",
+    "z": "tab-v10-phase3",
+    "name": "comType 分流",
+    "func": "// === comType 分流: MC_Protocol → Output1, Modbus_TCP → Output2 ===\nvar dev = msg.payload;\nif (!dev || !dev.comType) { return null; }\n\nif (dev.comType === 'Modbus_TCP') {\n    return [null, { payload: dev }];\n}\n// Default: MC_Protocol or any unrecognized → MC driver\nreturn [{ payload: dev }, null];",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 580,
+    "y": 320,
+    "wires": [
+      [
+        "sub-v10-mc-driver"
+      ],
+      [
+        "sub-v10-modbus-driver",
+        "dbg-v10-router-out"
+      ]
+    ]
+  },
+  {
+    "id": "sub-v10-mc-driver",
+    "type": "subflow:sf-mc-driver",
+    "z": "tab-v10-phase3",
+    "name": "MC协议驱动",
+    "x": 800,
+    "y": 280,
+    "wires": [
+      [
+        "sub-v10-data-processor"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-modbus-driver",
+    "type": "subflow:sf-modbus-driver",
+    "z": "tab-v10-phase3",
+    "name": "Modbus TCP驱动",
+    "x": 800,
+    "y": 360,
+    "wires": [
+      [
+        "sub-v10-data-processor"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-data-processor",
+    "type": "subflow:sf-data-processor",
+    "z": "tab-v10-phase3",
+    "name": "数据管道",
+    "x": 1060,
+    "y": 320,
+    "wires": [
+      [
+        "mqtt-v10-data"
+      ],
+      [
+        "sub-v10-pg-writer"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "mqtt-v10-data",
+    "type": "mqtt out",
+    "z": "tab-v10-phase3",
+    "name": "MQTT实时数据 v10",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "cfg-mqtt-v10",
+    "x": 1320,
+    "y": 280,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-pg-writer",
+    "type": "subflow:sf-pg-writer",
+    "z": "tab-v10-phase3",
+    "name": "PG异步写入",
+    "x": 1320,
+    "y": 360,
+    "wires": [
+      [
+        "dbg-v10-pg-writer-out"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-handshake",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== 3. 握手触发 (triggerKind=0) =====",
+    "info": "MQTT Subscribe edgelink-v10/trigger/scan/# → 设 edge_handshakeFlags[deviceId]",
+    "x": 120,
+    "y": 460,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "mqtt-v10-handshake",
+    "type": "mqtt in",
+    "z": "tab-v10-phase3",
+    "name": "握手触发订阅 v10",
+    "topic": "edgelink/trigger/scan/#",
+    "qos": "1",
+    "broker": "cfg-mqtt-v10",
+    "x": 160,
+    "y": 520,
+    "wires": [
+      [
+        "fn-v10-handshake"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "fn-v10-handshake",
+    "type": "function",
+    "z": "tab-v10-phase3",
+    "name": "解析握手触发",
+    "func": "var deviceId = 0;\ntry {\n    var p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    deviceId = p.deviceId || 0;\n} catch (e) {\n    var m = (msg.topic || '').match(/edgelink-v10\\/trigger\\/scan\\/(\\d+)/);\n    if (m) deviceId = parseInt(m[1]) || 0;\n}\nif (deviceId > 0) {\n    var flags = global.get('edge_handshakeFlags') || {};\n    flags[deviceId] = true;\n    global.set('edge_handshakeFlags', flags);\n    if (global.get('edge_debug')) node.warn('[Handshake] Triggered scan for device ' + deviceId);\n}\nreturn null;",
+    "outputs": 0,
+    "noerr": 0,
+    "libs": [],
+    "x": 380,
+    "y": 520,
+    "wires": []
+  },
+  {
+    "id": "cmt-v10-debug",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== Debug (默认关闭) =====",
+    "info": "",
+    "x": 120,
+    "y": 600,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "dbg-v10-pg-writer-out",
+    "type": "debug",
+    "z": "tab-v10-phase3",
+    "name": "4. PG写入输出",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1520,
+    "y": 360,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "dbg-v10-scheduler-out",
+    "type": "debug",
+    "z": "tab-v10-phase3",
+    "name": "1. 调度器输出",
+    "active": true,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 580,
+    "y": 260,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "dbg-v10-router-out",
+    "type": "debug",
+    "z": "tab-v10-phase3",
+    "name": "2. 路由分流",
+    "active": false,
+    "console": false,
+    "complete": "payload.comType",
+    "targetType": "msg",
+    "x": 800,
+    "y": 440,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-monitor",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== 4. 监控管线 (30s心跳 + device-comm + PG统计 + 401reauth) =====",
+    "info": "sf-monitor 30s: HTTP心跳 + MQTT心跳 + 消费edge_commPending + PG统计上报 + 401检测→reauth",
+    "x": 120,
+    "y": 680,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "inj-v10-monitor",
+    "type": "inject",
+    "z": "tab-v10-phase3",
+    "name": "30秒监控触发",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "once": true,
+    "onceDelay": 30,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 160,
+    "y": 740,
+    "wires": [
+      [
+        "sub-v10-monitor"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-monitor",
+    "type": "subflow:sf-monitor",
+    "z": "tab-v10-phase3",
+    "name": "监控与心跳",
+    "x": 420,
+    "y": 740,
+    "wires": [
+      [
+        "mqtt-v10-heartbeat"
+      ],
+      [
+        "sub-v10-config-mgr"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "mqtt-v10-heartbeat",
+    "type": "mqtt out",
+    "z": "tab-v10-phase3",
+    "name": "MQTT心跳 v10",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "cfg-mqtt-v10",
+    "x": 700,
+    "y": 720,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-api",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "===== 5. 本地监控 HTTP API (sf-local-api, 独立子Flow) =====",
+    "info": "6端点 /api/v10/monitor/: status, device/:id, alerts, history, alarms/clear, config/refresh→reauth\n⚠ http-in全局注册, 只能拖1个实例",
+    "x": 120,
+    "y": 820,
+    "wires": [],
+    "func": ""
+  },
+  {
+    "id": "sub-v10-local-api",
+    "type": "subflow:sf-local-api",
+    "z": "tab-v10-phase3",
+    "name": "本地监控API",
+    "x": 420,
+    "y": 880,
+    "wires": [
+      [
+        "sub-v10-config-mgr"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "cfg-mqtt-v10",
+    "type": "mqtt-broker",
+    "name": "EMQX v10",
+    "broker": "127.0.0.1",
+    "port": "1883",
+    "clientid": "edgelink-v10-nodered",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "30",
+    "cleansession": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "willTopic": "edgelink/alarm/node_offline/UNKNOWN",
+    "willQos": "1",
+    "willRetain": "false",
+    "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":\"UNKNOWN\",\"host_pc_ip\":\"UNKNOWN\",\"msg\":\"[LWT] EdgeLink v10 Node-RED disconnected\"}",
+    "func": ""
+  },
+  {
+    "id": "cmt-v10-footer",
+    "type": "comment",
+    "z": "tab-v10-phase3",
+    "name": "=== EdgeLink v10 Phase 3 完成 | 7子Flow ===  ",
+    "info": "✓ sf-config-manager: 后端登录 + 设备发现\n✓ fn-scheduler: triggerKind过滤 + 单设备输出\n✓ fn-router: comType分流 (MC/Modbus)\n✓ sf-mc-driver: MC协议3E/4E + 模拟模式\n✓ sf-modbus-driver: Modbus TCP + 字节序 + 模拟模式\n✓ sf-data-processor: 换算/死区/质量码/双输出\n✓ sf-pg-writer: 事件驱动队列 + 自适应批量\n✓ Handshake Trigger: MQTT握手触发\n\n✓\n✓ sf-monitor (Phase 3): 30s心跳 + device-comm + 告警 + HTTP API",
+    "x": 120,
+    "y": 960,
+    "wires": [],
+    "func": ""
+  }
+]

@@ -1,0 +1,480 @@
+[
+  {
+    "id": "mysql-config",
+    "type": "MySQLdatabase",
+    "name": "ruoyi-config",
+    "host": "127.0.0.1",
+    "port": "3308",
+    "db": "ruoyi",
+    "user": "root",
+    "password": "",
+    "charset": "utf8mb4"
+  },
+  {
+    "id": "pg-config",
+    "type": "postgreSQL",
+    "name": "ruoyi-pg-tsdb",
+    "host": "127.0.0.1",
+    "port": "5432",
+    "db": "ruoyi_pg",
+    "user": "postgres",
+    "password": "postgres"
+  },
+  {
+    "id": "comment-header",
+    "type": "comment",
+    "name": "EdgeLink PLC 采集引擎 v3\n\n20台PC部署同一份flow:\n1.启动检测所有本机IPv4 → MySQL反查nodered_node确认身份\n   (零硬编码网段，完全由RuoYi配置决定)\n2.每30s从MySQL拉配置(含换算参数+死区配置)\n3.按设备独立scan_interval_ms调度采集\n4.数据清洗管道: 换算→防抖→时间戳→质量码→PG写入\n5.心跳+通信状态上报监控中心(/monitor/*)\n6.HTTP API: GET /api/plc/status\n\n依赖: node-red-node-mysql, node-red-contrib-postgresql",
+    "info": "",
+    "x": 600,
+    "y": 20
+  },
+  {
+    "id": "inject-startup",
+    "type": "inject",
+    "name": "启动时执行一次",
+    "props": [],
+    "repeat": "",
+    "once": true,
+    "x": 70,
+    "y": 40,
+    "wires": [
+      [
+        "detect-host-ip"
+      ]
+    ]
+  },
+  {
+    "id": "detect-host-ip",
+    "type": "function",
+    "name": "Step1: 采集本机所有IPv4地址",
+    "func": "// 采集本机所有非虚拟IPv4地址，不硬编码网段\n// 后面用这些IP去MySQL反查nodered_node表来确认身份\n\nconst os = require('os');\nconst nets = os.networkInterfaces();\nconst allIPs = [];\n\nfor (const name of Object.keys(nets)) {\n    for (const net of nets[name]) {\n        if (net.family === 'IPv4' && !net.internal) {\n            allIPs.push(net.address);\n        }\n    }\n}\n\n// 初始化状态缓存\nflow.set('host_pc_ip', '');\nflow.set('indust_pc_ip', '');\nflow.set('all_local_ips', allIPs);\nflow.set('nodeId', null);\nflow.set('tag_last_value', {});\nflow.set('tag_last_ts', {});\nflow.set('backend_host', '192.168.1.100');   // !!! 改为RuoYi后端实际IP\n\nnode.status({fill:'green',shape:'dot',text:'本机IP: '+allIPs.join(', ')});\nnode.warn('[启动] 本机IPv4: '+allIPs.join(', '));\n\n// 透传IP列表\nmsg.payload = allIPs;\nreturn msg;",
+    "outputs": 1,
+    "x": 280,
+    "y": 40,
+    "wires": [
+      [
+        "load-node-id"
+      ]
+    ]
+  },
+  {
+    "id": "load-node-id",
+    "type": "function",
+    "name": "Step2: 用本机IP反查node_id",
+    "func": "// 用本机所有IP去MySQL反查 nodered_node\n// 匹配到的就是办公网IP → host_pc_ip\n// 不需要硬编码任何网段前缀\n\nvar allIPs = flow.get('all_local_ips') || [];\nif (allIPs.length === 0) {\n    node.warn('[启动] 未检测到任何IP，使用127.0.0.1');\n    allIPs = ['127.0.0.1'];\n}\n\n// 构建 IN ('ip1','ip2',...) 子句\nvar ipList = allIPs.map(function(ip){ return \"'\"+ip+\"'\"; }).join(',');\nmsg.topic = 'SELECT id, host_pc_ip, office_net_ip, indust_net_ip FROM nodered_node WHERE host_pc_ip IN ('+ipList+') AND status=1 LIMIT 1';\nreturn msg;",
+    "outputs": 1,
+    "x": 500,
+    "y": 40,
+    "wires": [
+      [
+        "fetch-node-id"
+      ]
+    ]
+  },
+  {
+    "id": "fetch-node-id",
+    "type": "mysql",
+    "name": "查node_id",
+    "mysql": "mysql-config",
+    "x": 700,
+    "y": 40,
+    "wires": [
+      [
+        "store-node-id"
+      ]
+    ]
+  },
+  {
+    "id": "store-node-id",
+    "type": "function",
+    "name": "Step3: 记录身份(node_id+IP)",
+    "func": "var rows = msg.payload || [];\nif (rows.length > 0) {\n    var r = rows[0];\n    flow.set('nodeId', r.id);\n    flow.set('host_pc_ip', r.host_pc_ip);\n    // 工业网IP优先用DB里存的，没有则留空\n    flow.set('indust_pc_ip', r.indust_net_ip || '');\n\n    node.status({fill:'green',shape:'dot',text:'node#'+r.id+' 办公:'+r.host_pc_ip});\n    node.warn('[身份] node_id='+r.id+' 办公IP='+r.host_pc_ip+' 工业IP='+(r.indust_net_ip||'无'));\n} else {\n    // 没匹配到 — 说明此PC未在nodered_node表注册\n    var allIPs = flow.get('all_local_ips') || [];\n    flow.set('host_pc_ip', allIPs[0] || '127.0.0.1');\n    node.status({fill:'red',shape:'ring',text:'未注册! 请加nodered_node'});\n    node.warn('[启动] 本机IP('+allIPs.join(',')+')未在nodered_node表中找到，请在RuoYi中注册此节点');\n}\nreturn msg;",
+    "outputs": 1,
+    "x": 900,
+    "y": 40,
+    "wires": [
+      [
+        "set-config-sql"
+      ]
+    ]
+  },
+  {
+    "id": "comment-config",
+    "type": "comment",
+    "name": "── 配置定时刷新(每30秒) ──\nSQL拉取本机负责的所有设备+点位(含换算+死区参数)",
+    "info": "",
+    "x": 380,
+    "y": 100
+  },
+  {
+    "id": "inject-config-refresh",
+    "type": "inject",
+    "name": "每30秒刷新配置",
+    "props": [],
+    "repeat": "30",
+    "once": true,
+    "x": 90,
+    "y": 160,
+    "wires": [
+      [
+        "set-config-sql"
+      ]
+    ]
+  },
+  {
+    "id": "set-config-sql",
+    "type": "function",
+    "name": "Step3: 拼配置SQL(含换算+死区)",
+    "func": "var myIP = flow.get('host_pc_ip') || '127.0.0.1';\n\n// IP格式校验 防SQL注入\nif (!/^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$/.test(myIP)) {\n    node.warn('[配置] IP格式异常,跳过: '+myIP);\n    return null;\n}\n\nmsg.topic =\n'SELECT ' +\n'  d.id AS device_id, d.device_name, d.device_code, ' +\n'  d.plc_ip, d.plc_port, d.mc_frame, d.station_no, d.network_no, ' +\n'  d.scan_interval_ms, d.comm_timeout_ms, d.retry_count, d.com_type, ' +\n'  t.id AS tag_id, t.tag_name, t.register_type, t.register_address, ' +\n'  t.data_type, t.unit, t.sort_order, ' +\n'  t.transform_type, t.transform_slope_a, t.transform_offset_b, ' +\n'  t.raw_value_min, t.raw_value_max, ' +\n'  t.eng_value_min, t.eng_value_max, t.eng_unit, ' +\n'  t.report_deadband_ms, t.report_force_interval_ms, t.quality_enabled ' +\n'FROM plc_device d JOIN plc_tag t ON d.id = t.device_id ' +\n'WHERE d.status='0' AND d.del_flag='0' ' +\n'  AND t.status='0' AND t.del_flag='0' ' +\n'  AND d.host_pc_ip = '' + myIP + '' ' +\n'ORDER BY d.id, t.sort_order, t.id';\nreturn msg;",
+    "outputs": 1,
+    "x": 280,
+    "y": 160,
+    "wires": [
+      [
+        "fetch-config"
+      ]
+    ]
+  },
+  {
+    "id": "fetch-config",
+    "type": "mysql",
+    "name": "查询设备+点位配置",
+    "mysql": "mysql-config",
+    "x": 500,
+    "y": 160,
+    "wires": [
+      [
+        "store-config"
+      ]
+    ]
+  },
+  {
+    "id": "store-config",
+    "type": "function",
+    "name": "Step4: 缓存配置到flow",
+    "func": "var rows = msg.payload || [];\nvar deviceMap = {};\n\nfor (var i = 0; i < rows.length; i++) {\n    var r = rows[i];\n    var did = r.device_id;\n    if (!deviceMap[did]) {\n        deviceMap[did] = {\n            id: did, name: r.device_name,\n            ip: r.plc_ip, port: r.plc_port,\n            frame: r.mc_frame || '3E',\n            network: r.network_no || 0, station: r.station_no || 0,\n            scan_ms: r.scan_interval_ms || 1000,\n            timeout_ms: r.comm_timeout_ms || 3000,\n            retry: r.retry_count || 2, comType: r.com_type || 'MC_Protocol',\n            tags: []\n        };\n    }\n    deviceMap[did].tags.push({\n        id: r.tag_id, name: r.tag_name,\n        regType: r.register_type, regAddr: r.register_address,\n        dataType: r.data_type, unit: r.unit || '',\n        // 换算参数\n        transType: r.transform_type || 'none',\n        transA: r.transform_slope_a || 1.0,\n        transB: r.transform_offset_b || 0.0,\n        rawMin: r.raw_value_min, rawMax: r.raw_value_max,\n        engMin: r.eng_value_min, engMax: r.eng_value_max,\n        engUnit: r.eng_unit || r.unit || '',\n        // 死区+质量码\n        deadbandMs: r.report_deadband_ms || 1000,\n        forceMs: r.report_force_interval_ms || 5000,\n        qualEnabled: r.quality_enabled || '1',\n        sort: r.sort_order\n    });\n}\n\nvar devices = Object.values(deviceMap);\nflow.set('plc_devices', devices);\nflow.set('plc_config_updated', Date.now());\n\nvar totalTags = 0;\nfor (var j = 0; j < devices.length; j++) totalTags += devices[j].tags.length;\n\nnode.status({fill:'green',shape:'dot',text:devices.length+'设备 '+totalTags+'点位'});\nnode.warn('[配置] '+devices.length+'设备 '+totalTags+'点位 已刷新');\n\nmsg.payload = {deviceCount:devices.length, tagCount:totalTags};\nreturn msg;",
+    "outputs": 1,
+    "x": 730,
+    "y": 160,
+    "wires": [
+      [
+        "debug-config"
+      ]
+    ]
+  },
+  {
+    "id": "debug-config",
+    "type": "debug",
+    "name": "配置摘要",
+    "active": false,
+    "console": false,
+    "complete": "payload",
+    "x": 970,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "comment-collect",
+    "type": "comment",
+    "name": "── 采集调度 ──\n1s定时器 → 按设备scan_interval_ms独立调度 → 生产采集消息\n每tick最多50条，防网络风暴",
+    "info": "",
+    "x": 380,
+    "y": 240
+  },
+  {
+    "id": "inject-scan",
+    "type": "inject",
+    "name": "每1秒调度采集",
+    "props": [],
+    "repeat": "1",
+    "once": false,
+    "x": 70,
+    "y": 300,
+    "wires": [
+      [
+        "scan-controller"
+      ]
+    ]
+  },
+  {
+    "id": "scan-controller",
+    "type": "function",
+    "name": "采集调度器",
+    "func": "var devices = flow.get('plc_devices') || [];\nif (devices.length === 0) {\n    node.status({fill:'red',shape:'ring',text:'无设备'});\n    return null;\n}\n\nvar now = Date.now();\nvar msgs = [];\nvar maxPerTick = 50;\n\nfor (var di = 0; di < devices.length; di++) {\n    var dev = devices[di];\n    var lastKey = 'last_scan_' + dev.id;\n    var lastScan = flow.get(lastKey) || 0;\n    if (now - lastScan < dev.scan_ms) continue;\n    flow.set(lastKey, now);\n\n    for (var ti = 0; ti < dev.tags.length; ti++) {\n        var tag = dev.tags[ti];\n\n        // MC地址 = 寄存器类型+地址, 如 D100, X10, W200\n        // node-red-contrib-mcprotocol 节点自己处理数据类型\n        var mcAddr = tag.regType + tag.regAddr;\n\n        msgs.push({\n            topic: 'plc_read',\n            // 元数据(全链路透传)\n            _devId: dev.id, _devName: dev.name, _comType: dev.comType,\n            _tagId: tag.id, _tagName: tag.name, _dataType: tag.dataType,\n            _transType: tag.transType, _transA: tag.transA, _transB: tag.transB,\n            _rawMin: tag.rawMin, _rawMax: tag.rawMax,\n            _engMin: tag.engMin, _engMax: tag.engMax, _engUnit: tag.engUnit,\n            _deadbandMs: tag.deadbandMs, _forceMs: tag.forceMs,\n            _qualEnabled: tag.qualEnabled,\n            // MC参\n            mcAddress: mcAddr, mcHost: dev.ip, mcPort: dev.port,\n            mcFrame: dev.frame, mcNetwork: dev.network, mcStation: dev.station\n        });\n        if (msgs.length >= maxPerTick) break;\n    }\n    if (msgs.length >= maxPerTick) break;\n}\n\nif (msgs.length === 0) return null;\n\nnode.status({fill:'blue',shape:'dot',text:msgs.length+'条待采'});\nreturn msgs;",
+    "outputs": 1,
+    "x": 280,
+    "y": 300,
+    "wires": [
+      [
+        "mock-data-generator"
+      ]
+    ]
+  },
+  {
+    "id": "comment-source",
+    "type": "comment",
+    "name": "── 数据源(二选一) ──\n当前: mock-data-generator(模拟PLC数据)\n有真实PLC后: 替换为 mc-read 节点读MC Protocol\n           或 modbus-read 节点读Modbus TCP",
+    "info": "",
+    "x": 400,
+    "y": 360
+  },
+  {
+    "id": "mock-data-generator",
+    "type": "function",
+    "name": "模拟PLC数据(生产环境删除)",
+    "func": "// =========================================\n// !!! 警告: 当前使用模拟PLC数据 !!!\n// =========================================\n// 生产环境必须删除本节点,改为:\n//   scan-controller → mc-read (MC Protocol)\n//                   → modbus-read (Modbus TCP)\n// 有真实PLC后删除此节点,否则Grafana显示的全是假数据!\n\nnode.warn('[模拟数据] 当前使用模拟PLC数据,生产环境请替换为真实PLC节点!');\n\nvar msgs = Array.isArray(msg) ? msg : [msg];\nvar out = [];\n\nfor (var i=0; i<msgs.length; i++) {\n    var m = msgs[i];\n    if (!m || !m._tagId) continue;\n    var dt = (m._dataType||'INT16').toUpperCase();\n    var seed = m._tagId * 0.7;\n    var val;\n    switch(dt) {\n        case 'INT16': val=Math.floor(Math.sin(Date.now()/5000+seed)*120+200); break;\n        case 'INT32': val=Math.floor(Math.sin(Date.now()/8000+seed)*5000+10000); break;\n        case 'FLOAT': val=+(Math.sin(Date.now()/3000+seed)*50+100).toFixed(2); break;\n        case 'BIT':  val=Math.sin(Date.now()/2000+seed)>0?1:0; break;\n        default:     val=Math.floor(Math.random()*100);\n    }\n    out.push({\n        payload: val,\n        _devId:m._devId, _devName:m._devName, _comType:m._comType,\n        _tagId:m._tagId, _tagName:m._tagName,\n        _dataType:m._dataType,\n        _transType:m._transType, _transA:m._transA, _transB:m._transB,\n        _rawMin:m._rawMin, _rawMax:m._rawMax,\n        _engMin:m._engMin, _engMax:m._engMax, _engUnit:m._engUnit,\n        _deadbandMs:m._deadbandMs, _forceMs:m._forceMs,\n        _qualEnabled:m._qualEnabled\n    });\n}\nreturn out;",
+    "outputs": 1,
+    "x": 520,
+    "y": 420,
+    "wires": [
+      [
+        "transform-engine"
+      ]
+    ]
+  },
+  {
+    "id": "comment-pipeline",
+    "type": "comment",
+    "name": "── 数据清洗管道 ──\nStep5 数值换算(linear/slope_offset/none)\nStep6 防抖去重(变化才上报+强制间隔)\nStep7 打PC本地时间戳+质量码(GOOD/BAD/UNCERTAIN)",
+    "info": "",
+    "x": 450,
+    "y": 480
+  },
+  {
+    "id": "transform-engine",
+    "type": "function",
+    "name": "Step5: 数值换算",
+    "func": "// 将PLC原始值 → 工程值\n// y = a*x + b              (linear)\n// y = (x-rMin)/(rMax-rMin)*(eMax-eMin)+eMin  (slope_offset)\n\nvar msgs = Array.isArray(msg) ? msg : [msg];\n\nfor (var i=0; i<msgs.length; i++) {\n    var m = msgs[i];\n    var raw = Number(m.payload);\n    var quality = 'GOOD';\n    var eng;\n\n    if (isNaN(raw) || raw===null || raw===undefined) {\n        eng = null; quality = 'BAD';\n    } else {\n        // 量程检查\n        if (m._rawMin!=null && m._rawMax!=null) {\n            if (raw < m._rawMin || raw > m._rawMax) quality = 'UNCERTAIN';\n        }\n        // 换算\n        var tt = (m._transType||'none').toLowerCase();\n        if (tt === 'none') {\n            eng = raw;\n        } else if (tt === 'linear') {\n            eng = (m._transA||1.0)*raw + (m._transB||0.0);\n        } else if (tt === 'slope_offset') {\n            if (m._rawMin!=null && m._rawMax!=null && m._engMin!=null && m._engMax!=null && m._rawMax!==m._rawMin) {\n                eng = m._engMin + (raw-m._rawMin)/(m._rawMax-m._rawMin)*(m._engMax-m._engMin);\n            } else {\n                eng = raw; quality = 'UNCERTAIN';\n            }\n        } else {\n            eng = raw; quality = 'UNCERTAIN';\n        }\n    }\n\n    if (typeof eng === 'number') eng = +eng.toFixed(6);\n    m._rawValue = raw;\n    m.payload = eng;\n    m._quality = quality;\n}\nreturn msgs;",
+    "outputs": 1,
+    "x": 530,
+    "y": 540,
+    "wires": [
+      [
+        "deadband-filter"
+      ]
+    ]
+  },
+  {
+    "id": "deadband-filter",
+    "type": "function",
+    "name": "Step6: 防抖去重",
+    "func": "// 变化才上报(防抖去重)\n// 值没变 + 未到强制上报间隔 → 丢弃\n// suppressWindowMs: 抑制窗口,同值在此窗口内不重复写入\n// forceIntervalMs:  强制上报间隔,超过此时间即使值没变也写一条\n\nvar msgs = Array.isArray(msg) ? msg : [msg];\nvar out = [];\nvar now = Date.now();\nvar lastVal = flow.get('tag_last_value') || {};\nvar lastTs = flow.get('tag_last_ts') || {};\n\nfor (var i=0; i<msgs.length; i++) {\n    var m = msgs[i];\n    var tagId = m._tagId;\n    var val = m.payload;\n    var forceIntervalMs = m._forceMs || 5000;\n    var suppressWindowMs = m._deadbandMs || 1000;\n\n    var prevVal = lastVal[tagId];\n    var prevTs = lastTs[tagId] || 0;\n    var elapsed = now - prevTs;\n\n    // 值相同且未超强制间隔 → 丢弃\n    if (suppressWindowMs > 0 && prevVal !== undefined && prevVal === val && elapsed < forceIntervalMs) {\n        continue;\n    }\n\n    lastVal[tagId] = val;\n    lastTs[tagId] = now;\n    out.push(m);\n}\n\nflow.set('tag_last_value', lastVal);\nflow.set('tag_last_ts', lastTs);\n\nreturn out.length > 0 ? out : null;",
+    "outputs": 1,
+    "x": 740,
+    "y": 540,
+    "wires": [
+      [
+        "stamp-timestamp"
+      ]
+    ]
+  },
+  {
+    "id": "stamp-timestamp",
+    "type": "function",
+    "name": "Step7: 打时间戳+质量码",
+    "func": "// PC本地时间打标, 组装最后输出\n\nvar msgs = Array.isArray(msg) ? msg : [msg];\nvar out = [];\n\nfor (var i=0; i<msgs.length; i++) {\n    var m = msgs[i];\n    out.push({\n        topic: 'pg_insert',\n        payload: {\n            device_id: m._devId,\n            tag_id: m._tagId,\n            node_id: flow.get('nodeId'),\n            raw_value: m._rawValue,\n            eng_value: m.payload,\n            quality: m._qualEnabled==='0' ? 'GOOD' : (m._quality||'GOOD'),\n            transform_type: m._transType || 'none',\n            ts: new Date().toISOString()\n        },\n        _devId: m._devId, _devName: m._devName,\n        _tagId: m._tagId, _tagName: m._tagName,\n        _comType: m._comType, _engUnit: m._engUnit || ''\n    });\n}\nreturn out;",
+    "outputs": 1,
+    "x": 950,
+    "y": 540,
+    "wires": [
+      [
+        "build-pg-insert"
+      ]
+    ]
+  },
+  {
+    "id": "comment-pg",
+    "type": "comment",
+    "name": "── PG时序写入 ──\n逐条INSERT → plc_data_log → 通知监控中心PG写入状态",
+    "info": "",
+    "x": 380,
+    "y": 600
+  },
+  {
+    "id": "build-pg-insert",
+    "type": "function",
+    "name": "拼PG INSERT(参数化,逐条输出)",
+    "func": "// 参数化查询: $1..$8 占位符\n// 逐条 push → outs 数组 → return outs 批量输出\n\nvar msgs = Array.isArray(msg) ? msg : [msg];\nvar outs = [];\n\nfor (var i=0; i<msgs.length; i++) {\n    var d = msgs[i].payload;\n    outs.push({\n        topic: 'INSERT INTO plc_data_log (device_id,tag_id,node_id,raw_value,eng_value,quality,transform_type,ts) VALUES (' +\n               '$1,$2,$3,$4,$5,$6,$7,$8)',\n        payload: [\n            d.device_id,\n            d.tag_id,\n            d.node_id || null,\n            d.raw_value,\n            d.eng_value,\n            d.quality || 'GOOD',\n            d.transform_type || 'none',\n            d.ts\n        ]\n    });\n}\nreturn outs;",
+    "outputs": 1,
+    "x": 1160,
+    "y": 540,
+    "wires": [
+      [
+        "pg-write"
+      ]
+    ]
+  },
+  {
+    "id": "pg-write",
+    "type": "postgrestor",
+    "name": "写入PG(参数化)",
+    "pg": "pg-config",
+    "x": 1350,
+    "y": 540,
+    "wires": [
+      [
+        "check-pg-result"
+      ]
+    ]
+  },
+  {
+    "id": "check-pg-result",
+    "type": "function",
+    "name": "监控PG写入结果",
+    "func": "var nodeId = flow.get(\"nodeId\");\nif (!nodeId) return null;\n\n// postgrestor成功: msg.error为空, msg.payload有结果\n// postgrestor失败: msg.error有值, payload可能是null\nvar ok = !msg.error && msg.payload !== undefined && msg.payload !== null;\n\nvar host = msg._backendHost || flow.get(\"backend_host\") || \"192.168.1.100\";\nmsg.url = \"http://\" + host + \":81/monitor/pg-write\"\n    + \"?node_id=\" + nodeId\n    + \"&success=\" + ok\n    + \"&write_count=1\";\nif (!ok) {\n    var errText = (msg.error || \"unknown\").toString().substring(0, 200);\n    msg.url += \"&error_msg=\" + encodeURIComponent(errText);\n}\nreturn msg;",
+    "outputs": 1,
+    "x": 1550,
+    "y": 540,
+    "wires": [
+      [
+        "http-pg-report"
+      ]
+    ]
+  },
+  {
+    "id": "http-pg-report",
+    "type": "http request",
+    "name": "通知PG写入结果",
+    "method": "POST",
+    "url": "",
+    "x": 1750,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "comment-heartbeat",
+    "type": "comment",
+    "name": "── 监控上报(每30秒) ──\n心跳 → /monitor/heartbeat\n设备通信状态 → /monitor/device-comm",
+    "info": "",
+    "x": 380,
+    "y": 620
+  },
+  {
+    "id": "inject-heartbeat",
+    "type": "inject",
+    "name": "每30秒心跳+通信上报",
+    "props": [],
+    "repeat": "30",
+    "once": false,
+    "x": 70,
+    "y": 680,
+    "wires": [
+      [
+        "build-heartbeat"
+      ]
+    ]
+  },
+  {
+    "id": "build-heartbeat",
+    "type": "function",
+    "name": "心跳+通信上报",
+    "func": "var hostIP = flow.get(\"host_pc_ip\") || \"127.0.0.1\";\nvar nodeId = flow.get(\"nodeId\");\nvar devices = flow.get(\"plc_devices\") || [];\nvar memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);\n\n// ========================================\n// !!! 改为RuoYi后端服务器的实际IP !!!\n// ========================================\nvar backend = flow.get(\"backend_host\") || \"192.168.1.100\";\n\n// 1. 心跳\nmsg.url = \"http://\" + backend + \":81/monitor/heartbeat\"\n    + \"?host_pc_ip=\" + hostIP\n    + \"&node_ip=\" + hostIP\n    + \"&running_flows=\" + devices.length\n    + \"&memory_usage_mb=\" + memMB;\n\n// 2. 透传设备列表+后端地址给下游\nmsg._devices = devices;\nmsg._nodeId = nodeId;\nmsg._backendHost = backend;\nreturn msg;",
+    "outputs": 2,
+    "x": 280,
+    "y": 680,
+    "wires": [
+      [
+        "http-heartbeat"
+      ],
+      [
+        "report-device-comm"
+      ]
+    ]
+  },
+  {
+    "id": "http-heartbeat",
+    "type": "http request",
+    "name": "POST心跳",
+    "method": "POST",
+    "url": "",
+    "x": 500,
+    "y": 640,
+    "wires": [
+      [
+        "heartbeat-status"
+      ]
+    ]
+  },
+  {
+    "id": "heartbeat-status",
+    "type": "function",
+    "name": "心跳状态提示",
+    "func": "var ok = msg.statusCode === 200;\nnode.status({fill:ok?'green':'red',shape:'dot',text:ok?'心跳OK':'心跳FAIL'});\nreturn msg;",
+    "outputs": 1,
+    "x": 720,
+    "y": 640,
+    "wires": []
+  },
+  {
+    "id": "report-device-comm",
+    "type": "function",
+    "name": "上报设备通信状态",
+    "func": "var nodeId = msg._nodeId || flow.get(\"nodeId\");\nvar devices = msg._devices || flow.get(\"plc_devices\") || [];\nif (!nodeId || devices.length === 0) return null;\n\nvar backend = msg._backendHost || flow.get(\"backend_host\") || \"192.168.1.100\";\nvar msgs = [];\nvar now = Date.now();\n\nfor (var i = 0; i < devices.length; i++) {\n    var dev = devices[i];\n    var lastKey = \"last_scan_\" + dev.id;\n    var lastScan = flow.get(lastKey) || 0;\n    var elapsed = now - lastScan;\n    var timeout = dev.scan_ms * 3 + 5000;\n    var ok = lastScan > 0 && elapsed < timeout;\n\n    msgs.push({\n        url: \"http://\" + backend + \":81/monitor/device-comm\"\n            + \"?node_id=\" + nodeId\n            + \"&device_id=\" + dev.id\n            + \"&success=\" + ok\n            + (ok ? \"\" : \"&error_msg=超时\"),\n        _backendHost: backend\n    });\n}\nreturn msgs;",
+    "outputs": 1,
+    "x": 940,
+    "y": 680,
+    "wires": [
+      [
+        "http-device-comm"
+      ]
+    ]
+  },
+  {
+    "id": "http-device-comm",
+    "type": "http request",
+    "name": "POST设备通信",
+    "method": "POST",
+    "url": "",
+    "x": 1180,
+    "y": 680,
+    "wires": []
+  },
+  {
+    "id": "comment-api",
+    "type": "comment",
+    "name": "── HTTP API(调试用) ──\nGET /api/plc/status → 返回采集引擎运行状态+点位最后值",
+    "info": "",
+    "x": 380,
+    "y": 740
+  },
+  {
+    "id": "http-get-status",
+    "type": "http in",
+    "name": "GET /api/plc/status",
+    "url": "/api/plc/status",
+    "method": "get",
+    "x": 70,
+    "y": 820,
+    "wires": [
+      [
+        "return-status"
+      ]
+    ]
+  },
+  {
+    "id": "return-status",
+    "type": "function",
+    "name": "返回采集引擎状态",
+    "func": "var devices = flow.get('plc_devices') || [];\nvar tagVal = flow.get('tag_last_value') || {};\nvar tagTs = flow.get('tag_last_ts') || {};\n\nvar devOut = [];\nfor (var di=0; di<devices.length; di++) {\n    var d = devices[di];\n    var lastScan = flow.get('last_scan_'+d.id)||0;\n    var tagsOut = [];\n    for (var ti=0; ti<d.tags.length; ti++) {\n        var t = d.tags[ti];\n        tagsOut.push({\n            id:t.id, name:t.name,\n            reg:t.regType+t.regAddr, dataType:t.dataType,\n            lastVal:tagVal[t.id],\n            lastTs:tagTs[t.id]?new Date(tagTs[t.id]).toISOString():null\n        });\n    }\n    devOut.push({\n        id:d.id, name:d.name, ip:d.ip+':'+d.port,\n        comType:d.comType, scan_ms:d.scan_ms,\n        lastScan:lastScan?new Date(lastScan).toISOString():null,\n        tagCount:d.tags.length, tags:tagsOut\n    });\n}\n\nmsg.payload = {\n    hostIP: flow.get('host_pc_ip'),\n    nodeId: flow.get('nodeId'),\n    configUpdated: new Date(flow.get('plc_config_updated')||0).toISOString(),\n    memoryMB: Math.round(process.memoryUsage().heapUsed/1024/1024),\n    uptimeSec: Math.round(process.uptime()),\n    deviceCount: devices.length,\n    devices: devOut\n};\nreturn msg;",
+    "outputs": 1,
+    "x": 300,
+    "y": 820,
+    "wires": [
+      [
+        "http-status-resp"
+      ]
+    ]
+  },
+  {
+    "id": "http-status-resp",
+    "type": "http response",
+    "name": "返回JSON",
+    "statusCode": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "x": 540,
+    "y": 820,
+    "wires": []
+  }
+]

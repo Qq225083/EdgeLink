@@ -1,0 +1,120 @@
+[
+  {
+    "id": "sf-config-manager",
+    "type": "subflow",
+    "name": "sf-config-manager",
+    "info": "配置管理中心 v10: IP检测 + JWT登录 + nodeId注册 + 设备发现 + 5min刷新 + MQTT上线\n\n输入触发:\n- inject(部署后2s): 首次启动\n- inject(每300s): 周期刷新\n- msg.payload = {action:'reauth'}: JWT过期强制重登\n\n输出1: msg.config = { jwt, nodeId, hostPcIp, devices: [...] }\n输出2: MQTT节点上线消息\n\n内部流程:\nfn-cm-init (IP检测+锁+登录准备) → http-cm-login (POST /login)\n  → fn-cm-discover (JWT解析 + heartbeat反查nodeId + 拉取全局点位 → 分组 → 过滤 → 输出)\n\nv10.1 修复:\n- P1#10: JWT解析失败时使用 http.request 直接重试登录（替代无效的 node.send([null,null])）\n- P1#11: 配置完成后释放 edge_config_manager_lock",
+    "category": "edgelink-v10",
+    "in": [
+      {
+        "wires": [
+          {
+            "id": "sf-cm-fn-init"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "wires": [
+          {
+            "id": "sf-cm-fn-discover",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "wires": [
+          {
+            "id": "sf-cm-fn-discover",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [
+      {
+        "name": "BACKEND_HOST",
+        "type": "str",
+        "value": "127.0.0.1"
+      },
+      {
+        "name": "BACKEND_PORT",
+        "type": "num",
+        "value": "9099"
+      }
+    ],
+    "meta": {},
+    "color": "#C6DBEF",
+    "func": ""
+  },
+  {
+    "id": "sf-cm-fn-init",
+    "type": "function",
+    "z": "sf-config-manager",
+    "name": "IP检测 + 登录准备",
+    "func": "// === sf-config-manager Step 1: IP检测 + 单例锁 + 分路径 + 登录请求 ===\nvar DEBUG = global.get('edge_debug') || false;\nvar isReauth = (msg.payload && msg.payload.action === 'reauth');\nvar existingJwt = global.get('edge_jwt') || '';\n\n// === Singleton lock (60s expiry) ===\nvar lock = global.get('edge_config_manager_lock');\nif (lock && (Date.now() - lock.ts < 60000)) {\n    if (isReauth) {\n        // Reauth: wait until current init finishes (max 30s)\n        if (Date.now() - lock.ts < 30000) {\n            if (DEBUG) node.warn('[CM] Re-auth waiting for active init (' + (Date.now() - lock.ts) + 'ms old)');\n            setTimeout(function () { node.send(msg); }, 2000);\n            return null;\n        }\n        // Force takeover after 30s\n        if (DEBUG) node.warn('[CM] Lock expired, force takeover for reauth');\n    } else {\n        if (DEBUG) node.warn('[CM] Another init in progress, skip');\n        return null;\n    }\n}\nglobal.set('edge_config_manager_lock', { ts: Date.now(), nodeId: node.id });\n\n// 🔧 P1#9: Reauth guard removed — always honor reauth requests\n// (reauth comes from 401 detection; skipping causes data gaps)\n\nvar isFirstRun = !existingJwt && !isReauth;\nvar isRefresh = !isReauth && !isFirstRun;\n\n// === IP Detection (skip virtual NICs) ===\nvar detectedIp = '127.0.0.1';\ntry {\n    var os = global.get('os');\n    if (os) {\n        var nets = os.networkInterfaces();\n        var VIRTUAL_PREFIXES = ['172.17.', '192.168.56.', '169.254.'];\n        function isVirtual(addr) {\n            for (var i = 0; i < VIRTUAL_PREFIXES.length; i++) {\n                if (addr.indexOf(VIRTUAL_PREFIXES[i]) === 0) return true;\n            }\n            return false;\n        }\n        var candidates = [];\n        for (var name in nets) {\n            if (!nets.hasOwnProperty(name)) continue;\n            var iface = nets[name];\n            for (var i = 0; i < iface.length; i++) {\n                var netInfo = iface[i];\n                if (netInfo.family === 'IPv4' && !netInfo.internal && !isVirtual(netInfo.address)) {\n                    candidates.push(netInfo.address);\n                }\n            }\n        }\n        for (var j = 0; j < candidates.length; j++) {\n            if (candidates[j].indexOf('192.168.') === 0 || candidates[j].indexOf('10.') === 0) {\n                detectedIp = candidates[j];\n                break;\n            }\n        }\n        if (detectedIp === '127.0.0.1' && candidates.length > 0) {\n            detectedIp = candidates[0];\n            if (DEBUG) node.warn('[CM] No 192.168/10.x, using ' + detectedIp);\n        }\n    }\n} catch (e) {\n    if (DEBUG) node.warn('[CM] IP detection failed: ' + e.message);\n}\n\nvar hostPcIp = detectedIp !== '127.0.0.1' ? detectedIp : (global.get('edge_hostPcIp') || '127.0.0.1');\nglobal.set('edge_hostPcIp', hostPcIp);\n\n// === Default config (allow settings.js overrides) ===\nglobal.set('edge_backendHost', global.get('edge_backendHost') || '127.0.0.1');\nglobal.set('edge_backendPort', global.get('edge_backendPort') || 9099);\nglobal.set('edge_apiKey', global.get('edge_apiKey') || '');\nglobal.set('edge_backendUser', global.get('edge_backendUser') || 'admin');\nglobal.set('edge_backendPass', global.get('edge_backendPass') || '');\nglobal.set('edge_debug', DEBUG);\n\n// === First run: initialize all state globals ===\nif (isFirstRun) {\n    global.set('edge_devices', []);\n    global.set('edge_tagConfigs', {});\n    global.set('edge_commStatus', {});\n    global.set('edge_lastGoodTags', {});\n    global.set('edge_historyData', {});\n    global.set('edge_pg_queue', []);\n    global.set('edge_pg_success_count', 0);\n    global.set('edge_pg_fail_count', 0);\n    global.set('edge_pg_last_error', null);\n    global.set('edge_pg_batch_size', 200);\n    global.set('edge_commPending', []);\n    global.set('edge_lastBadSend', {});\n    global.set('edge_handshakeFlags', {});\n    global.set('edge_triggerLastRaw', {});\n    global.set('edge_triggerForceTimes', {});\n    global.set('edge_recentAlerts', []);\n    global.set('edge_lastAlarmTime', {});\n    global.set('edge_startTime', new Date().toISOString());\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', false);\n    if (DEBUG) node.warn('[CM] First run, hostPcIp=' + hostPcIp);\n}\n\n// === Refresh path: keep configReady=true, don't interrupt collection ===\nif (isRefresh) {\n    if (DEBUG) node.warn('[CM] Periodic refresh, configReady stays true');\n}\n\n// === Reauth path: clear JWT, full re-login ===\nif (isReauth) {\n    global.set('edge_jwt', '');\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', true);\n    if (DEBUG) node.warn('[CM] 401 reauth, full re-login');\n}\n\n// === Build login request ===\nvar user = global.get('edge_backendUser');\nvar pass = global.get('edge_backendPass');\nvar host = global.get('edge_backendHost');\nvar port = global.get('edge_backendPort');\n\nmsg.url = 'http://' + host + ':' + port + '/login';\nmsg.payload = 'username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass);\n\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 200,
+    "y": 100,
+    "wires": [
+      [
+        "sf-cm-http-login"
+      ]
+    ]
+  },
+  {
+    "id": "sf-cm-http-login",
+    "type": "http request",
+    "z": "sf-config-manager",
+    "name": "POST /login",
+    "method": "POST",
+    "ret": "txt",
+    "url": "",
+    "headers": [
+      {
+        "keyType": "other",
+        "keyValue": "Content-Type",
+        "valueType": "other",
+        "valueValue": "application/x-www-form-urlencoded"
+      }
+    ],
+    "x": 440,
+    "y": 100,
+    "wires": [
+      [
+        "sf-cm-fn-discover"
+      ]
+    ],
+    "func": ""
+  },
+  {
+    "id": "sf-cm-fn-discover",
+    "type": "function",
+    "z": "sf-config-manager",
+    "name": "JWT解析 + nodeId + 点位发现",
+    "func": "// === sf-config-manager Step 2: JWT解析 + nodeId反查 + 拉取全局点位 + 分组输出 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar DEBUG = global.get('edge_debug') || false;\nvar myHostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar apiKey = global.get('edge_apiKey') || '';\n\n// 1. Parse JWT from login response\nvar jwtToken = '';\ntry {\n    var r = JSON.parse(msg.payload);\n    jwtToken = (r.data && r.data.token) ? r.data.token : (r.token || '');\n} catch (e) {\n    jwtToken = '';\n}\n\nif (!jwtToken) {\n    if (DEBUG) node.warn('[CM] JWT FAIL: ' + (msg.payload || '').substring(0, 80));\n    global.set('edge_config_manager_lock', null);\n    // 🔧 P1#10: 使用 http.request 直接重试登录（替代无效的 node.send）\n    retryLogin();\n    return null;\n}\n\nglobal.set('edge_jwt', jwtToken);\nglobal.set('edge_reauthInProgress', false);\nif (DEBUG) node.warn('[CM] JWT OK, hostPcIp=' + myHostPcIp);\n\n// 2. Discover/register nodeId via heartbeat\nfunction discoverNodeId(callback) {\n    var nodeParams = 'host_pc_ip=' + encodeURIComponent(myHostPcIp)\n        + '&node_ip=' + encodeURIComponent(myHostPcIp)\n        + '&running_flows=5&memory_usage_mb=' + (Math.round(((global.get('process')||{memoryUsage:function(){return{rss:0}}}).memoryUsage().rss||0)/1048576)||0);\n    var nodeOpts = {\n        hostname: HOST, port: PORT,\n        path: '/monitor/heartbeat?' + nodeParams,\n        method: 'POST',\n        headers: {\n            'X-API-Key': apiKey,\n            'Authorization': 'Bearer ' + jwtToken,\n            'Content-Type': 'application/json'\n        }\n    };\n\n    var nr = http.request(nodeOpts, function (res) {\n        var b = '';\n        res.on('data', function (d) { b += d; });\n        res.on('end', function () {\n            try {\n                var j = JSON.parse(b);\n                var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n                if (nid > 0) {\n                    global.set('edge_nodeId', nid);\n                    if (DEBUG) node.warn('[CM] Node registered, nodeId=' + nid);\n                    callback(nid);\n                } else {\n                    // Hash fallback\n                    var hash = 0;\n                    for (var i = 0; i < myHostPcIp.length; i++) {\n                        hash = ((hash << 5) - hash) + myHostPcIp.charCodeAt(i);\n                        hash |= 0;\n                    }\n                    nid = Math.abs(hash) % 9000 + 1000;\n                    global.set('edge_nodeId', nid);\n                    if (DEBUG) node.warn('[CM] nodeId from hash: ' + nid);\n                    callback(nid);\n                }\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] nodeId parse err: ' + e.message);\n                callback(0);\n            }\n        });\n    });\n    nr.setTimeout(5000, function () {\n        nr.removeAllListeners();\n        nr.destroy();\n        if (DEBUG) node.warn('[CM] nodeId request timeout');\n        callback(0);\n    });\n    nr.on('error', function (e) {\n        if (DEBUG) node.warn('[CM] nodeId err: ' + e.message);\n        callback(0);\n    });\n    nr.write('{}');\n    nr.end();\n}\n\n// 3. Fetch global tag list + group by deviceId + filter\nfunction discoverTags(nodeId) {\n    var tagPath = '/plc/tag/global/list?page_size=50000';\n    var tagReq = http.request({\n        hostname: HOST, port: PORT, path: tagPath, method: 'GET',\n        headers: { 'Authorization': 'Bearer ' + jwtToken }\n    }, function (res) {\n        var body = '';\n        res.on('data', function (d) { body += d; });\n        res.on('end', function () {\n            try {\n                var r = JSON.parse(body);\n                if (r.code !== 200) {\n                    node.warn('[CM] Tag API returned code ' + (r.code || 'unknown') + ', will retry on refresh');\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', true);\n                    node.send([null, null]);\n                    return;\n                }\n                var records = r.rows || [];\n                if (records.length === 0) {\n                    node.warn('[CM] No tags in system');\n                    global.set('edge_config_manager_lock', null);\n                    global.set('edge_configReady', true);\n                    node.send([null, null]);\n                    return;\n                }\n\n                // Group by deviceId\n                var byDevice = {};\n                records.forEach(function (t) {\n                    var did = t.deviceId || 1;\n                    var key = String(did);\n                    if (!byDevice[key]) {\n                        byDevice[key] = {\n                            id: did,\n                            deviceName: t.deviceName || ('PLC-' + did),\n                            hostPcIp: t.hostPcIp || myHostPcIp,\n                            plcIp: t.plcIp || '127.0.0.1',\n                            plcPort: t.plcPort || 5007,\n                            comType: t.comType || 'MC_Protocol',\n                            protocolParams: {},\n                            tags: [],\n                            scanIntervalMs: t.scanIntervalMs || 1000,\n                            commTimeoutMs: t.commTimeoutMs || 3000,\n                            retryCount: t.retryCount || 2,\n                            retryIntervalMs: t.retryIntervalMs || 500,\n                            triggerKind: t.triggerKind || 1,\n                            status: t.status || t.deviceStatus || '0'\n                        };\n                        // Merge protocolParams: backend JSON takes priority\n                        var pp = {};\n                        try {\n                            if (t.protocolParams) {\n                                pp = typeof t.protocolParams === 'string' ? JSON.parse(t.protocolParams) : t.protocolParams;\n                            }\n                        } catch (e) {}\n                        if (Object.keys(pp).length === 0) {\n                            pp = {\n                                mcFrame: t.mcFrame || '3E',\n                                stationNo: t.stationNo || 0,\n                                networkNo: t.networkNo || 0,\n                                plcSeries: t.plcSeries || 'Q'\n                            };\n                        }\n                        byDevice[key].protocolParams = pp;\n                    }\n                    // Parse address: octal for X/Y, decimal for D/W/M etc.\n                    var addrStr = String(t.registerAddress || '0').replace(/\\D/g, '');\n                    var base = (t.registerType === 'X' || t.registerType === 'Y') ? 8 : 10;\n                    var addr = parseInt(addrStr, base) || 0;\n\n                    byDevice[key].tags.push({\n                        id: t.id,\n                        addr: addr,\n                        regAddr: t.registerAddress || '',\n                        regType: t.registerType || 'D',\n                        name: t.tagName,\n                        dataType: t.dataType || 'INT16',\n                        tform: t.transformType || 'none',\n                        slope: t.transformSlopeA || 1,\n                        offset: t.transformOffsetB || 0,\n                        unit: t.engUnit || '',\n                        deadband: t.reportDeadbandMs || 0,\n                        reportForceIntervalMs: t.reportForceIntervalMs || 5000\n                    });\n                });\n\n                // Filter: only enabled devices on this PC\n                var myDevices = [];\n                var myTagConfigs = {};\n                Object.keys(byDevice).forEach(function (did) {\n                    var dev = byDevice[did];\n                    if (String(dev.status) !== '0') return;\n                    if (dev.hostPcIp !== myHostPcIp) return;\n                    // MC devices need at least one valid register\n                    if (dev.comType === 'MC_Protocol') {\n                        var validTags = dev.tags.filter(function (t) { return t.addr >= 0; });\n                        if (validTags.length === 0) {\n                            if (DEBUG) node.warn('[CM] Device ' + dev.deviceName + ' has no valid registers, skipped');\n                            return;\n                        }\n                    }\n\n                    // Set timeout/retry on device object\n                    dev.timeout = dev.commTimeoutMs;\n                    dev.maxRetries = dev.retryCount;\n                    dev.retryInterval = dev.retryIntervalMs;\n\n                    myDevices.push(dev);\n                    myTagConfigs[dev.id] = dev.tags;\n                });\n\n                global.set('edge_devices', myDevices);\n                global.set('edge_tagConfigs', myTagConfigs);\n                global.set('edge_configReady', true);\n                // 🔧 P1-2: Cleanup historyData + lastGoodTags for removed devices/tags\n                (function cleanupStaleData() {\n                    var validDevIds = {};\n                    myDevices.forEach(function (d) { validDevIds[d.id] = true; });\n                    var validTagIds = {};\n                    myDevices.forEach(function (d) {\n                        (d.tags || []).forEach(function (t) { validTagIds[t.id] = true; });\n                    });\n                    // Clean historyData\n                    var hd = global.get('edge_historyData') || {};\n                    Object.keys(hd).forEach(function (did) {\n                        if (!validDevIds[did]) { delete hd[did]; return; }\n                        Object.keys(hd[did] || {}).forEach(function (tid) {\n                            if (!validTagIds[tid]) delete hd[did][tid];\n                        });\n                    });\n                    global.set('edge_historyData', hd);\n                    // Clean lastGoodTags — remove stale device entries and tag entries\n                    var lgt = global.get('edge_lastGoodTags') || {};\n                    Object.keys(lgt).forEach(function (did) {\n                        if (!validDevIds[did]) { delete lgt[did]; return; }\n                        lgt[did] = (lgt[did] || []).filter(function (v) { return validTagIds[v.tag_id]; });\n                    });\n                    global.set('edge_lastGoodTags', lgt);\n                })();\n// 🔧 P1#11: 配置完成，释放锁\n                global.set('edge_config_manager_lock', null);\n\n                if (DEBUG) {\n                    node.warn('[CM] Discovered ' + myDevices.length + ' devices (nodeId=' + nodeId + '):');\n                    myDevices.forEach(function (d) {\n                        node.warn('  ' + d.deviceName + ' (' + d.plcIp + ':' + d.plcPort + ') ' + d.tags.length + ' tags comType=' + d.comType);\n                    });\n                }\n\n                // Output 1: config for main flow scheduler\n                var configMsg = {\n                    payload: {\n                        jwt: jwtToken,\n                        nodeId: nodeId,\n                        hostPcIp: myHostPcIp,\n                        devices: myDevices\n                    }\n                };\n\n                // Output 2: MQTT node online\n                var now = new Date().toISOString();\n                var devList = myDevices.map(function (d) {\n                    return { device_id: d.id, device_name: d.deviceName, tag_count: d.tags.length };\n                });\n                var mqttMsg = {\n                    topic: 'edgelink/nodes/' + nodeId + '/status',\n                    payload: JSON.stringify({\n                        node_id: nodeId,\n                        host_pc_ip: myHostPcIp,\n                        status: 'online',\n                        device_count: myDevices.length,\n                        devices: devList,\n                        ts: now\n                    }),\n                    qos: 1,\n                    retain: true\n                };\n\n                node.send([configMsg, mqttMsg]);\n                if (DEBUG) node.warn('[CM] Config complete, ' + myDevices.length + ' devices ready');\n\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] Tag parsing error: ' + e.message);\n                global.set('edge_config_manager_lock', null);\n                node.send([null, null]);\n            }\n        });\n    });\n\n    tagReq.on('error', function (e) {\n        node.warn('[CM] Tag fetch error: ' + e.message);\n        global.set('edge_config_manager_lock', null);\n        global.set('edge_configReady', true);\n        node.send([null, null]);\n    });\n    tagReq.setTimeout(10000, function () {\n        tagReq.removeAllListeners();\n        tagReq.destroy();\n        node.warn('[CM] Tag fetch timeout');\n        global.set('edge_config_manager_lock', null);\n        global.set('edge_configReady', true);\n        node.send([null, null]);\n    });\n    tagReq.end();\n}\n\n// 🔧 P1#10: 直接 HTTP 重试登录，指数退避，上限5次\nvar _retryAttempt = 0;\nvar MAX_RETRY = 5;\nvar _retryDelay = 10000;\nfunction retryLogin() {\n    if (_retryAttempt >= MAX_RETRY) {\n        // 不再放弃 — 保持最长间隔持续重试，确保后端恢复后自动重连\n        node.warn('[CM] Login retry ongoing (' + _retryAttempt + ' attempts) — backend may be down');\n        _retryDelay = 120000;\n        // fall through — keep retrying\n    }\n    _retryAttempt++;\n    var thisDelay = _retryDelay;\n    _retryDelay = Math.min(_retryDelay * 2, 60000);\n    setTimeout(function () {\n        var user = global.get('edge_backendUser') || 'admin';\n        var pass = global.get('edge_backendPass') || '';\n        var host = global.get('edge_backendHost') || '127.0.0.1';\n        var port = global.get('edge_backendPort') || 9099;\n        var retryOpts = {\n            hostname: host, port: port, path: '/login', method: 'POST',\n            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }\n        };\n        if (DEBUG) node.warn('[CM] Retry login in ' + (thisDelay/1000) + 's (attempt ' + _retryAttempt + '/' + MAX_RETRY + ')...');\n        var retryReq = http.request(retryOpts, function (res) {\n            var b = '';\n            res.on('data', function (d) { b += d; });\n            res.on('end', function () {\n                var newJwt = '';\n                try {\n                    var r = JSON.parse(b);\n                    newJwt = (r.data && r.data.token) ? r.data.token : (r.token || '');\n                } catch (e) {}\n                if (newJwt) {\n                    _retryAttempt = 0;\n                    _retryDelay = 10000;\n                    global.set('edge_jwt', newJwt);\n                    global.set('edge_reauthInProgress', false);\n                    if (DEBUG) node.warn('[CM] Retry login OK, discovering...');\n                    discoverNodeId(function (nid) { discoverTags(nid); });\n                } else {\n                    if (DEBUG) node.warn('[CM] Retry login failed (attempt ' + _retryAttempt + '/' + MAX_RETRY + '), retrying...');\n                    retryLogin();\n                }\n            });\n        });\n        retryReq.setTimeout(5000, function () {\n            retryReq.destroy();\n            if (DEBUG) node.warn('[CM] Retry login timeout (attempt ' + _retryAttempt + '/' + MAX_RETRY + ')');\n            retryLogin();\n        });\n        retryReq.on('error', function () {\n            if (DEBUG) node.warn('[CM] Retry login network error (attempt ' + _retryAttempt + '/' + MAX_RETRY + ')');\n            retryLogin();\n        });\n        retryReq.write('username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass));\n        retryReq.end();\n    }, thisDelay);\n}\n\n// Execute: nodeId → tags\ndiscoverNodeId(function (nid) {\n    discoverTags(nid);\n});\n\nreturn null;",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 680,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "sf-cm-dbg-login",
+    "type": "debug",
+    "z": "sf-config-manager",
+    "name": "Login Response",
+    "active": false,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 680,
+    "y": 160,
+    "wires": [],
+    "func": ""
+  }
+]

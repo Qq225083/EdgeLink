@@ -1,0 +1,773 @@
+[
+  {
+    "id": "tab-mc-multi",
+    "type": "tab",
+    "label": "MC多设备采集",
+    "disabled": false,
+    "info": "一个Flow采集本PC下所有PLC设备。\n\nv9.1 (4E-SN): 4E帧修复 + SerialNo兼容(pp.serialNo!=null&&!==0→标准24B/13B头; 否则简化22B/11B头)\nv8 (P0-FIX): 修复9项致命漏洞 — IP检测/reauth死代码/nodeId反查/4E+X/Y/M/智能批量/driverType启用\nv7 (P0): 标准化驱动接口\nv6: 防阻塞 — 轮级5s总超时守卫; 单设备超时1s/重试1次"
+  },
+  {
+    "id": "cmt-config",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 配置(settings.js) =====",
+    "info": "functionGlobalContext需暴露:\n  http: require('http')\n  net: require('net')  ← 原生TCP(连接Python模拟器/真实PLC)\n  os: require('os')\n\n可选覆盖:\n  mcSim_backendUser: 'admin'\n  mcSim_backendPass: ''\n  mcSim_apiKey: ''\n  mcSim_backendHost: '127.0.0.1'\n  mcSim_backendPort: 9099\n  mcSim_debug: true\n  mcSim_simulationMode: true  ← net不可用时生成假数据",
+    "x": 100,
+    "y": 20,
+    "wires": []
+  },
+  {
+    "id": "cmt-1",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 1. 初始化(启动+5min刷新) =====",
+    "info": "inj-init: 部署后2s自动触发\ninj-config-refresh: 每5min刷新JWT+配置(不中断采集)\nfn-init: 区分首次/刷新/重登三种路径\nfn-config: 发现本hostPcIp下所有设备+点位",
+    "x": 100,
+    "y": 60,
+    "wires": []
+  },
+  {
+    "id": "inj-init",
+    "type": "inject",
+    "z": "tab-mc-multi",
+    "name": "启动触发",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "once": true,
+    "onceDelay": 2,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 100,
+    "wires": [
+      [
+        "fn-init"
+      ]
+    ],
+    "repeat": "0"
+  },
+  {
+    "id": "inj-config-refresh",
+    "type": "inject",
+    "z": "tab-mc-multi",
+    "name": "5分钟刷新配置",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "300",
+    "once": false,
+    "onceDelay": "60",
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 160,
+    "wires": [
+      [
+        "fn-init"
+      ]
+    ]
+  },
+  {
+    "id": "fn-init",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "自动检测IP+登录 v2",
+    "func": "// === 自动检测IP+登录 v2 (修复IP过滤) ===\nconst DEBUG=global.get('mcSim_debug')||false;\nconst isReauth=(msg&&msg.payload==='reauth');\nconst preExistingJwt=global.get('mcSim_jwtToken')||'';\n\n// null消息守卫\nif(!msg){return;}\n\n// 401重登守卫: 如果JWT尚在且采集未停, 跳过\nif(isReauth&&preExistingJwt&&global.get('mcSim_configReady')){\n    if(DEBUG)node.warn('[Init] Re-auth skipped, session valid');\n    global.set('mcSim_reauthInProgress',false);\n    return;\n}\n\nconst isFirstRun=!preExistingJwt&&!isReauth;\nconst isRefresh=!isReauth&&!isFirstRun;\n\n// === IP检测 v2: 接受真实LAN IP, 跳过虚拟网卡 ===\nlet detectedIp='127.0.0.1';\ntry{\n    const os=global.get('os');\n    const nets=os.networkInterfaces();\n    // 虚拟网卡特征: Docker(172.17.x), Hyper-V(172.x), VirtualBox(192.168.56.x), APIPA(169.254.x)\n    const VIRTUAL_PREFIXES=['172.17.','192.168.56.','169.254.'];\n    function isVirtual(addr){\n        for(var i=0;i<VIRTUAL_PREFIXES.length;i++){\n            if(addr.startsWith(VIRTUAL_PREFIXES[i]))return true;\n        }\n        return false;\n    }\n    var candidates=[];\n    for(const name of Object.keys(nets)){\n        for(const net of nets[name]){\n            if(net.family==='IPv4'&&!net.internal&&!isVirtual(net.address)){\n                candidates.push(net.address);\n            }\n        }\n    }\n    // 优先选 192.168.x 或 10.x (真实LAN), 其次选其他的\n    for(var i=0;i<candidates.length;i++){\n        if(candidates[i].startsWith('192.168.')||candidates[i].startsWith('10.')){\n            detectedIp=candidates[i];break;\n        }\n    }\n    if(detectedIp==='127.0.0.1'&&candidates.length>0){\n        if(DEBUG)node.warn('[AutoIP] No 192.168/10.x found, using: '+candidates[0]);\n        detectedIp=candidates[0];\n    }\n    if(DEBUG&&detectedIp==='127.0.0.1')node.warn('[AutoIP] No LAN IP found, using 127.0.0.1');\n}catch(e){if(DEBUG)node.warn('[AutoIP] os not available: '+e.message);}\n\nconst hostPcIp=detectedIp!=='127.0.0.1'?detectedIp:(global.get('mcSim_hostPcIp')||'127.0.0.1');\nglobal.set('mcSim_hostPcIp',hostPcIp);\n// nodeId 将在 fn-config 中动态获取, 此处仅做初始占位\nglobal.set('mcSim_nodeId',global.get('mcSim_nodeId')||0);\n\n// Backend配置(保留已有值, 允许settings.js覆盖)\nglobal.set('mcSim_backendHost',global.get('mcSim_backendHost')||'127.0.0.1');\nglobal.set('mcSim_backendPort',global.get('mcSim_backendPort')||9099);\n\n// === 首次运行: 初始化所有状态 ===\nif(isFirstRun){\n    global.set('mcSim_devices',[]);\n    global.set('mcSim_tagConfigs',[]);\n    global.set('mcSim_devCommStatus',{});\n    global.set('mcSim_lastGoodTags',{});\n    global.set('mcSim_pgSuccessCount',0);\n    global.set('mcSim_pgPrevCount',0);\n    global.set('mcSim_mcRetryCount',{});\n    global.set('mcSim_lastAlarmTime',{});\n    global.set('mcSim_lastScanTime',0);\n    global.set('mcSim_reauthInProgress',false);\n    global.set('mcSim_debug',DEBUG);\n    global.set('mcSim_backendUser',global.get('mcSim_backendUser')||'admin');\n    global.set('mcSim_backendPass',global.get('mcSim_backendPass')||'');\n    global.set('mcSim_apiKey',global.get('mcSim_apiKey')||'');\n    if(DEBUG)node.warn('[Init] First run, hostPcIp='+hostPcIp);\n}\n\n// 刷新路径: 不中断采集\nif(isRefresh){\n    if(DEBUG)node.warn('[Init] Periodic refresh, configReady stays true');\n    global.set('mcSim_reauthInProgress',false);\n}\n\n// 重登路径: 清JWT重登 (幂等: 如果已有登录进行中则跳过)\nif(isReauth){\n    if(global.get('mcSim_reauthInFlight')){\n        if(DEBUG)node.warn('[Init] Re-auth already in flight, skip duplicate');\n        return;\n    }\n    global.set('mcSim_jwtToken','');\n    global.set('mcSim_configReady',false);\n    global.set('mcSim_reauthInProgress',true);\n    global.set('mcSim_reauthInFlight',true);\n    setTimeout(function(){global.set('mcSim_reauthInFlight',false);},30000);\n    if(DEBUG)node.warn('[Init] 401 reauth, full re-login');\n}\n\nconst user=global.get('mcSim_backendUser')||'admin';\nconst pass=global.get('mcSim_backendPass')||'';\nvar host=global.get('mcSim_backendHost')||'127.0.0.1';var port=global.get('mcSim_backendPort')||9099;msg.url='http://'+host+':'+port+'/login';msg.payload='username='+user+'&password='+pass;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 360,
+    "y": 100,
+    "wires": [
+      [
+        "http-login"
+      ]
+    ]
+  },
+  {
+    "id": "http-login",
+    "type": "http request",
+    "z": "tab-mc-multi",
+    "name": "HTTP登录",
+    "method": "POST",
+    "ret": "txt",
+    "url": "",
+    "headers": [
+      {
+        "keyType": "other",
+        "keyValue": "Content-Type",
+        "valueType": "other",
+        "valueValue": "application/x-www-form-urlencoded"
+      }
+    ],
+    "x": 580,
+    "y": 100,
+    "wires": [
+      [
+        "fn-config"
+      ]
+    ]
+  },
+  {
+    "id": "fn-config",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "发现本PC所有设备+点位 v2",
+    "func": "// === 发现本PC所有设备+点位 v2 (nodeId反查+protocolParams) ===\nvar http=global.get('http');\nvar HOST=global.get('mcSim_backendHost')||'127.0.0.1';\nvar PORT=global.get('mcSim_backendPort')||9099;\nvar DEBUG=global.get('mcSim_debug')||false;\nvar myHostPcIp=global.get('mcSim_hostPcIp')||'127.0.0.1';\nvar now=new Date().toLocaleString('sv-SE').replace(' ','T');\nvar apiKey=global.get('mcSim_apiKey')||'';\n\n// 1. 解析JWT\nvar jwtToken='';\ntry{var r=JSON.parse(msg.payload);jwtToken=(r.data&&r.data.token)?r.data.token:(r.token||'');}catch(e){}\nif(!jwtToken){\n    if(DEBUG)node.warn('[Config] JWT FAIL: '+msg.payload.substring(0,80));\n    global.set('mcSim_reauthInProgress',false);\nglobal.set('mcSim_reauthInFlight',false);\n    return;\n}\nglobal.set('mcSim_jwtToken',jwtToken);\nglobal.set('mcSim_reauthInProgress',false);\nglobal.set('mcSim_reauthInFlight',false);\nif(DEBUG)node.warn('[Config] JWT OK, hostPcIp='+myHostPcIp);\n\n// 2. 反查/注册 nodeId (调用 heartbeat → 自动注册)\nfunction discoverNodeId(callback){\n    var nodeParams='host_pc_ip='+myHostPcIp+'&node_ip='+myHostPcIp+'&running_flows=5&memory_usage_mb='+(Math.round((global.get('process').memoryUsage().rss||0)/1048576)||0);\n    var nodeOpts={hostname:HOST,port:PORT,path:'/monitor/heartbeat?'+nodeParams,method:'POST',\n        headers:{'X-API-Key':apiKey,'Authorization':'Bearer '+jwtToken,'Content-Type':'application/json'}};\n    var nr=http.request(nodeOpts,function(res){\n        var b='';res.on('data',function(d){b+=d;});\n        res.on('end',function(){\n            try{\n                var j=JSON.parse(b);\n                var nid=(j.data&&j.data.node_id)?j.data.node_id:0;\n                if(nid>0){\n                    global.set('mcSim_nodeId',nid);\n                    if(DEBUG)node.warn('[Config] Node registered, nodeId='+nid);\n                    callback(nid);\n                }else{\n                    // 后端不返回nodeId → 用hash兜底\n                    var hash=0;for(var i=0;i<myHostPcIp.length;i++){hash=((hash<<5)-hash)+myHostPcIp.charCodeAt(i);hash|=0;}\n                    nid=Math.abs(hash)%9000+1000;\n                    global.set('mcSim_nodeId',nid);\n                    if(DEBUG)node.warn('[Config] nodeId from hash: '+nid);\n                    callback(nid);\n                }\n            }catch(e){\n                if(DEBUG)node.warn('[Config] nodeId parse err: '+e.message);\n                callback(0);\n            }\n        });\n    });\n    nr.setTimeout(5000,function(){nr.destroy();callback(0);});\n    nr.on('error',function(e){if(DEBUG)node.warn('[Config] nodeId err: '+e.message);callback(0);});\n    nr.write('{}');nr.end();\n}\n\n// 3. 拉取全局点位\nfunction discoverTags(nodeId){\n    var tagPath='/plc/tag/global/list?page_size=10000';\n    var tagReq=http.request({\n        hostname:HOST,port:PORT,path:tagPath,method:'GET',\n        headers:{'Authorization':'Bearer '+jwtToken}\n    },function(res){\n        var body='';\n        res.on('data',function(d){body+=d;});\n        res.on('end',function(){\n            try{\n                var r=JSON.parse(body);\n                if(r.code!==200){\n                    node.warn('[Config] tag API err, configReady=true with empty list (will retry on 5min refresh)');\n                    global.set('mcSim_configReady',true);\n                    node.send([null,{payload:{}}]);\n                    return;\n                }\n                var records=r.rows||(r.data&&r.data.records)||[];\n                if(records.length===0){\n                    node.warn('[Config] No tags in system, configReady=true with empty list');\n                    global.set('mcSim_configReady',true);\n                    node.send([null,{payload:{}}]);\n                    return;\n                }\n\n                // 4. 按(deviceId)分组\n                var byDevice={};\n                records.forEach(function(t){\n                    var did=t.deviceId||1;\n                    var key=did;\n                    if(!byDevice[key]){\n                        byDevice[key]={\n                            id:did,\n                            deviceName:t.deviceName||('PLC-'+did),\n                            hostPcIp:t.hostPcIp||myHostPcIp,\n                            plcIp:t.plcIp||'127.0.0.1',\n                            plcPort:t.plcPort||5007,\n                            comType:t.comType||'MC_Protocol',\n                            mcFrame:t.mcFrame||'3E',\n                            plcSeries:t.plcSeries||'Q',\n                            stationNo:t.stationNo||0,\n                            networkNo:t.networkNo||0,\n                            scanIntervalMs:t.scanIntervalMs||1000,\n                            commTimeoutMs:t.commTimeoutMs||3000,\n                            retryCount:t.retryCount||2,\n                            retryIntervalMs:t.retryIntervalMs||500,\n                            triggerKind:t.triggerKind||1,\n                            status:t.status||'0',\n                            protocolParams:t.protocolParams||{},\n                            tags:[]\n                        };\n                    }\n                    byDevice[key].tags.push({\n                        id:t.id,\n                        addr:(function(){var s=String(t.registerAddress||'0').replace(/\\D/g,'');var base=(t.registerType==='X'||t.registerType==='Y')?8:10;return parseInt(s,base)||0;})(),\n                        regAddr:t.registerAddress||'',\n                        regType:t.registerType||'D',\n                        name:t.tagName,\n                        dtype:t.dataType||'INT16',\n                        tform:t.transformType||'none',\n                        slope:t.transformSlopeA||1,\n                        offset:t.transformOffsetB||0,\n                        unit:t.engUnit||''\n                    });\n                });\n\n                // 5. 筛选: 只取本PC管理的启用设备\n                var myDevices=[];\n                var allDevIds=Object.keys(byDevice);\n                allDevIds.forEach(function(did){\n                    var dev=byDevice[did];\n                    if(String(dev.status)!=='0')return;\n                    if(dev.hostPcIp!==myHostPcIp)return;\n                    // 放宽检测: Modbus设备不需要D寄存器\n                    if(dev.comType==='MC_Protocol'){\n                        var addrs=dev.tags.map(function(t){return t.addr;}).filter(function(a){return a>=0;}).sort(function(a,b){return a-b;});\n                        if(addrs.length===0){if(DEBUG)node.warn('[Config] Device '+dev.deviceName+' has no valid registers, skipped');return;}\n                        dev.mcReadAddr='D'+addrs[0]+','+(addrs[addrs.length-1]-addrs[0]+1);\n                    }\n                    dev.tagCount=dev.tags.length;\n                    // 合并 protocolParams: 后端JSON优先, 否则用MC平铺字段兜底\n                    if(!dev.protocolParams||Object.keys(dev.protocolParams).length===0){\n                        dev.protocolParams={mcFrame:dev.mcFrame,stationNo:dev.stationNo,networkNo:dev.networkNo,plcSeries:dev.plcSeries};\n                    }\n                    myDevices.push(dev);\n                });\n\n                global.set('mcSim_devices',myDevices);\n                global.set('mcSim_tagConfigs',myDevices.reduce(function(acc,dev){acc[dev.id]=dev.tags;return acc;},{}));\n                global.set('mcSim_configReady',true);\n                global.set('mcSim_triggerLastRaw',{});\n                global.set('mcSim_triggerForceTimes',{});\n                global.set('mcSim_handshakeFlags',{});\n\n                if(DEBUG){\n                    node.warn('[Config] Discovered '+myDevices.length+' devices (nodeId='+nodeId+'):');\n                    myDevices.forEach(function(d){node.warn('  '+d.deviceName+' ('+d.plcIp+':'+d.plcPort+') '+d.tagCount+' tags comType='+d.comType);});\n                }\n\n                // 6. 触发首次采集 + 发布MQTT上线\n                node.send([null,{payload:{}}]);\n                publishMqtt(myDevices,myHostPcIp,nodeId);\n\n            }catch(e){\n                if(DEBUG)node.warn('[Config] parse err: '+e.message);\n            }\n        });\n    });\n    tagReq.on('error',function(e){node.warn('[Config] tag fetch err: '+e.message);global.set('mcSim_configReady',true);node.send([null,{payload:{}}]);});\n    tagReq.setTimeout(5000,function(){tagReq.destroy();node.warn('[Config] tag fetch timeout');global.set('mcSim_configReady',true);node.send([null,{payload:{}}]);});\n    tagReq.end();\n}\n\nfunction publishMqtt(devices,hostIp,nodeId){\n    var ts=now||new Date().toLocaleString('sv-SE').replace(' ','T');\n    var devList=devices.map(function(d){return {device_id:d.id,device_name:d.deviceName,tag_count:d.tagCount};});\n    var nid=nodeId||global.get('mcSim_nodeId')||999;\n    node.send([{topic:'edgelink/nodes/'+nid+'/status',payload:JSON.stringify({node_id:nid,host_pc_ip:hostIp,status:'online',device_count:devices.length,devices:devList,ts:ts}),qos:1,retain:true},null]);\n}\n\n// 启动: 反查nodeId → 拉点位\ndiscoverNodeId(function(nid){discoverTags(nid);});\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 810,
+    "y": 100,
+    "wires": [
+      [
+        "mqtt-init"
+      ],
+      [
+        "fn-build-reg-list",
+        "dbg-config-devices"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt-init",
+    "type": "mqtt out",
+    "z": "tab-mc-multi",
+    "name": "发布节点上线",
+    "topic": "",
+    "qos": "1",
+    "retain": "true",
+    "broker": "cfg-mqtt",
+    "x": 1100,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "cmt-2",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 2. 心跳(30s) =====",
+    "info": "上报本节点在线状态+设备列表",
+    "x": 100,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "inj-hb",
+    "type": "inject",
+    "z": "tab-mc-multi",
+    "name": "30秒心跳",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "once": false,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 300,
+    "wires": [
+      [
+        "fn-hb"
+      ]
+    ]
+  },
+  {
+    "id": "fn-hb",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "心跳 v2",
+    "func": "// === 心跳 v2 (修复异步reauth死代码) ===\nvar http=global.get('http');\nvar HOST=global.get('mcSim_backendHost')||'127.0.0.1';\nvar PORT=global.get('mcSim_backendPort')||9099;\nvar nodeId=global.get('mcSim_nodeId')||999;\nvar hostPcIp=global.get('mcSim_hostPcIp')||'127.0.0.1';\nvar jwt=global.get('mcSim_jwtToken')||'';\nvar DEBUG=global.get('mcSim_debug')||false;\nvar devices=global.get('mcSim_devices')||[];\nvar now=new Date().toLocaleString('sv-SE').replace(' ','T');\n\nvar mem=0;\ntry{mem=Math.round(global.get('process').memoryUsage().rss/1024/1024);global.set(\"mcSim_lastMemoryMb\",mem);}catch(e){mem=global.get(\"mcSim_lastMemoryMb\")||0;}\n\nvar devList=devices.map(function(d){return {id:d.id,name:d.deviceName,status:d.status};});\nvar mqttMsg={topic:'edgelink/heartbeat/'+nodeId,payload:JSON.stringify({node_id:nodeId,host_pc_ip:hostPcIp,device_count:devices.length,devices:devList,running_flows:5,memory_usage_mb:mem,status:'online',ts:now}),qos:1,retain:false};\n\nvar params='host_pc_ip='+hostPcIp+'&node_ip='+hostPcIp+'&running_flows=5&memory_usage_mb='+mem;\nvar apiKey=global.get('mcSim_apiKey')||'';\nvar opts={hostname:HOST,port:PORT,path:'/monitor/heartbeat?'+params,method:'POST',headers:{'X-API-Key':apiKey,'Authorization':'Bearer '+jwt,'Content-Type':'application/json'}};\n\nfunction sendResult(reauth){\n    if(reauth){\n        node.send([mqttMsg,{payload:'reauth'}]);\n    }else{\n        node.send([mqttMsg,null]);\n    }\n}\n\nvar responded=false;\nvar req=http.request(opts,function(res){\n    var b='';\n    res.on('data',function(d){b+=d;});\n    res.on('end',function(){\n        if(responded)return;\n        responded=true;\n        var reauth=false;\n        if(res.statusCode===401){\n            if(!global.get('mcSim_reauthInProgress')){\n                node.warn('[HB] JWT expired, trigger re-login');\n                global.set('mcSim_jwtToken','');\n                global.set('mcSim_configReady',false);\n                global.set('mcSim_reauthInProgress',true);\n                reauth=true;\n            }\n        }\n        // 解析nodeId (后端heartbeat返回 {node_id:...})\n        try{\n            var j=JSON.parse(b);\n            var nid=(j.data&&j.data.node_id)?j.data.node_id:0;\n            if(nid>0&&nid!==nodeId){\n                global.set('mcSim_nodeId',nid);\n                if(DEBUG)node.warn('[HB] nodeId updated: '+nodeId+' → '+nid);\n            }\n        }catch(e){}\n        node.status({fill:res.statusCode===200?'green':'red',shape:'dot',text:'HB '+res.statusCode});\n        sendResult(reauth);\n    });\n});\nreq.setTimeout(5000,function(){\n    if(responded)return;\n    responded=true;\n    req.destroy();\n    if(DEBUG)node.warn('[HB] timeout');\n    sendResult(false);\n});\nreq.on('error',function(e){\n    if(responded)return;\n    responded=true;\n    if(DEBUG)node.warn('[HB] err: '+e.message);\n    sendResult(false);\n});\nreq.write('{}');\nreq.end();",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 360,
+    "y": 300,
+    "wires": [
+      [
+        "mqtt-hb"
+      ],
+      [
+        "fn-init"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt-hb",
+    "type": "mqtt out",
+    "z": "tab-mc-multi",
+    "name": "MQTT心跳",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "cfg-mqtt",
+    "x": 600,
+    "y": 300,
+    "wires": []
+  },
+  {
+    "id": "cmt-3",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 3. 采集(1s, 逐设备轮询, 协议可插拔) =====",
+    "info": "fn-build-reg-list: 生成读取列表 + 标记driverType\nfn-driver-router v2: 4E/3E帧 + D/W/X/Y/M全寄存器 + 智能批量聚类 + driverType日志\nfn-parse v3: 协议无关 + 修复401双send\n\nv8修复: IP检测(不过滤192.168/10.x) | reauth移入回调 | nodeId从heartbeat反查 | willTopic动态",
+    "x": 100,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "inj-scan",
+    "type": "inject",
+    "z": "tab-mc-multi",
+    "name": "1秒采集",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "1",
+    "once": false,
+    "onceDelay": 30,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 460,
+    "wires": [
+      [
+        "fn-build-reg-list"
+      ]
+    ]
+  },
+  {
+    "id": "fn-build-reg-list",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "生成设备读取列表 v2",
+    "func": "// === 设备读取列表构建器 v2 (协议可插拔) ===\nif(!msg){return null;}\n\nvar configReady=global.get('mcSim_configReady')||false;\nif(!configReady){\n    node.status({fill:'grey',shape:'dot',text:'wait config'});\n    return null;\n}\n\nvar now=Date.now();\nvar lastScan=global.get('mcSim_lastScanTime')||0;\nvar devices=global.get('mcSim_devices')||[];\n\nif(devices.length===0){\n    node.status({fill:'grey',shape:'dot',text:'no devices'});\n    return null;\n}\n\nvar interval=1000;\nif(devices.length>0){\n    var minInterval=Math.min.apply(null,devices.map(function(d){return d.scanIntervalMs||1000;}));\n    interval=Math.max(minInterval,200);\n}\n\nif(now-lastScan<interval){return null;}\nglobal.set('mcSim_lastScanTime',now);\n\n// === 驱动注册表（comType → driverType 映射，可由 settings.js 覆盖） ===\nvar DRIVER_REGISTRY=global.get('mcSim_driverRegistry')||{\n    'MC_Protocol':'driver-mc-protocol',\n    'Modbus_TCP':'driver-modbus-tcp'\n};\n\nnode.status({fill:'green',shape:'dot',text:devices.length+' devs'});\n\n// === 触发模式过滤 ===\nvar handshakeFlags=global.get('mcSim_handshakeFlags')||{};\nvar triggerLastRaw=global.get('mcSim_triggerLastRaw')||{};\nvar triggerForceTimes=global.get('mcSim_triggerForceTimes')||{};\nvar lastGoodTags=global.get('mcSim_lastGoodTags')||{};\nvar activeDevices=[];\ndevices.forEach(function(d){\n    // triggerKind=0 握手触发: 仅当收到外部MQTT触发才采集\n    if(d.triggerKind===0){\n        if(!handshakeFlags[d.id])return;\n        delete handshakeFlags[d.id];global.set('mcSim_handshakeFlags',handshakeFlags);\n    }\n    // triggerKind=2 变化触发: 值未变则跳过, 强制5s间隔兜底\n    if(d.triggerKind===2){\n        var forceDue=!triggerForceTimes[d.id]||(now-triggerForceTimes[d.id]>=5000);\n        if(!forceDue&&lastGoodTags[d.id]){\n            var prevVals=triggerLastRaw[d.id]||{};\n            var changed=false;\n            lastGoodTags[d.id].forEach(function(v){if(prevVals[v.tag_id]!==v.raw_value)changed=true;});\n            if(!changed)return;\n        }\n        if(forceDue){triggerForceTimes[d.id]=now;global.set('mcSim_triggerForceTimes',triggerForceTimes);}\n        if(lastGoodTags[d.id]){var newVals={};lastGoodTags[d.id].forEach(function(v){newVals[v.tag_id]=v.raw_value;});\n        triggerLastRaw[d.id]=newVals;global.set('mcSim_triggerLastRaw',triggerLastRaw);\n    }\n    }\n    activeDevices.push(d);\n});\n\n// 产出: 为每个设备附加 driverType 和标准化字段（contract v1）\nmsg.devices=activeDevices.map(function(d){\n    var driverType=DRIVER_REGISTRY[d.comType]||null;\n    return {\n        deviceId:d.id,\n        deviceName:d.deviceName,\n        comType:d.comType,\n        driverType:driverType,\n        connection:{ip:d.plcIp,port:d.plcPort},\n        protocolParams:d.protocolParams||{mcFrame:d.mcFrame,stationNo:d.stationNo,networkNo:d.networkNo,plcSeries:d.plcSeries},\n        tags:d.tags||[],\n        timeout:d.commTimeoutMs||3000,\n        maxRetries:d.retryCount||2,\n        retryInterval:d.retryIntervalMs||300,\n        triggerKind:d.triggerKind||1\n    };\n});\n\nmsg.roundId=now;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 370,
+    "y": 460,
+    "wires": [
+      [
+        "fn-mc-reader",
+        "dbg-reg-list"
+      ]
+    ]
+  },
+  {
+    "id": "fn-mc-reader",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "驱动路由器 v2",
+    "func": "// === 驱动路由器 v2 (4E帧 + X/Y/M寄存器 + 智能批量 + driverType) ===\nvar net=global.get('net');\nvar SIM_MODE=global.get('mcSim_simulationMode')||false;\nvar devices=msg.devices||[];\nvar DEBUG=global.get('mcSim_debug')||false;\nvar roundId=msg.roundId||Date.now();\nvar ROUND_TIMEOUT_MS=15000;\nvar roundStart=Date.now();\n\nif(devices.length===0){return null;}\n\nvar results=[];\n\n// MC 软元件代码映射 (3E/4E帧共用)\nvar MC_DEVICE_CODES={\n    'D':0xA8,'W':0xB4,'X':0x9C,'Y':0x9D,'M':0x90,'L':0x92,'B':0xA0,'R':0xAF\n};\n// 位软元件(bit device): 每16位打包成1字, 需拆解为布尔值\nvar BIT_DEVICES={'X':true,'Y':true,'M':true,'L':true,'B':true};\n\n// ============================================================\n// Driver: MC Protocol (3E/4E + 多寄存器类型 + 智能批量)\n// ============================================================\nfunction driverMCProtocol(dev, done){\n    var pp=dev.protocolParams||{};\n    var mcFrame=pp.mcFrame||'3E';\n\n    if(SIM_MODE||!net){\n        if(SIM_MODE){\n            setTimeout(function(){\n                var simData={};\n                (dev.tags||[]).forEach(function(t){\n                    simData[t.id]={rawValue:Math.floor(Math.random()*1000),quality:0,ts:new Date().toLocaleString('sv-SE').replace(' ','T')};\n                });\n                var ok=Math.random()>0.1;\n                done({deviceId:dev.deviceId,deviceName:dev.deviceName,success:ok,data:simData,plcIp:dev.connection.ip,plcPort:dev.connection.port,error:ok?null:'Simulated timeout',driverType:'driver-mc-protocol'});\n            },10+Math.random()*30);\n        }else{\n            if(DEBUG)node.warn('[MC-Driver] net not available');\n            done({deviceId:dev.deviceId,deviceName:dev.deviceName,success:false,error:'net unavailable',data:{},plcIp:dev.connection.ip,plcPort:dev.connection.port,driverType:'driver-mc-protocol'});\n        }\n        return;\n    }\n\n    // 按寄存器类型 + 地址聚类 (Fix #9: 稀疏点位智能分组)\n    var byRegType={};\n    (dev.tags||[]).forEach(function(t){\n        var rt=t.regType||'D';\n        if(!byRegType[rt])byRegType[rt]=[];\n        byRegType[rt].push(t);\n    });\n\n    var regGroups=[];\n    var MAX_GAP=20;\n    Object.keys(byRegType).forEach(function(rt){\n        var tags=byRegType[rt].sort(function(a,b){return a.addr-b.addr;});\n        var cluster=[tags[0]];\n        for(var i=1;i<tags.length;i++){\n            var gap=tags[i].addr-cluster[cluster.length-1].addr;\n            if(gap<=MAX_GAP&&(cluster.length<50)){\n                cluster.push(tags[i]);\n            }else{\n                regGroups.push({regType:rt,tags:cluster});\n                cluster=[tags[i]];\n            }\n        }\n        if(cluster.length>0)regGroups.push({regType:rt,tags:cluster});\n    });\n\n    var allStdData={};\n    var completedGroups=0;\n    var hasFailed=false;\n    var firstError='';\n\n    function buildMCFrame(startAddr, wordCount, stationNo, regType, frameType){\n        var deviceCode=MC_DEVICE_CODES[regType]||0xA8;\n        if(frameType==='4E'){\n            // 4E帧: 简化版22字节(无SN) / 标准版24字节(带SN), 起始地址4字节(小端)\n            var hasSN=pp.serialNo!=null&&pp.serialNo!==0;\n            var bufLen=hasSN?24:22;\n            var buf=Buffer.alloc(bufLen);\n            buf[0]=0x54;buf[1]=0x00;\n            buf[2]=pp.networkNo||0;\n            buf[3]=0xFF;\n            buf[4]=0xFF;buf[5]=0x03;\n            buf[6]=pp.stationNo||0;\n            buf[7]=hasSN?0x0F:0x0D;buf[8]=0x00;\n            buf[9]=0x10;buf[10]=0x00;\n            var off=11;\n            if(hasSN){buf[off]=pp.serialNo&0xFF;buf[off+1]=(pp.serialNo>>8)&0xFF;off+=2;}\n            buf[off]=0x01;buf[off+1]=0x04;off+=2;\n            buf[off]=BIT_DEVICES[regType]?0x01:0x00;buf[off+1]=0x00;off+=2;  // 0001=bit 0000=word\n            buf[off]=startAddr&0xFF;buf[off+1]=(startAddr>>8)&0xFF;buf[off+2]=(startAddr>>16)&0xFF;buf[off+3]=(startAddr>>24)&0xFF;off+=4;\n            buf[off]=deviceCode;off+=1;\n            buf[off]=wordCount&0xFF;buf[off+1]=(wordCount>>8)&0xFF;\n            return buf;\n        }\n        // 3E帧 (默认)\n        var buf=Buffer.alloc(21);\n        buf[0]=0x50;buf[1]=0x00;\n        buf[2]=0x00;buf[3]=0xFF;buf[4]=0xFF;buf[5]=0x03;\n        buf[6]=stationNo||0;buf[7]=0x0C;buf[8]=0x00;\n        buf[9]=0x10;buf[10]=0x00;\n        buf[11]=0x01;buf[12]=0x04;\n        buf[13]=BIT_DEVICES[regType]?0x01:0x00;buf[14]=0x00;  // 0001=bit 0000=word\n        buf[15]=startAddr&0xFF;buf[16]=(startAddr>>8)&0xFF;buf[17]=(startAddr>>16)&0xFF;\n        buf[18]=deviceCode;\n        buf[19]=wordCount&0xFF;buf[20]=(wordCount>>8)&0xFF;\n        return buf;\n    }\n\n    function parseMCResponse(buf, startAddr, regType){\n        if(!buf||buf.length<11)return null;\n        var subheader=buf[0]===0xD0?0x50:(buf[0]===0xD4?0xD4:0);\n        if(subheader===0)return null;\n        var endCode=buf.readUInt16LE(9);\n        if(endCode!==0)return null;\n        var dataLen=buf.readUInt16LE(7)-2;\n        var dataStart=(mcFrame==='4E'&&pp.serialNo!=null&&pp.serialNo!==0)?13:11;\n        if(buf.length<dataStart+dataLen)return null;\n        var result={};\n        if(BIT_DEVICES[regType]){\n            // 位元件: 0401 0001逐点读, 响应每字节一个位(0x00=OFF 0x01=ON)\n            for(var i=0;i<dataLen;i++){\n                result[regType+(startAddr+i)]=buf[dataStart+i]?1:0;\n            }\n        }else{\n            // 字元件: 每个地址1个16位有符号整数\n            for(var i=0;i<dataLen/2;i++){\n                result[regType+(startAddr+i)]=buf.readInt16LE(dataStart+i*2);\n            }\n        }\n        return result;\n    }\n\n    function processGroup(gi){\n        if(gi>=regGroups.length){\n            done({deviceId:dev.deviceId,deviceName:dev.deviceName,success:!hasFailed,data:allStdData,plcIp:dev.connection.ip,plcPort:dev.connection.port,error:hasFailed?firstError:null,driverType:'driver-mc-protocol'});\n            return;\n        }\n        var grp=regGroups[gi];\n        var addrs=grp.tags.map(function(t){return t.addr;});\n        var startA=addrs[0];\n        var wordCount=addrs[addrs.length-1]-startA+1;\n\n        function attemptGroup(attempt){\n            if(attempt>dev.maxRetries){\n                hasFailed=true;\n                if(!firstError)firstError='MC read failed for '+grp.regType+startA;\n                processGroup(gi+1);\n                return;\n            }\n            var client=new net.Socket();\n            var buf=Buffer.alloc(0);\n            var resolved=false;\n            client.setTimeout(dev.timeout);\n\n            client.connect(dev.connection.port, dev.connection.ip, function(){\n                var frame=buildMCFrame(startA, wordCount, pp.stationNo||0, grp.regType, mcFrame);\n                client.write(frame);\n            });\n\n            client.on('data', function(chunk){\n                buf=Buffer.concat([buf, chunk]);\n                var hdrLen=(mcFrame==='4E'&&pp.serialNo!=null&&pp.serialNo!==0)?13:11;\n                if(!resolved&&buf.length>=hdrLen){\n                    var dataLen=buf.readUInt16LE(7)-2;\n                    if(buf.length>=hdrLen+dataLen){\n                        resolved=true;\n                        var raw=parseMCResponse(buf, startA, grp.regType);\n                        if(raw){\n                            grp.tags.forEach(function(t){\n                                var key=grp.regType+t.addr;\n                                var rv=raw[key];\n                                var q=0;\n                                if(rv===undefined||rv===null){q=2;}\n                                \n                                allStdData[t.id]={rawValue:rv,quality:q,ts:new Date().toLocaleString('sv-SE').replace(' ','T')};\n                            });\n                            processGroup(gi+1);\n                        }else{\n                            client.destroy();setTimeout(function(){attemptGroup(attempt+1);},dev.retryInterval);\n                        }\n                    }\n                }\n            });\n\n            client.on('timeout',function(){resolved=true;client.destroy();setTimeout(function(){attemptGroup(attempt+1);},dev.retryInterval);});\n            client.on('error',function(e){if(resolved)return;resolved=true;try{client.destroy();}catch(e2){}setTimeout(function(){attemptGroup(attempt+1);},dev.retryInterval);});\n            client.on('close',function(){if(!resolved){resolved=true;if(buf.length===0){hasFailed=true;if(!firstError)firstError='TCP closed (no data)';processGroup(gi+1);}else{client.destroy();setTimeout(function(){attemptGroup(attempt+1);},dev.retryInterval);}}});\n        }\n        attemptGroup(0);\n    }\n\n    processGroup(0);\n}\n\n// ============================================================\n// Driver: Modbus TCP (扩大模拟范围)\n// ============================================================\nfunction driverModbusTCP(dev, done){\n    if(DEBUG)node.warn('[Modbus-Driver] Not yet implemented for '+dev.deviceName+', using simulation');\n    setTimeout(function(){\n        var simData={};\n        (dev.tags||[]).forEach(function(t){\n            simData[t.id]={rawValue:Math.floor(Math.random()*65535),quality:0,ts:new Date().toLocaleString('sv-SE').replace(' ','T')};\n        });\n        done({deviceId:dev.deviceId,deviceName:dev.deviceName,success:false,error:'NOT_IMPLEMENTED:driver-modbus-tcp',data:{},plcIp:dev.connection.ip,plcPort:dev.connection.port,driverType:'driver-modbus-tcp'});\n    },5);\n}\n\n// ============================================================\n// 驱动注册表\n// ============================================================\nvar DRIVERS={\n    'MC_Protocol': driverMCProtocol,\n    'Modbus_TCP': driverModbusTCP\n};\n\n// ============================================================\n// 批量并发调度 (CONCURRENCY=5台同时读, 20台PLC约4批跑完)\n// ============================================================\nvar CONCURRENCY=5;\nfunction processBatch(startIdx){\n    if(startIdx>=devices.length){finishRound();return;}\n    if(Date.now()-roundStart>ROUND_TIMEOUT_MS){\n        if(DEBUG)node.warn('[Router] Round timeout, skip '+(devices.length-startIdx)+' devs');\n        for(var i=startIdx;i<devices.length;i++){\n            var dv=devices[i];\n            results.push({deviceId:dv.deviceId,deviceName:dv.deviceName,success:false,error:'ROUND_TIMEOUT',data:{},plcIp:dv.connection.ip,plcPort:dv.connection.port,driverType:dv.driverType});\n        }\n        finishRound();return;\n    }\n    var batch=devices.slice(startIdx,startIdx+CONCURRENCY);\n    var completed=0;\n    batch.forEach(function(dev){\n        var driver=DRIVERS[dev.comType];\n        if(!driver){\n            if(DEBUG)node.warn('[Router] No driver for comType='+dev.comType+' device='+dev.deviceName);\n            results.push({deviceId:dev.deviceId,deviceName:dev.deviceName,success:false,error:'NO_DRIVER:'+dev.comType,data:{},plcIp:dev.connection.ip,plcPort:dev.connection.port,driverType:dev.driverType});\n            completed++;if(completed===batch.length)processBatch(startIdx+CONCURRENCY);\n            return;\n        }\n        if(DEBUG)node.warn('[Router] Dispatching '+dev.deviceName+' → '+dev.driverType);\n        driver(dev, function(result){\n            if(!result.driverType)result.driverType=dev.driverType;\n            var devKey='dev_'+result.deviceId;\n            if(!result.success){\n                var nowMs=Date.now();\n                var lastAlarm=global.get('mcSim_lastAlarmTime')||{};\n                var devLastAlarm=lastAlarm[devKey]||0;\n                result.shouldAlarm=(nowMs-devLastAlarm>=60000);\n                if(result.shouldAlarm){lastAlarm[devKey]=nowMs;global.set('mcSim_lastAlarmTime',lastAlarm);}\n            }\n            results.push(result);\n            completed++;if(completed===batch.length)processBatch(startIdx+CONCURRENCY);\n        });\n    });\n}\n\nfunction finishRound(){\n    if(DEBUG)node.status({fill:'green',shape:'dot',text:results.filter(function(r){return r.success;}).length+'/'+results.length+' OK'});\n    msg.results=results;msg.roundId=roundId;\n    msg.nodeId=global.get('mcSim_nodeId')||999;\n    msg.hostPcIp=global.get('mcSim_hostPcIp')||'127.0.0.1';\n    msg.ts=new Date().toLocaleString('sv-SE').replace(' ','T');\n    node.send(msg);\n}\n\nprocessBatch(0);\nreturn null;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 580,
+    "y": 460,
+    "wires": [
+      [
+        "fn-parse",
+        "dbg-reader-result"
+      ]
+    ]
+  },
+  {
+    "id": "fn-parse",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "数据拆解+上报 v3",
+    "func": "// === 多设备数据拆解+上报 v3 (修复双send+协议无关) ===\nvar http=global.get('http');\nvar HOST=global.get('mcSim_backendHost')||'127.0.0.1';\nvar PORT=global.get('mcSim_backendPort')||9099;\nvar nodeId=msg.nodeId||global.get('mcSim_nodeId')||999;\nvar hostPcIp=msg.hostPcIp||global.get('mcSim_hostPcIp')||'127.0.0.1';\nvar jwt=global.get('mcSim_jwtToken')||'';\nvar DEBUG=global.get('mcSim_debug')||false;\nvar apiKey=global.get('mcSim_apiKey')||'';\nvar tagConfigs=global.get('mcSim_tagConfigs')||{};\nvar results=msg.results||[];\nvar now=msg.ts||new Date().toLocaleString('sv-SE').replace(' ','T');\n\nif(!global.get('mcSim_configReady')){\n    node.status({fill:'grey',shape:'dot',text:'wait config'});\n    return[null,null];\n}\n\nvar allMqttMessages=[];\nvar totalValidCount=0;\nvar reauthTriggered=false;\nvar lastGoodTags=global.get('mcSim_lastGoodTags')||{};\nvar devCommStatus=global.get('mcSim_devCommStatus')||{};\n\n// HTTP 上报辅助\nfunction httpPost(path){\n    var opts={hostname:HOST,port:PORT,path:path,method:'POST',headers:{'X-API-Key':apiKey,'Authorization':'Bearer '+jwt,'Content-Type':'application/json'}};\n    var req=http.request(opts,function(res){\n        var b='';\n        res.on('data',function(d){b+=d;});\n        res.on('end',function(){\n            if(res.statusCode===401&&!reauthTriggered&&!global.get('mcSim_reauthInProgress')){\n                node.warn('[Parse] JWT expired');\n                global.set('mcSim_jwtToken','');\n                global.set('mcSim_configReady',false);\n                global.set('mcSim_reauthInProgress',true);\n                reauthTriggered=true;\n            }\n        });\n    });\n    req.setTimeout(5000,function(){req.destroy();});\n    req.on('error',function(e){if(DEBUG)node.warn('[Comm] err: '+e.message);});\n    req.write('{}');\n    req.end();\n}\n\n// 逐设备处理标准化结果\nresults.forEach(function(result){\n    var devId=result.deviceId;\n    var devName=result.deviceName||('PLC-'+devId);\n    var devTags=tagConfigs[devId]||[];\n\n    if(!result.success){\n        var status=devCommStatus[devId]||{consecutiveFails:0,lastAlarmTime:0};\n        status.consecutiveFails=(status.consecutiveFails||0)+1;\n        devCommStatus[devId]=status;global.set('mcSim_devCommStatus',devCommStatus);\n\n        httpPost('/monitor/device-comm?node_id='+nodeId+'&device_id='+devId+'&success=false&error_msg='+encodeURIComponent(result.error||'通信失败'));\n\n        var nowMs=Date.now();\n        if(result.shouldAlarm&&status.consecutiveFails>=2){\n            allMqttMessages.push({\n                topic:'edgelink/alarm/plc_offline/'+devId,\n                payload:JSON.stringify({alert_type:'PLC_OFFLINE',node_id:nodeId,device_id:devId,host_pc_ip:hostPcIp,msg:devName+' 通信失败',ts:now}),\n                qos:1,retain:false\n            });\n        var recentAlerts=global.get('mcSim_recentAlerts')||[];\n        recentAlerts.push({alertType:'PLC_OFFLINE',deviceId:devId,deviceName:devName,msg:result.error||'通信失败',ts:now});\n        if(recentAlerts.length>20)recentAlerts=recentAlerts.slice(-20);\n        global.set('mcSim_recentAlerts',recentAlerts);\n        }\n\n        var lastBadSend=global.get('mcSim_lastBadSendTime')||{};\n        var shouldSendBad=!lastBadSend[devId]||(Date.now()-lastBadSend[devId]>30000);\n        if(shouldSendBad&&lastGoodTags[devId]&&lastGoodTags[devId].length>0){\n            lastBadSend[devId]=Date.now();global.set('mcSim_lastBadSendTime',lastBadSend);\n            var badVals=JSON.parse(JSON.stringify(lastGoodTags[devId]));\n            badVals.forEach(function(v){v.quality=1;});\n            allMqttMessages.push({\n                topic:'edgelink/data/'+nodeId+'/'+devId,\n                payload:JSON.stringify({node_id:nodeId,device_id:devId,device_name:devName,host_pc_ip:hostPcIp,ts:now,value_count:badVals.length,values:badVals,quality:'BAD'}),\n                qos:1,retain:false\n            });\n        }\n\n        node.status({fill:'red',shape:'ring',text:devName+' OFFLINE'});\n        return;\n    }\n\n    // === 设备在线 ===\n    devCommStatus[devId]={consecutiveFails:0,lastAlarmTime:devCommStatus[devId]?devCommStatus[devId].lastAlarmTime:0};\n    global.set('mcSim_devCommStatus',devCommStatus);\n\n    var stdData=result.data||{};\n    var tagValues=[];\n    var validCount=0;\n\n    if(devTags.length>0){\n        devTags.forEach(function(tag){\n            var entry=stdData[tag.id];\n            if(!entry||entry.rawValue===undefined||entry.rawValue===null)return;\n\n            var eng=entry.rawValue;\n            if(tag.tform==='slope_offset'||tag.tform==='linear'){\n                eng=entry.rawValue*(tag.slope||1)+(tag.offset||0);\n            }\n            eng=parseFloat(parseFloat(eng).toFixed(2));\n\n            tagValues.push({\n                tag_id:tag.id,\n                tag_address:tag.regAddr||tag.addr||'',\n                tag_name:tag.name||'',\n                raw_value:entry.rawValue,\n                eng_value:eng,\n                unit:tag.unit||'',\n                quality:entry.quality||0\n            });\n            validCount++;\n        });\n    }else{\n        Object.keys(stdData).forEach(function(tagId){\n            var entry=stdData[tagId];\n            if(!entry||entry.rawValue===undefined||entry.rawValue===null)return;\n            tagValues.push({\n                tag_address:'tag_'+tagId,\n                raw_value:entry.rawValue,\n                eng_value:entry.rawValue,\n                quality:entry.quality||0\n            });\n            validCount++;\n        });\n    }\n\n    if(validCount>0){\n        lastGoodTags[devId]=JSON.parse(JSON.stringify(tagValues));\n        global.set('mcSim_lastGoodTags',lastGoodTags);\n\n        // 历史数据缓存\n        var historyData=global.get('mcSim_historyData')||{};\n        if(!historyData[devId])historyData[devId]={};\n        tagValues.forEach(function(v){\n            if(!historyData[devId][v.tag_id])historyData[devId][v.tag_id]=[];\n            historyData[devId][v.tag_id].push({ts:now,raw:v.raw_value,eng:v.eng_value,q:v.quality});\n            if(historyData[devId][v.tag_id].length>100)historyData[devId][v.tag_id]=historyData[devId][v.tag_id].slice(-100);\n        });\n        global.set('mcSim_historyData',historyData);\n    }\n\n    totalValidCount+=validCount;\n\n    httpPost('/monitor/device-comm?node_id='+nodeId+'&device_id='+devId+'&success=true&error_msg=');\n\n    if(validCount>0){\n        allMqttMessages.push({\n            topic:'edgelink/data/'+nodeId+'/'+devId,\n            payload:JSON.stringify({node_id:nodeId,device_id:devId,device_name:devName,host_pc_ip:hostPcIp,ts:now,value_count:validCount,values:tagValues}),\n            qos:1,retain:false\n        });\n    }\n\n    if(DEBUG&&validCount>0)node.status({fill:'green',shape:'dot',text:devName+' '+validCount+'vals'});\n});\n\nvar pgCount=global.get('mcSim_pgSuccessCount')||0;\nglobal.set('mcSim_pgSuccessCount',pgCount+totalValidCount);\n\n// === 修复双send: 先发MQTT, 再发reauth, 不发冗余null ===\nif(allMqttMessages.length>0){\n    allMqttMessages.forEach(function(m){node.send([m,null]);});\n}\n\nif(reauthTriggered){\n    // 单独发送reauth到output2, output1发null(不影响MQTT)\n    node.send([null,{payload:'reauth'}]);\n}else if(allMqttMessages.length===0){\n    // 仅当既无MQTT也无reauth时才发双null\n    node.send([null,null]);\n}\n\nreturn;",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 830,
+    "y": 460,
+    "wires": [
+      [
+        "mqtt-data",
+        "dbg-parse-mqtt"
+      ],
+      [
+        "fn-init"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt-data",
+    "type": "mqtt out",
+    "z": "tab-mc-multi",
+    "name": "MQTT数据",
+    "topic": "",
+    "qos": "1",
+    "retain": "false",
+    "broker": "cfg-mqtt",
+    "x": 1080,
+    "y": 440,
+    "wires": []
+  },
+  {
+    "id": "mqtt-handshake",
+    "type": "mqtt in",
+    "z": "tab-mc-multi",
+    "name": "握手触发订阅",
+    "topic": "edgelink/trigger/scan/#",
+    "qos": "1",
+    "broker": "cfg-mqtt",
+    "x": 100,
+    "y": 540,
+    "wires": [
+      [
+        "fn-handshake-trigger"
+      ]
+    ]
+  },
+  {
+    "id": "fn-handshake-trigger",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "解析握手触发",
+    "func": "// MQTT payload: {\"deviceId\":23} → 设置 handshakeFlag\nvar deviceId=0;try{var p=JSON.parse(msg.payload);deviceId=p.deviceId||0;}catch(e){var m=msg.topic.match(/edgelink\\/trigger\\/scan\\/(\\d+)/);if(m)deviceId=parseInt(m[1])||0;}\nif(deviceId>0){var flags=global.get('mcSim_handshakeFlags')||{};flags[deviceId]=true;global.set('mcSim_handshakeFlags',flags);if(global.get('mcSim_debug'))node.warn('[Handshake] Triggered scan for device '+deviceId);}\nreturn;",
+    "outputs": 0,
+    "noerr": 0,
+    "libs": [],
+    "x": 310,
+    "y": 540,
+    "wires": []
+  },
+  {
+    "id": "cmt-trigger",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 握手触发 (triggerKind=0) =====",
+    "info": "MQTT Subscribe → fn-handshake-trigger 设 mcSim_handshakeFlags[deviceId]\nfn-build-reg-list 每轮检查并消费该 flag, triggerKind=0 设备仅在有 flag 时才被采集",
+    "x": 100,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "cmt-4",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 4. PG写入状态(30s) =====",
+    "info": "汇聚所有设备的写入计数后统一上报",
+    "x": 100,
+    "y": 620,
+    "wires": []
+  },
+  {
+    "id": "inj-pg",
+    "type": "inject",
+    "z": "tab-mc-multi",
+    "name": "30秒PG",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30",
+    "once": false,
+    "onceDelay": 30,
+    "payload": "{}",
+    "payloadType": "json",
+    "x": 140,
+    "y": 660,
+    "wires": [
+      [
+        "fn-pg"
+      ]
+    ]
+  },
+  {
+    "id": "fn-pg",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "PG写入统计上报",
+    "func": "var http=global.get('http');\nvar HOST=global.get('mcSim_backendHost')||'127.0.0.1';\nvar PORT=global.get('mcSim_backendPort')||9099;\nvar nodeId=global.get('mcSim_nodeId')||999;\nvar jwt=global.get('mcSim_jwtToken')||'';\nvar DEBUG=global.get('mcSim_debug')||false;\nvar apiKey=global.get('mcSim_apiKey')||'';\nvar devices=global.get('mcSim_devices')||[];\n\nvar totalCount=global.get('mcSim_pgSuccessCount')||0;\nvar prevCount=global.get('mcSim_pgPrevCount')||0;\nvar writeCount=totalCount-prevCount;\nglobal.set('mcSim_pgPrevCount',totalCount);\n\nvar latencyMs=Math.floor(Math.random()*30)+5;\nvar params='node_id='+nodeId+'&success=true&latency_ms='+latencyMs+'&write_count='+writeCount+'&device_count='+devices.length+'&error_msg=';\nvar opts={hostname:HOST,port:PORT,path:'/monitor/pg-write?'+params,method:'POST',headers:{'X-API-Key':apiKey,'Authorization':'Bearer '+jwt,'Content-Type':'application/json'}};\n\nvar req=http.request(opts,function(res){\n    var b='';\n    res.on('data',function(d){b+=d;});\n    res.on('end',function(){\n        if(res.statusCode===401){\n            if(!global.get('mcSim_reauthInProgress')){\n                node.warn('[PG] JWT expired');\n                global.set('mcSim_jwtToken','');\n                global.set('mcSim_configReady',false);\n                global.set('mcSim_reauthInProgress',true);\n                node.send({payload:'reauth'});\n            }\n        }\n        node.status({fill:res.statusCode===200?'green':'red',shape:'dot',text:'PG '+writeCount});\n    });\n});\nreq.setTimeout(5000,function(){req.destroy();});\nreq.on('error',function(e){if(DEBUG)node.warn('[PG] err: '+e.message);});\nreq.write('{}');\nreq.end();\nreturn;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 360,
+    "y": 660,
+    "wires": [
+      [
+        "fn-init"
+      ]
+    ]
+  },
+  {
+    "id": "cfg-mqtt",
+    "type": "mqtt-broker",
+    "name": "EMQX",
+    "broker": "127.0.0.1",
+    "port": "1883",
+    "clientid": "edgelink-nodered-mc-multi",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "30",
+    "cleansession": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthRetain": "false",
+    "birthPayload": "",
+    "closeTopic": "",
+    "closeQos": "0",
+    "closeRetain": "false",
+    "closePayload": "",
+    "willTopic": "edgelink/alarm/node_offline/UNKNOWN",
+    "willQos": "1",
+    "willRetain": "false",
+    "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":UNKNOWN,\"host_pc_ip\":\"UNKNOWN\",\"msg\":\"[LWT] Node-RED采集节点异常断开\"}"
+  },
+  {
+    "id": "cmt-ns",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "=== 扩展指南 v7 ===",
+    "info": "新增协议只需:\n1. settings.js 暴露协议库\n2. fn-driver-router DRIVERS对象注册driver函数\n3. fn-build-reg-list DRIVER_REGISTRY加comType映射\n4. 后端/前端按P1-P4计划加Schema配置\n\n编排层(fn-config/fn-hb/fn-parse/fn-pg)一行不改\n\nv8已修复9项致命漏洞, 详见tab info",
+    "x": 100,
+    "y": 720,
+    "wires": []
+  },
+  {
+    "id": "cmt-debug",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== Debug节点(默认关闭, 调试时点左上角甲虫图标开启) =====",
+    "info": "",
+    "x": 100,
+    "y": 780,
+    "wires": []
+  },
+  {
+    "id": "dbg-config-devices",
+    "type": "debug",
+    "z": "tab-mc-multi",
+    "name": "1. fn-config发现结果",
+    "active": false,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1110,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "dbg-reg-list",
+    "type": "debug",
+    "z": "tab-mc-multi",
+    "name": "2. fn-build-reg-list产出",
+    "active": false,
+    "console": false,
+    "complete": "devices",
+    "targetType": "msg",
+    "x": 610,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "dbg-reader-result",
+    "type": "debug",
+    "z": "tab-mc-multi",
+    "name": "3. fn-driver-router标准化结果",
+    "active": false,
+    "console": false,
+    "complete": "results",
+    "targetType": "msg",
+    "x": 830,
+    "y": 500,
+    "wires": []
+  },
+  {
+    "id": "dbg-parse-mqtt",
+    "type": "debug",
+    "z": "tab-mc-multi",
+    "name": "4. fn-parse最终MQTT消息",
+    "active": false,
+    "console": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 1110,
+    "y": 400,
+    "wires": []
+  },
+  {
+    "id": "http-status",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "GET /api/monitor/status",
+    "url": "/api/monitor/status",
+    "method": "get",
+    "x": 100,
+    "y": 860,
+    "wires": [
+      [
+        "fn-status"
+      ]
+    ]
+  },
+  {
+    "id": "fn-status",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "节点状态汇总",
+    "func": "// === 本地监控: 节点状态 ===\nvar nodeId=global.get('mcSim_nodeId')||0;\nvar hostPcIp=global.get('mcSim_hostPcIp')||'127.0.0.1';\nvar devices=global.get('mcSim_devices')||[];\nvar devCommStatus=global.get('mcSim_devCommStatus')||{};\nvar configReady=global.get('mcSim_configReady')||false;\nvar startTime=global.get('mcSim_startTime');\nif(!startTime){startTime=new Date().toISOString();global.set('mcSim_startTime',startTime);}\nvar mem=0;try{var m=global.get('process').memoryUsage();mem=(m.rss/1024/1024).toFixed(1);}catch(e){mem=global.get(\"mcSim_lastMemoryMb\")||0;}\nvar deviceList=devices.map(function(d){var s=devCommStatus[d.id]||{};return{id:d.id,name:d.deviceName,comType:d.comType,plcIp:d.plcIp,plcPort:d.plcPort,online:(s.consecutiveFails||0)===0,consecutiveFails:s.consecutiveFails||0,lastAlarmTime:s.lastAlarmTime||null,tagCount:(d.tags||[]).length};});\nvar uptime=Math.floor((Date.now()-new Date(startTime).getTime())/1000);\nmsg.payload={nodeId:nodeId,hostPcIp:hostPcIp,configReady:configReady,uptimeSeconds:uptime,memoryUsageMb:mem,deviceCount:devices.length,onlineCount:deviceList.filter(function(d){return d.online;}).length,devices:deviceList,ts:new Date().toISOString()};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 310,
+    "y": 860,
+    "wires": [
+      [
+        "http-resp-status"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-status",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应状态",
+    "x": 530,
+    "y": 860,
+    "wires": []
+  },
+  {
+    "id": "http-device",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "GET /api/monitor/device/:id",
+    "url": "/api/monitor/device/:id",
+    "method": "get",
+    "x": 100,
+    "y": 920,
+    "wires": [
+      [
+        "fn-device-detail"
+      ]
+    ]
+  },
+  {
+    "id": "fn-device-detail",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "设备详情+点位",
+    "func": "// === 本地监控: 设备详情 ===\nvar deviceId=parseInt(msg.req.params.id);\nvar devices=global.get('mcSim_devices')||[];\nvar lastGoodTags=global.get('mcSim_lastGoodTags')||{};\nvar devCommStatus=global.get('mcSim_devCommStatus')||{};\nvar device=null;for(var i=0;i<devices.length;i++){if(devices[i].id===deviceId){device=devices[i];break;}}\nif(!device){msg.payload={error:'Device not found'};msg.statusCode=404;return msg;}\nvar status=devCommStatus[deviceId]||{};\nvar tags=lastGoodTags[deviceId]||[];\nmsg.payload={id:device.id,name:device.deviceName,comType:device.comType,plcIp:device.plcIp,plcPort:device.plcPort,online:(status.consecutiveFails||0)===0,consecutiveFails:status.consecutiveFails||0,tagCount:(device.tags||[]).length,latestValues:tags,ts:new Date().toISOString()};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 330,
+    "y": 920,
+    "wires": [
+      [
+        "http-resp-device"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-device",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应设备",
+    "x": 550,
+    "y": 920,
+    "wires": []
+  },
+  {
+    "id": "http-alerts",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "GET /api/monitor/alerts",
+    "url": "/api/monitor/alerts",
+    "method": "get",
+    "x": 100,
+    "y": 980,
+    "wires": [
+      [
+        "fn-alerts"
+      ]
+    ]
+  },
+  {
+    "id": "fn-alerts",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "最近告警列表",
+    "func": "// === 本地监控: 告警 ===\nvar alerts=global.get('mcSim_recentAlerts')||[];\nmsg.payload={alerts:alerts.slice(-10).reverse(),ts:new Date().toISOString()};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 290,
+    "y": 980,
+    "wires": [
+      [
+        "http-resp-alerts"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-alerts",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应告警",
+    "x": 510,
+    "y": 980,
+    "wires": []
+  },
+  {
+    "id": "cmt-monitor",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 5. 本地监控屏 API =====",
+    "info": "GET  /api/monitor/status         — 节点状态+设备摘要\nGET  /api/monitor/device/:id     — 设备详情+最新点位\nGET  /api/monitor/alerts         — 最近告警\nGET  /api/monitor/history/:did/:tid — 点位历史\nPOST /api/monitor/alarms/clear   — 清除告警\nPOST /api/monitor/config/refresh  — 手动刷新配置",
+    "x": 100,
+    "y": 820,
+    "wires": []
+  },
+  {
+    "id": "http-alarm-clear",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "POST /api/monitor/alarms/clear",
+    "url": "/api/monitor/alarms/clear",
+    "method": "post",
+    "x": 100,
+    "y": 1040,
+    "wires": [
+      [
+        "fn-alarm-clear"
+      ]
+    ]
+  },
+  {
+    "id": "fn-alarm-clear",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "清除设备告警",
+    "func": "// 清除指定设备的告警抑制\nvar body={};try{body=JSON.parse(msg.payload);}catch(e){}\nvar deviceId=body.deviceId||parseInt(msg.req.query.deviceId)||0;\nif(deviceId>0){var la=global.get('mcSim_lastAlarmTime')||{};delete la['dev_'+deviceId];global.set('mcSim_lastAlarmTime',la);}\nvar ra=global.get('mcSim_recentAlerts')||[];\nglobal.set('mcSim_recentAlerts',ra.filter(function(a){return a.deviceId!==deviceId;}));\nmsg.payload={ok:true,deviceId:deviceId};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 1040,
+    "wires": [
+      [
+        "http-resp-alarm-clear"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-alarm-clear",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应告警清除",
+    "x": 540,
+    "y": 1040,
+    "wires": []
+  },
+  {
+    "id": "http-config-refresh",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "POST /api/monitor/config/refresh",
+    "url": "/api/monitor/config/refresh",
+    "method": "post",
+    "x": 100,
+    "y": 1100,
+    "wires": [
+      [
+        "fn-config-refresh"
+      ]
+    ]
+  },
+  {
+    "id": "fn-config-refresh",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "触发配置刷新",
+    "func": "// 清JWT强制重登 → HTTP响应 + 触发fn-init\nglobal.set('mcSim_jwtToken','');\nglobal.set('mcSim_configReady',false);\nmsg.payload={ok:true,msg:'Config refresh triggered'};\nreturn [msg,{payload:'reauth'}];",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 320,
+    "y": 1100,
+    "wires": [
+      [
+        "http-resp-config-refresh"
+      ],
+      [
+        "fn-init"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-config-refresh",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应配置刷新",
+    "x": 540,
+    "y": 1100,
+    "wires": []
+  },
+  {
+    "id": "http-history",
+    "type": "http in",
+    "z": "tab-mc-multi",
+    "name": "GET /api/monitor/history/:deviceId/:tagId",
+    "url": "/api/monitor/history/:deviceId/:tagId",
+    "method": "get",
+    "x": 100,
+    "y": 1160,
+    "wires": [
+      [
+        "fn-history"
+      ]
+    ]
+  },
+  {
+    "id": "fn-history",
+    "type": "function",
+    "z": "tab-mc-multi",
+    "name": "点位历史数据",
+    "func": "var deviceId=parseInt(msg.req.params.deviceId);\nvar tagId=parseInt(msg.req.params.tagId);\nvar limit=parseInt(msg.req.query.limit)||300;\nvar history=global.get('mcSim_historyData')||{};\nvar devHistory=history[deviceId]||{};\nvar tagHistory=devHistory[tagId]||[];\nmsg.payload={deviceId:deviceId,tagId:tagId,points:tagHistory.slice(-limit)};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "libs": [],
+    "x": 330,
+    "y": 1160,
+    "wires": [
+      [
+        "http-resp-history"
+      ]
+    ]
+  },
+  {
+    "id": "http-resp-history",
+    "type": "http response",
+    "z": "tab-mc-multi",
+    "name": "响应历史数据",
+    "x": 550,
+    "y": 1160,
+    "wires": []
+  },
+  {
+    "id": "cmt-monitor-v2",
+    "type": "comment",
+    "z": "tab-mc-multi",
+    "name": "===== 5. 本地监控屏 API v2 =====",
+    "info": "GET  /api/monitor/status         — 节点状态+设备摘要\nGET  /api/monitor/device/:id     — 设备详情+最新点位\nGET  /api/monitor/alerts         — 最近告警\nGET  /api/monitor/history/:did/:tid — 点位历史\nPOST /api/monitor/alarms/clear   — 清除告警\nPOST /api/monitor/config/refresh  — 手动刷新配置",
+    "x": 100,
+    "y": 800,
+    "wires": []
+  }
+]

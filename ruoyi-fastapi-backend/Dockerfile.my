@@ -1,0 +1,18 @@
+FROM python:3.10
+WORKDIR /app
+
+# 复制源代码（.dockerignore 已排除 .env*、密钥、日志、本地数据目录）
+COPY . .
+
+# 安装依赖
+RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 暴露端口
+EXPOSE 9099
+
+# 健康检查：30s 一次，启动后 40s 宽限期，连续 3 次失败判定 unhealthy
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9099/docs', timeout=3)" || exit 1
+
+# 启动命令
+CMD ["python", "app.py", "--env=dockermy"]

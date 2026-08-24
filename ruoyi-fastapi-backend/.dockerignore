@@ -1,0 +1,38 @@
+# 版本控制
+.git
+.gitignore
+.gitattributes
+
+# 环境配置与密钥（严禁打入镜像）
+.env
+.env.*
+!.env.example
+
+# Python 运行产物
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# 日志与缓存
+logs/
+caches/
+*.log
+
+# 本地上传/下载/生成目录
+vf_admin/upload_path/
+vf_admin/download_path/
+vf_admin/gen_path/
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+
+# 文档与脚本（非运行必需）
+docs/
+*.md
+alembic/
+tests/

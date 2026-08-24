@@ -1,0 +1,2114 @@
+{
+  "meta": {
+    "name": "EdgeLink v10 — Node-RED 子Flow分解架构",
+    "version": "v10-Final",
+    "date": "2026-06-26",
+    "description": "将v9.1的50节点单体Flow拆分为6个可独立部署/调试/测试的子Flow + 1个主编排Flow",
+    "subflow_count": 6,
+    "main_flow_count": 4,
+    "total_files": 12,
+    "design_doc": "见 edgelink_v10_subflow_architecture_design.md（v10-Final设计书）",
+    "review_feedback": "已修正: P0-1接口契约统一(字段平铺,id) P0-2 Phase拆分(1a→1b→1c) P0-3 device-comm仅状态变化上报 P1-1 pg-writer事件驱动 P1-2 MQTT/HTTP前缀隔离"
+  },
+  "global_variables": {
+    "prefix": "edge_",
+    "config": [
+      "edge_jwt",
+      "edge_nodeId",
+      "edge_devices",
+      "edge_tagConfigs",
+      "edge_hostPcIp",
+      "edge_configReady"
+    ],
+    "state": [
+      "edge_commStatus",
+      "edge_lastGoodTags",
+      "edge_historyData",
+      "edge_handshakeFlags",
+      "edge_triggerLastRaw",
+      "edge_triggerForceTimes"
+    ],
+    "queue": [
+      "edge_pg_queue",
+      "edge_commPending",
+      "edge_pg_success_count",
+      "edge_pg_prev_count"
+    ],
+    "locks": [
+      "edge_config_manager_lock",
+      "edge_mc_driver_lock",
+      "edge_modbus_driver_lock",
+      "edge_pg_writing"
+    ],
+    "settings": [
+      "edge_backendHost",
+      "edge_backendPort",
+      "edge_apiKey",
+      "edge_debug",
+      "edge_simulationMode"
+    ]
+  },
+  "mqtt_topics": {
+    "prefix": "edgelink-v10/",
+    "node_online": "edgelink-v10/nodes/{nodeId}/status",
+    "heartbeat": "edgelink-v10/heartbeat/{nodeId}",
+    "data": "edgelink-v10/data/{nodeId}/{deviceId}",
+    "alarm_plc_offline": "edgelink-v10/alarm/plc_offline/{deviceId}",
+    "alarm_node_offline": "edgelink-v10/alarm/node_offline/{nodeId}",
+    "handshake_trigger": "edgelink-v10/trigger/scan/#"
+  },
+  "http_api_endpoints": {
+    "prefix": "/api/v10/monitor/",
+    "status": "GET /api/v10/monitor/status",
+    "device_detail": "GET /api/v10/monitor/device/:id",
+    "alerts": "GET /api/v10/monitor/alerts",
+    "history": "GET /api/v10/monitor/history/:deviceId/:tagId",
+    "alarm_clear": "POST /api/v10/monitor/alarms/clear",
+    "config_refresh": "POST /api/v10/monitor/config/refresh"
+  },
+  "interface_contracts": {
+    "driver_input": {
+      "description": "主Flow调度器 → 协议驱动（单设备，字段平铺）",
+      "schema": {
+        "id": "number — 对应后端 device.id",
+        "deviceName": "string",
+        "comType": "string — MC_Protocol | Modbus_TCP",
+        "plcIp": "string",
+        "plcPort": "number",
+        "protocolParams": "object — { mcFrame, stationNo, networkNo, serialNo, byteOrder, slaveId, ... }",
+        "tags": "array — [{ id, addr, regAddr, regType, name, dataType, tform, slope, offset, unit, deadband }]",
+        "timeout": "number — 通信超时ms",
+        "maxRetries": "number — 最大重试次数",
+        "retryInterval": "number — 重试间隔ms",
+        "triggerKind": "number — 0=握手 1=固定周期 2=变化触发"
+      }
+    },
+    "driver_output": {
+      "description": "协议驱动 → sf-data-processor",
+      "schema": {
+        "deviceId": "number",
+        "deviceName": "string",
+        "success": "boolean",
+        "data": "object — { tagId: { rawValue, quality, ts } }",
+        "error": "string|null",
+        "driverType": "string — driver-mc-protocol | driver-modbus-tcp",
+        "plcIp": "string",
+        "plcPort": "number",
+        "roundTimeMs": "number"
+      }
+    },
+    "processor_output_mqtt": {
+      "description": "sf-data-processor Output 1 → mqtt-out",
+      "schema": {
+        "topic": "edgelink-v10/data/{nodeId}/{deviceId}",
+        "payload": "JSON string — { node_id, device_id, device_name, host_pc_ip, ts, value_count, values[] }",
+        "qos": 1,
+        "retain": false
+      }
+    },
+    "processor_output_pg": {
+      "description": "sf-data-processor Output 2 → sf-pg-writer",
+      "schema": {
+        "pgRecords": "array — [{ ts, node_id, device_id, device_name, tag_id, tag_address, tag_name, raw_value, eng_value, unit, quality, host_pc_ip }]"
+      }
+    }
+  },
+  "files": {
+    "sf_config_manager": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-config-manager",
+          "type": "subflow",
+          "name": "sf-config-manager",
+          "info": "配置管理中心 v10: IP检测 + JWT登录 + nodeId注册 + 设备发现 + 5min刷新 + MQTT上线\n\n输入触发:\n- inject(部署后2s): 首次启动\n- inject(每300s): 周期刷新\n- msg.payload = {action:'reauth'}: JWT过期强制重登\n\n输出1: msg.config = { jwt, nodeId, hostPcIp, devices: [...] }\n输出2: MQTT节点上线消息\n\n内部流程:\nfn-cm-init (IP检测+锁+登录准备) → http-cm-login (POST /login)\n  → fn-cm-discover (JWT解析 + heartbeat反查nodeId + 拉取全局点位 → 分组 → 过滤 → 输出)\n\nv10 P0修正:\n- 接口契约统一: devices[] 元素字段平铺 (id, deviceName, plcIp, plcPort, ...)\n- 单例锁60s过期\n- 全局变量 edge_ 前缀",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-cm-fn-init"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-cm-fn-discover",
+                  "port": 0
+                }
+              ]
+            },
+            {
+              "wires": [
+                {
+                  "id": "sf-cm-fn-discover",
+                  "port": 1
+                }
+              ]
+            }
+          ],
+          "env": [
+            {
+              "name": "BACKEND_HOST",
+              "type": "str",
+              "value": "127.0.0.1"
+            },
+            {
+              "name": "BACKEND_PORT",
+              "type": "num",
+              "value": "9099"
+            }
+          ],
+          "meta": {},
+          "color": "#C6DBEF"
+        },
+        {
+          "id": "sf-cm-fn-init",
+          "type": "function",
+          "z": "sf-config-manager",
+          "name": "IP检测 + 登录准备",
+          "func": "// === sf-config-manager Step 1: IP检测 + 单例锁 + 分路径 + 登录请求 ===\nvar DEBUG = global.get('edge_debug') || false;\nvar isReauth = (msg.payload && msg.payload.action === 'reauth');\nvar existingJwt = global.get('edge_jwt') || '';\n\n// === Singleton lock (60s expiry) ===\nvar lock = global.get('edge_config_manager_lock');\nif (lock && (Date.now() - lock.ts < 60000)) {\n    if (isReauth) {\n        // Reauth: wait until current init finishes (max 30s)\n        if (Date.now() - lock.ts < 30000) {\n            if (DEBUG) node.warn('[CM] Re-auth waiting for active init (' + (Date.now() - lock.ts) + 'ms old)');\n            setTimeout(function () { node.send(msg); }, 2000);\n            return null;\n        }\n        // Force takeover after 30s\n        if (DEBUG) node.warn('[CM] Lock expired, force takeover for reauth');\n    } else {\n        if (DEBUG) node.warn('[CM] Another init in progress, skip');\n        return null;\n    }\n}\nglobal.set('edge_config_manager_lock', { ts: Date.now(), nodeId: node.id });\n\n// === Reauth guard: skip if JWT still valid and config ready ===\nif (isReauth && existingJwt && global.get('edge_configReady')) {\n    if (DEBUG) node.warn('[CM] Re-auth skipped, session still valid');\n    return null;\n}\n\nvar isFirstRun = !existingJwt && !isReauth;\nvar isRefresh = !isReauth && !isFirstRun;\n\n// === IP Detection (skip virtual NICs) ===\nvar detectedIp = '127.0.0.1';\ntry {\n    var os = global.get('os');\n    if (os) {\n        var nets = os.networkInterfaces();\n        var VIRTUAL_PREFIXES = ['172.17.', '192.168.56.', '169.254.'];\n        function isVirtual(addr) {\n            for (var i = 0; i < VIRTUAL_PREFIXES.length; i++) {\n                if (addr.indexOf(VIRTUAL_PREFIXES[i]) === 0) return true;\n            }\n            return false;\n        }\n        var candidates = [];\n        for (var name in nets) {\n            if (!nets.hasOwnProperty(name)) continue;\n            var iface = nets[name];\n            for (var i = 0; i < iface.length; i++) {\n                var netInfo = iface[i];\n                if (netInfo.family === 'IPv4' && !netInfo.internal && !isVirtual(netInfo.address)) {\n                    candidates.push(netInfo.address);\n                }\n            }\n        }\n        for (var j = 0; j < candidates.length; j++) {\n            if (candidates[j].indexOf('192.168.') === 0 || candidates[j].indexOf('10.') === 0) {\n                detectedIp = candidates[j];\n                break;\n            }\n        }\n        if (detectedIp === '127.0.0.1' && candidates.length > 0) {\n            detectedIp = candidates[0];\n            if (DEBUG) node.warn('[CM] No 192.168/10.x, using ' + detectedIp);\n        }\n    }\n} catch (e) {\n    if (DEBUG) node.warn('[CM] IP detection failed: ' + e.message);\n}\n\nvar hostPcIp = detectedIp !== '127.0.0.1' ? detectedIp : (global.get('edge_hostPcIp') || '127.0.0.1');\nglobal.set('edge_hostPcIp', hostPcIp);\n\n// === Default config (allow settings.js overrides) ===\nglobal.set('edge_backendHost', global.get('edge_backendHost') || '127.0.0.1');\nglobal.set('edge_backendPort', global.get('edge_backendPort') || 9099);\nglobal.set('edge_apiKey', global.get('edge_apiKey') || '');\nglobal.set('edge_backendUser', global.get('edge_backendUser') || 'admin');\nglobal.set('edge_backendPass', global.get('edge_backendPass') || '');\nglobal.set('edge_debug', DEBUG);\n\n// === First run: initialize all state globals ===\nif (isFirstRun) {\n    global.set('edge_devices', []);\n    global.set('edge_tagConfigs', {});\n    global.set('edge_commStatus', {});\n    global.set('edge_lastGoodTags', {});\n    global.set('edge_historyData', {});\n    global.set('edge_pg_queue', []);\n    global.set('edge_pg_success_count', 0);\n    global.set('edge_commPending', []);\n    global.set('edge_lastBadSend', {});\n    global.set('edge_handshakeFlags', {});\n    global.set('edge_triggerLastRaw', {});\n    global.set('edge_triggerForceTimes', {});\n    global.set('edge_recentAlerts', []);\n    global.set('edge_lastAlarmTime', {});\n    global.set('edge_startTime', new Date().toISOString());\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', false);\n    if (DEBUG) node.warn('[CM] First run, hostPcIp=' + hostPcIp);\n}\n\n// === Refresh path: keep configReady=true, don't interrupt collection ===\nif (isRefresh) {\n    if (DEBUG) node.warn('[CM] Periodic refresh, configReady stays true');\n}\n\n// === Reauth path: clear JWT, full re-login ===\nif (isReauth) {\n    global.set('edge_jwt', '');\n    global.set('edge_configReady', false);\n    global.set('edge_reauthInProgress', true);\n    if (DEBUG) node.warn('[CM] 401 reauth, full re-login');\n}\n\n// === Build login request ===\nvar user = global.get('edge_backendUser');\nvar pass = global.get('edge_backendPass');\nvar host = global.get('edge_backendHost');\nvar port = global.get('edge_backendPort');\n\nmsg.url = 'http://' + host + ':' + port + '/login';\nmsg.payload = 'username=' + encodeURIComponent(user) + '&password=' + encodeURIComponent(pass);\n\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": [
+            [
+              "sf-cm-http-login"
+            ]
+          ]
+        },
+        {
+          "id": "sf-cm-http-login",
+          "type": "http request",
+          "z": "sf-config-manager",
+          "name": "POST /login",
+          "method": "POST",
+          "ret": "txt",
+          "url": "",
+          "headers": [
+            {
+              "keyType": "other",
+              "keyValue": "Content-Type",
+              "valueType": "other",
+              "valueValue": "application/x-www-form-urlencoded"
+            }
+          ],
+          "x": 440,
+          "y": 100,
+          "wires": [
+            [
+              "sf-cm-fn-discover"
+            ]
+          ]
+        },
+        {
+          "id": "sf-cm-fn-discover",
+          "type": "function",
+          "z": "sf-config-manager",
+          "name": "JWT解析 + nodeId + 点位发现",
+          "func": "// === sf-config-manager Step 2: JWT解析 + nodeId反查 + 拉取全局点位 + 分组输出 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar DEBUG = global.get('edge_debug') || false;\nvar myHostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar apiKey = global.get('edge_apiKey') || '';\n\n// 1. Parse JWT from login response\nvar jwtToken = '';\ntry {\n    var r = JSON.parse(msg.payload);\n    jwtToken = (r.data && r.data.token) ? r.data.token : (r.token || '');\n} catch (e) {\n    jwtToken = '';\n}\n\nif (!jwtToken) {\n    if (DEBUG) node.warn('[CM] JWT FAIL: ' + (msg.payload || '').substring(0, 80));\n    global.set('edge_reauthInProgress', false);\n    // Retry after 10s\n    setTimeout(function () {\n        var retryMsg = { payload: {} };\n        node.send([null, null]);\n    }, 10000);\n    return null;\n}\n\nglobal.set('edge_jwt', jwtToken);\nglobal.set('edge_reauthInProgress', false);\nif (DEBUG) node.warn('[CM] JWT OK, hostPcIp=' + myHostPcIp);\n\n// 2. Discover/register nodeId via heartbeat\nfunction discoverNodeId(callback) {\n    var nodeParams = 'host_pc_ip=' + encodeURIComponent(myHostPcIp)\n        + '&node_ip=' + encodeURIComponent(myHostPcIp)\n        + '&running_flows=5&memory_usage_mb=' + (Math.round(((global.get('process')||{memoryUsage:function(){return{rss:0}}}).memoryUsage().rss||0)/1048576)||0);\n    var nodeOpts = {\n        hostname: HOST, port: PORT,\n        path: '/monitor/heartbeat?' + nodeParams,\n        method: 'POST',\n        headers: {\n            'X-API-Key': apiKey,\n            'Authorization': 'Bearer ' + jwtToken,\n            'Content-Type': 'application/json'\n        }\n    };\n\n    var nr = http.request(nodeOpts, function (res) {\n        var b = '';\n        res.on('data', function (d) { b += d; });\n        res.on('end', function () {\n            try {\n                var j = JSON.parse(b);\n                var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n                if (nid > 0) {\n                    global.set('edge_nodeId', nid);\n                    if (DEBUG) node.warn('[CM] Node registered, nodeId=' + nid);\n                    callback(nid);\n                } else {\n                    // Hash fallback\n                    var hash = 0;\n                    for (var i = 0; i < myHostPcIp.length; i++) {\n                        hash = ((hash << 5) - hash) + myHostPcIp.charCodeAt(i);\n                        hash |= 0;\n                    }\n                    nid = Math.abs(hash) % 9000 + 1000;\n                    global.set('edge_nodeId', nid);\n                    if (DEBUG) node.warn('[CM] nodeId from hash: ' + nid);\n                    callback(nid);\n                }\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] nodeId parse err: ' + e.message);\n                callback(0);\n            }\n        });\n    });\n    nr.setTimeout(5000, function () {\n        nr.removeAllListeners();\n        nr.destroy();\n        if (DEBUG) node.warn('[CM] nodeId request timeout');\n        callback(0);\n    });\n    nr.on('error', function (e) {\n        if (DEBUG) node.warn('[CM] nodeId err: ' + e.message);\n        callback(0);\n    });\n    nr.write('{}');\n    nr.end();\n}\n\n// 3. Fetch global tag list + group by deviceId + filter\nfunction discoverTags(nodeId) {\n    var tagPath = '/plc/tag/global/list?page_size=10000';\n    var tagReq = http.request({\n        hostname: HOST, port: PORT, path: tagPath, method: 'GET',\n        headers: { 'Authorization': 'Bearer ' + jwtToken }\n    }, function (res) {\n        var body = '';\n        res.on('data', function (d) { body += d; });\n        res.on('end', function () {\n            try {\n                var r = JSON.parse(body);\n                if (r.code !== 200) {\n                    node.warn('[CM] Tag API returned code ' + (r.code || 'unknown') + ', will retry on refresh');\n                    global.set('edge_configReady', true);\n                    node.send([null, null]);\n                    return;\n                }\n                var records = r.rows || [];\n                if (records.length === 0) {\n                    node.warn('[CM] No tags in system');\n                    global.set('edge_configReady', true);\n                    node.send([null, null]);\n                    return;\n                }\n\n                // Group by deviceId\n                var byDevice = {};\n                records.forEach(function (t) {\n                    var did = t.deviceId || 1;\n                    var key = String(did);\n                    if (!byDevice[key]) {\n                        byDevice[key] = {\n                            id: did,\n                            deviceName: t.deviceName || ('PLC-' + did),\n                            hostPcIp: t.hostPcIp || myHostPcIp,\n                            plcIp: t.plcIp || '127.0.0.1',\n                            plcPort: t.plcPort || 5007,\n                            comType: t.comType || 'MC_Protocol',\n                            protocolParams: {},\n                            tags: [],\n                            scanIntervalMs: t.scanIntervalMs || 1000,\n                            commTimeoutMs: t.commTimeoutMs || 3000,\n                            retryCount: t.retryCount || 2,\n                            retryIntervalMs: t.retryIntervalMs || 500,\n                            triggerKind: t.triggerKind || 1,\n                            status: t.status || t.deviceStatus || '0'\n                        };\n                        // Merge protocolParams: backend JSON takes priority\n                        var pp = {};\n                        try {\n                            if (t.protocolParams) {\n                                pp = typeof t.protocolParams === 'string' ? JSON.parse(t.protocolParams) : t.protocolParams;\n                            }\n                        } catch (e) {}\n                        if (Object.keys(pp).length === 0) {\n                            pp = {\n                                mcFrame: t.mcFrame || '3E',\n                                stationNo: t.stationNo || 0,\n                                networkNo: t.networkNo || 0,\n                                plcSeries: t.plcSeries || 'Q'\n                            };\n                        }\n                        byDevice[key].protocolParams = pp;\n                    }\n                    // Parse address: octal for X/Y, decimal for D/W/M etc.\n                    var addrStr = String(t.registerAddress || '0').replace(/\\D/g, '');\n                    var base = (t.registerType === 'X' || t.registerType === 'Y') ? 8 : 10;\n                    var addr = parseInt(addrStr, base) || 0;\n\n                    byDevice[key].tags.push({\n                        id: t.id,\n                        addr: addr,\n                        regAddr: t.registerAddress || '',\n                        regType: t.registerType || 'D',\n                        name: t.tagName,\n                        dataType: t.dataType || 'INT16',\n                        tform: t.transformType || 'none',\n                        slope: t.transformSlopeA || 1,\n                        offset: t.transformOffsetB || 0,\n                        unit: t.engUnit || '',\n                        deadband: t.reportDeadbandMs || 0,\n                        reportForceIntervalMs: t.reportForceIntervalMs || 5000\n                    });\n                });\n\n                // Filter: only enabled devices on this PC\n                var myDevices = [];\n                var myTagConfigs = {};\n                Object.keys(byDevice).forEach(function (did) {\n                    var dev = byDevice[did];\n                    if (String(dev.status) !== '0') return;\n                    if (dev.hostPcIp !== myHostPcIp) return;\n                    // MC devices need at least one valid register\n                    if (dev.comType === 'MC_Protocol') {\n                        var validTags = dev.tags.filter(function (t) { return t.addr >= 0; });\n                        if (validTags.length === 0) {\n                            if (DEBUG) node.warn('[CM] Device ' + dev.deviceName + ' has no valid registers, skipped');\n                            return;\n                        }\n                    }\n\n                    // Set timeout/retry on device object\n                    dev.timeout = dev.commTimeoutMs;\n                    dev.maxRetries = dev.retryCount;\n                    dev.retryInterval = dev.retryIntervalMs;\n\n                    myDevices.push(dev);\n                    myTagConfigs[dev.id] = dev.tags;\n                });\n\n                global.set('edge_devices', myDevices);\n                global.set('edge_tagConfigs', myTagConfigs);\n                global.set('edge_configReady', true);\n\n                if (DEBUG) {\n                    node.warn('[CM] Discovered ' + myDevices.length + ' devices (nodeId=' + nodeId + '):');\n                    myDevices.forEach(function (d) {\n                        node.warn('  ' + d.deviceName + ' (' + d.plcIp + ':' + d.plcPort + ') ' + d.tags.length + ' tags comType=' + d.comType);\n                    });\n                }\n\n                // Output 1: config for main flow scheduler\n                var configMsg = {\n                    payload: {\n                        jwt: jwtToken,\n                        nodeId: nodeId,\n                        hostPcIp: myHostPcIp,\n                        devices: myDevices\n                    }\n                };\n\n                // Output 2: MQTT node online\n                var now = new Date().toISOString();\n                var devList = myDevices.map(function (d) {\n                    return { device_id: d.id, device_name: d.deviceName, tag_count: d.tags.length };\n                });\n                var mqttMsg = {\n                    topic: 'edgelink-v10/nodes/' + nodeId + '/status',\n                    payload: JSON.stringify({\n                        node_id: nodeId,\n                        host_pc_ip: myHostPcIp,\n                        status: 'online',\n                        device_count: myDevices.length,\n                        devices: devList,\n                        ts: now\n                    }),\n                    qos: 1,\n                    retain: true\n                };\n\n                node.send([configMsg, mqttMsg]);\n                if (DEBUG) node.warn('[CM] Config complete, ' + myDevices.length + ' devices ready');\n\n            } catch (e) {\n                if (DEBUG) node.warn('[CM] Tag parsing error: ' + e.message);\n                node.send([null, null]);\n            }\n        });\n    });\n\n    tagReq.on('error', function (e) {\n        node.warn('[CM] Tag fetch error: ' + e.message);\n        global.set('edge_configReady', true);\n        node.send([null, null]);\n    });\n    tagReq.setTimeout(10000, function () {\n        tagReq.removeAllListeners();\n        tagReq.destroy();\n        node.warn('[CM] Tag fetch timeout');\n        global.set('edge_configReady', true);\n        node.send([null, null]);\n    });\n    tagReq.end();\n}\n\n// Execute: nodeId → tags\ndiscoverNodeId(function (nid) {\n    discoverTags(nid);\n});\n\nreturn null;",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 680,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-cm-dbg-login",
+          "type": "debug",
+          "z": "sf-config-manager",
+          "name": "Login Response",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 680,
+          "y": 160,
+          "wires": []
+        }
+      ]
+    },
+    "sf_mc_driver": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-mc-driver",
+          "type": "subflow",
+          "name": "sf-mc-driver",
+          "info": "三菱 MC 协议驱动 (3E/4E帧 + 位元件拆包 + 模拟模式)\n\n输入: msg.payload = { id, deviceName, plcIp, plcPort, protocolParams, tags[], timeout, maxRetries, retryInterval }\n输出: msg.payload = { deviceId, deviceName, success, data, error, driverType, plcIp, plcPort }\n\nv10 Phase 1a — 独立可测，不依赖后端",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mc-fn-driver"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mc-fn-driver",
+                  "port": 0
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#C7E9C0"
+        },
+        {
+          "id": "sf-mc-fn-driver",
+          "type": "function",
+          "z": "sf-mc-driver",
+          "name": "MC协议驱动",
+          "func": "// === sf-mc-driver v10: 3E/4E帧 + 位元件拆包 + 智能批量 + 模拟模式 ===\nvar net = global.get('net');\nvar SIM_MODE = global.get('edge_simulationMode') || false;\nvar DEBUG = global.get('edge_debug') || false;\n\nvar dev = msg.payload;\nif (!dev || !dev.id) {\n    node.warn('[MC-Driver] Invalid input, missing device id');\n    return null;\n}\n\n// === Singleton lock (60s expiry) ===\nvar lock = global.get('edge_mc_driver_lock');\nif (lock && (Date.now() - lock.ts < 60000) && lock.instanceId !== node.id) {\n    if (DEBUG) node.warn('[MC-Driver] Another instance running (' + lock.instanceId + '), requeue');\n    setTimeout(function () { node.send(msg); }, 200);\n    return null;\n}\nglobal.set('edge_mc_driver_lock', { ts: Date.now(), instanceId: node.id });\n\nvar pp = dev.protocolParams || {};\nvar mcFrame = pp.mcFrame || '3E';\nvar roundStart = Date.now();\n\n// === MC Device Code Map ===\nvar MC_DEVICE_CODES = {\n    'D': 0xA8, 'W': 0xB4, 'X': 0x9C, 'Y': 0x9D,\n    'M': 0x90, 'L': 0x92, 'B': 0xA0, 'R': 0xAF\n};\nvar BIT_DEVICES = { 'X': true, 'Y': true, 'M': true, 'L': true, 'B': true };\n\n// === Simulation Mode ===\nif (SIM_MODE || !net) {\n    setTimeout(function () {\n        var simData = {};\n        (dev.tags || []).forEach(function (t) {\n            simData[t.id] = {\n                rawValue: BIT_DEVICES[t.regType] ? (Math.random() > 0.5 ? 1 : 0) : Math.floor(Math.random() * 1000),\n                quality: 0,\n                ts: new Date().toISOString()\n            };\n        });\n        var ok = Math.random() > 0.1;\n        msg.payload = {\n            deviceId: dev.id,\n            deviceName: dev.deviceName,\n            success: ok,\n            data: simData,\n            error: ok ? null : 'Simulated timeout',\n            driverType: 'driver-mc-protocol',\n            plcIp: dev.plcIp,\n            plcPort: dev.plcPort,\n            roundTimeMs: Date.now() - roundStart\n        };\n        node.status({\n            fill: ok ? 'green' : 'red',\n            shape: 'dot',\n            text: dev.deviceName + ' SIM ' + (ok ? 'OK' : 'FAIL')\n        });\n        node.send(msg);\n    }, 10 + Math.random() * 30);\n    return null;\n}\n\n// ===== Real TCP Mode =====\n\n// Step 1: Group tags by register type + address proximity clustering\nvar byRegType = {};\n(dev.tags || []).forEach(function (t) {\n    var rt = t.regType || 'D';\n    if (!byRegType[rt]) byRegType[rt] = [];\n    byRegType[rt].push(t);\n});\n\nvar regGroups = [];\nvar MAX_GAP = 20;\nvar MAX_CLUSTER = 50;\nObject.keys(byRegType).forEach(function (rt) {\n    var tags = byRegType[rt].sort(function (a, b) { return a.addr - b.addr; });\n    var cluster = [tags[0]];\n    for (var i = 1; i < tags.length; i++) {\n        var gap = tags[i].addr - cluster[cluster.length - 1].addr;\n        if (gap <= MAX_GAP && cluster.length < MAX_CLUSTER) {\n            cluster.push(tags[i]);\n        } else {\n            regGroups.push({ regType: rt, tags: cluster });\n            cluster = [tags[i]];\n        }\n    }\n    if (cluster.length > 0) regGroups.push({ regType: rt, tags: cluster });\n});\n\nif (regGroups.length === 0) {\n    msg.payload = {\n        deviceId: dev.id, deviceName: dev.deviceName,\n        success: false, data: {}, error: 'No valid register groups',\n        driverType: 'driver-mc-protocol', plcIp: dev.plcIp, plcPort: dev.plcPort,\n        roundTimeMs: Date.now() - roundStart\n    };\n    node.send(msg);\n    return null;\n}\n\nif (DEBUG) node.warn('[MC-Driver] ' + dev.deviceName + ' groups=' + regGroups.length + ' frame=' + mcFrame);\n\n// Step 2: Build MC Frame\nfunction buildMCFrame(startAddr, wordCount, stationNo, regType, frameType) {\n    var deviceCode = MC_DEVICE_CODES[regType] || 0xA8;\n    if (frameType === '4E') {\n        var hasSN = (pp.serialNo != null && pp.serialNo !== 0);\n        var bufLen = hasSN ? 24 : 22;\n        var buf = Buffer.alloc(bufLen);\n        buf[0] = 0x54; buf[1] = 0x00;\n        buf[2] = pp.networkNo || 0;\n        buf[3] = 0xFF;\n        buf[4] = 0xFF; buf[5] = 0x03;\n        buf[6] = stationNo || 0;\n        buf[7] = hasSN ? 0x0F : 0x0D; buf[8] = 0x00;\n        buf[9] = 0x10; buf[10] = 0x00;\n        var off = 11;\n        if (hasSN) { buf[off] = pp.serialNo & 0xFF; buf[off + 1] = (pp.serialNo >> 8) & 0xFF; off += 2; }\n        buf[off] = 0x01; buf[off + 1] = 0x04; off += 2;\n        buf[off] = 0x00; buf[off + 1] = 0x00; off += 2;\n        buf.writeUInt32LE(startAddr, off); off += 4;\n        buf[off] = deviceCode; off += 1;\n        buf.writeUInt16LE(wordCount, off);\n        return buf;\n    }\n    // 3E frame (21 bytes)\n    var buf = Buffer.alloc(21);\n    buf[0] = 0x50; buf[1] = 0x00;\n    buf[2] = 0x00; buf[3] = 0xFF; buf[4] = 0xFF; buf[5] = 0x03;\n    buf[6] = stationNo || 0; buf[7] = 0x0C; buf[8] = 0x00;\n    buf[9] = 0x10; buf[10] = 0x00;\n    buf[11] = 0x01; buf[12] = 0x04;\n    buf[13] = 0x00; buf[14] = 0x00;\n    buf[15] = startAddr & 0xFF;\n    buf[16] = (startAddr >> 8) & 0xFF;\n    buf[17] = (startAddr >> 16) & 0xFF;\n    buf[18] = deviceCode;\n    buf.writeUInt16LE(wordCount, 19);\n    return buf;\n}\n\n// Step 3: Parse MC Response\nfunction parseMCResponse(buf, startAddr, regType) {\n    if (!buf || buf.length < 11) return null;\n    var subheader = (buf[0] === 0xD0) ? 0x50 : ((buf[0] === 0xD4) ? 0xD4 : 0);\n    if (subheader === 0) return null;\n    var endCode = buf.readUInt16LE(9);\n    if (endCode !== 0) return null;\n    var dataLen = buf.readUInt16LE(7) - 2;\n    var dataStart = (mcFrame === '4E' && pp.serialNo != null && pp.serialNo !== 0) ? 13 : 11;\n    if (buf.length < dataStart + dataLen) return null;\n    var result = {};\n    if (BIT_DEVICES[regType]) {\n        for (var w = 0; w < dataLen / 2; w++) {\n            var wordVal = buf.readUInt16LE(dataStart + w * 2);\n            for (var b = 0; b < 16; b++) {\n                result[regType + (startAddr + w * 16 + b)] = (wordVal >> b) & 1;\n            }\n        }\n    } else {\n        for (var i = 0; i < dataLen / 2; i++) {\n            result[regType + (startAddr + i)] = buf.readInt16LE(dataStart + i * 2);\n        }\n    }\n    return result;\n}\n\n// Step 4: Process groups sequentially\nvar allStdData = {};\nvar hasFailed = false;\nvar firstError = '';\nvar timeout = dev.timeout || 3000;\nvar maxRetries = dev.maxRetries || 2;\nvar retryInterval = dev.retryInterval || 300;\n\nfunction processGroup(gi) {\n    if (gi >= regGroups.length) {\n        // All groups done\n        var roundTimeMs = Date.now() - roundStart;\n        if (DEBUG) node.warn('[MC-Driver] ' + dev.deviceName + ' done in ' + roundTimeMs + 'ms, groups=' + regGroups.length + ' failed=' + hasFailed);\n        msg.payload = {\n            deviceId: dev.id,\n            deviceName: dev.deviceName,\n            success: !hasFailed,\n            data: allStdData,\n            error: hasFailed ? firstError : null,\n            driverType: 'driver-mc-protocol',\n            plcIp: dev.plcIp,\n            plcPort: dev.plcPort,\n            roundTimeMs: roundTimeMs\n        };\n        node.status({\n            fill: hasFailed ? 'red' : 'green',\n            shape: 'dot',\n            text: dev.deviceName + ' ' + Object.keys(allStdData).length + ' vals'\n        });\n        node.send(msg);\n        return;\n    }\n\n    var grp = regGroups[gi];\n    var addrs = grp.tags.map(function (t) { return t.addr; });\n    var startA = addrs[0];\n    var isBit = BIT_DEVICES[grp.regType] || false;\n    var wordCount;\n    if (isBit) {\n        wordCount = Math.ceil((addrs[addrs.length - 1] - startA + 1) / 16);\n    } else {\n        wordCount = addrs[addrs.length - 1] - startA + 1;\n    }\n\n    function attemptGroup(attempt) {\n        if (attempt > maxRetries) {\n            hasFailed = true;\n            if (!firstError) firstError = 'MC read failed for ' + grp.regType + startA;\n            setImmediate(function () { processGroup(gi + 1); });\n            return;\n        }\n\n        var client = new net.Socket();\n        var buf = Buffer.alloc(0);\n        var resolved = false;\n\n        client.setTimeout(timeout);\n\n        client.connect(dev.plcPort, dev.plcIp, function () {\n            var frame = buildMCFrame(startA, wordCount, pp.stationNo || 0, grp.regType, mcFrame);\n            client.write(frame);\n        });\n\n        client.on('data', function (chunk) {\n            buf = Buffer.concat([buf, chunk]);\n            var hdrLen = (mcFrame === '4E' && pp.serialNo != null && pp.serialNo !== 0) ? 13 : 11;\n            if (!resolved && buf.length >= hdrLen) {\n                var dataLen = buf.readUInt16LE(7) - 2;\n                if (buf.length >= hdrLen + dataLen) {\n                    resolved = true;\n                    var raw = parseMCResponse(buf, startA, grp.regType);\n                    if (raw) {\n                        grp.tags.forEach(function (t) {\n                            var key = grp.regType + t.addr;\n                            var rv = raw[key];\n                            var q = 0;\n                            if (rv === undefined || rv === null) q = 2;\n                            allStdData[t.id] = {\n                                rawValue: rv,\n                                quality: q,\n                                ts: new Date().toISOString()\n                            };\n                        });\n                        try { client.destroy(); } catch (e) {}\n                        setImmediate(function () { processGroup(gi + 1); });\n                    } else {\n                        try { client.destroy(); } catch (e) {}\n                        setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n                    }\n                }\n            }\n        });\n\n        client.on('timeout', function () {\n            if (resolved) return;\n            resolved = true;\n            try { client.destroy(); } catch (e) {}\n            setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n        });\n\n        client.on('error', function (e) {\n            if (resolved) return;\n            resolved = true;\n            try { client.destroy(); } catch (e2) {}\n            setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n        });\n\n        client.on('close', function () {\n            if (!resolved) {\n                resolved = true;\n                if (buf.length === 0) {\n                    hasFailed = true;\n                    if (!firstError) firstError = 'TCP closed (no data)';\n                    setImmediate(function () { processGroup(gi + 1); });\n                } else {\n                    try { client.destroy(); } catch (e) {}\n                    setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n                }\n            }\n        });\n    }\n\n    attemptGroup(0);\n}\n\nprocessGroup(0);\nreturn null;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-mc-dbg-output",
+          "type": "debug",
+          "z": "sf-mc-driver",
+          "name": "MC驱动输出",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 420,
+          "y": 100,
+          "wires": []
+        }
+      ]
+    },
+    "sf_modbus_driver": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-modbus-driver",
+          "type": "subflow",
+          "name": "sf-modbus-driver",
+          "info": "Modbus TCP 驱动 v10: MBAP+PDU构造 + 字节序(ABCD/BADC/CDAB/DCBA) + 模拟模式\n\n输入: msg.payload = { id, deviceName, plcIp, plcPort, protocolParams, tags[], timeout, maxRetries, retryInterval }\n输出: msg.payload = { deviceId, deviceName, success, data, error, driverType, plcIp, plcPort }\n\nprotocolParams:\n  slaveId: 从站ID (默认1)\n  functionCode: 功能码 (默认3=Read Holding Registers)\n  byteOrder: ABCD | BADC | CDAB | DCBA (默认ABCD)\n  dataType: INT16 | UINT16 | FLOAT32 (默认INT16)\n\nv10 Phase 2 — 独立可测",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mb-fn-driver"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mb-fn-driver",
+                  "port": 0
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#FDC086"
+        },
+        {
+          "id": "sf-mb-fn-driver",
+          "type": "function",
+          "z": "sf-modbus-driver",
+          "name": "Modbus TCP驱动",
+          "func": "// === sf-modbus-driver v10: MBAP+PDU + 字节序 + 模拟模式 ===\nvar net = global.get('net');\nvar SIM_MODE = global.get('edge_simulationMode') || false;\nvar DEBUG = global.get('edge_debug') || false;\n\nvar dev = msg.payload;\nif (!dev || !dev.id) {\n    node.warn('[MB-Driver] Invalid input, missing device id');\n    return null;\n}\n\n// === Singleton lock (60s expiry) ===\nvar lock = global.get('edge_modbus_driver_lock');\nif (lock && (Date.now() - lock.ts < 60000) && lock.instanceId !== node.id) {\n    if (DEBUG) node.warn('[MB-Driver] Another instance running, requeue');\n    setTimeout(function () { node.send(msg); }, 200);\n    return null;\n}\nglobal.set('edge_modbus_driver_lock', { ts: Date.now(), instanceId: node.id });\n\nvar pp = dev.protocolParams || {};\nvar roundStart = Date.now();\nvar slaveId = pp.slaveId || 1;\nvar funcCode = pp.functionCode || 3;\nvar byteOrder = pp.byteOrder || 'ABCD';\n\n// === Simulation Mode ===\nif (SIM_MODE || !net) {\n    setTimeout(function () {\n        var simData = {};\n        (dev.tags || []).forEach(function (t) {\n            simData[t.id] = {\n                rawValue: Math.floor(Math.random() * 65535) - 32768,\n                quality: 0,\n                ts: new Date().toISOString()\n            };\n        });\n        var ok = Math.random() > 0.1;\n        msg.payload = {\n            deviceId: dev.id,\n            deviceName: dev.deviceName,\n            success: ok,\n            data: simData,\n            error: ok ? null : 'Simulated timeout',\n            driverType: 'driver-modbus-tcp',\n            plcIp: dev.plcIp,\n            plcPort: dev.plcPort,\n            roundTimeMs: Date.now() - roundStart\n        };\n        node.status({\n            fill: ok ? 'green' : 'red',\n            shape: 'dot',\n            text: dev.deviceName + ' SIM ' + (ok ? 'OK' : 'FAIL')\n        });\n        node.send(msg);\n    }, 10 + Math.random() * 30);\n    return null;\n}\n\n// ===== Real TCP Mode =====\n\n// Step 1: Group tags by register type (function code grouping)\nvar tags = dev.tags || [];\nif (tags.length === 0) {\n    msg.payload = {\n        deviceId: dev.id, deviceName: dev.deviceName,\n        success: false, data: {}, error: 'No tags',\n        driverType: 'driver-modbus-tcp', plcIp: dev.plcIp, plcPort: dev.plcPort,\n        roundTimeMs: Date.now() - roundStart\n    };\n    node.send(msg);\n    return null;\n}\n\n// Cluster by address proximity (gap <= 20, max 125 registers per Modbus spec)\nvar sorted = tags.slice().sort(function (a, b) { return a.addr - b.addr; });\nvar groups = [];\nvar cluster = [sorted[0]];\nvar MAX_GAP = 20;\nvar MAX_REGS = 125;\nfor (var i = 1; i < sorted.length; i++) {\n    var gap = sorted[i].addr - cluster[cluster.length - 1].addr;\n    if (gap <= MAX_GAP && cluster.length < MAX_REGS) {\n        cluster.push(sorted[i]);\n    } else {\n        groups.push(cluster);\n        cluster = [sorted[i]];\n    }\n}\nif (cluster.length > 0) groups.push(cluster);\n\nif (DEBUG) node.warn('[MB-Driver] ' + dev.deviceName + ' groups=' + groups.length + ' slaveId=' + slaveId + ' byteOrder=' + byteOrder);\n\n// Byte order helpers — reorder 4 bytes from 2 consecutive registers\nfunction reorderBytes(r0_hi, r0_lo, r1_hi, r1_lo, order) {\n    var b; // 4-byte array\n    switch (order) {\n        case 'BADC': b = [r0_lo, r0_hi, r1_lo, r1_hi]; break;\n        case 'CDAB': b = [r1_hi, r1_lo, r0_hi, r0_lo]; break;\n        case 'DCBA': b = [r1_lo, r1_hi, r0_lo, r0_hi]; break;\n        default:     b = [r0_hi, r0_lo, r1_hi, r1_lo]; break; // ABCD\n    }\n    return Buffer.from(b);\n}\n\nfunction read16(hi, lo, order, signed) {\n    var val;\n    if (order === 'BADC' || order === 'DCBA') {\n        val = (lo << 8) | hi;\n    } else {\n        val = (hi << 8) | lo;\n    }\n    if (signed && val > 32767) val = val - 65536;\n    return val;\n}\n\n// Step 2: Build Modbus TCP frame\nfunction buildModbusFrame(transactionId, unitId, startAddr, count) {\n    var buf = Buffer.alloc(12);\n    buf.writeUInt16BE(transactionId, 0);\n    buf.writeUInt16BE(0, 2);           // Protocol ID\n    buf.writeUInt16BE(6, 4);           // Length (remainder)\n    buf[6] = slaveId;                   // Unit ID\n    buf[7] = funcCode;                 // Function code\n    buf.writeUInt16BE(startAddr, 8);   // Start address\n    buf.writeUInt16BE(count, 10);      // Quantity\n    return buf;\n}\n\n// Step 3: Parse Modbus response\nfunction parseModbusResponse(buf, startAddr, count) {\n    if (!buf || buf.length < 9) return null;\n    var respFuncCode = buf[7];\n    if (respFuncCode > 0x80) {\n        return { error: 'Modbus exception ' + buf[8] };\n    }\n    var byteCount = buf[8];\n    if (buf.length < 9 + byteCount) return null;\n    var result = {};\n    if (funcCode === 1 || funcCode === 2) {\n        // Bit data: 1 byte = 8 bits (coils / discrete inputs)\n        for (var i = 0; i < count; i++) {\n            var byteIdx = 9 + Math.floor(i / 8);\n            var bitIdx = i % 8;\n            if (byteIdx >= buf.length) break;\n            result['R' + (startAddr + i)] = { hi: 0, lo: (buf[byteIdx] >> bitIdx) & 1 };\n        }\n    } else {\n        // Register data: 2 bytes per register (03/04)\n        for (var i = 0; i < count; i++) {\n            var offset = 9 + i * 2;\n            if (offset + 1 >= buf.length) break;\n            result['R' + (startAddr + i)] = { hi: buf[offset], lo: buf[offset + 1] };\n        }\n    }\n    return { values: result };\n}\n\n// Step 4: Process groups sequentially\nvar allStdData = {};\nvar hasFailed = false;\nvar firstError = '';\nvar timeout = dev.timeout || 3000;\nvar maxRetries = dev.maxRetries || 2;\nvar retryInterval = dev.retryInterval || 300;\nvar txnId = Math.floor(Math.random() * 65535);\n\nfunction processGroup(gi) {\n    if (gi >= groups.length) {\n        var roundTimeMs = Date.now() - roundStart;\n        msg.payload = {\n            deviceId: dev.id,\n            deviceName: dev.deviceName,\n            success: !hasFailed,\n            data: allStdData,\n            error: hasFailed ? firstError : null,\n            driverType: 'driver-modbus-tcp',\n            plcIp: dev.plcIp,\n            plcPort: dev.plcPort,\n            roundTimeMs: roundTimeMs\n        };\n        node.status({\n            fill: hasFailed ? 'red' : 'green',\n            shape: 'dot',\n            text: dev.deviceName + ' ' + Object.keys(allStdData).length + ' vals'\n        });\n        node.send(msg);\n        return;\n    }\n\n    var grp = groups[gi];\n    var addrs = grp.map(function (t) { return t.addr; });\n    var startA = addrs[0];\n    var maxAddr = addrs[addrs.length - 1];\n    // Expand range for 32-bit tags that need 2 registers\n    grp.forEach(function (t) {\n        var dt = t.dataType || 'INT16';\n        if ((dt === 'FLOAT32' || dt === 'INT32' || dt === 'UINT32') && t.addr + 1 > maxAddr) {\n            maxAddr = t.addr + 1;\n        }\n    });\n    var wordCount = maxAddr - startA + 1;\n\n    function attemptGroup(attempt) {\n        if (attempt > maxRetries) {\n            hasFailed = true;\n            if (!firstError) firstError = 'Modbus read failed at addr ' + startA;\n            setImmediate(function () { processGroup(gi + 1); });\n            return;\n        }\n\n        var client = new net.Socket();\n        var buf = Buffer.alloc(0);\n        var resolved = false;\n\n        client.setTimeout(timeout);\n\n        var currentTxnId = (txnId + 1) & 0xFFFF;\n        txnId = currentTxnId;\n        client.connect(dev.plcPort, dev.plcIp, function () {\n            var frame = buildModbusFrame(currentTxnId, slaveId, startA, wordCount);\n            client.write(frame);\n        });\n\n        client.on('data', function (chunk) {\n            buf = Buffer.concat([buf, chunk]);\n            // Modbus TCP: MBAP header (6 bytes) + PDU\n            if (!resolved && buf.length >= 7) {\n                var mbapLen = buf.readUInt16BE(4);\n                var expectedTotal = 6 + mbapLen;\n                if (buf.length < expectedTotal) return;\n                // Validate Transaction ID + Unit ID\n                var respTxnId = buf.readUInt16BE(0);\n                var respUnitId = buf[6];\n                if (respTxnId !== currentTxnId || respUnitId !== slaveId) {\n                    if (DEBUG) node.warn('[MB-Driver] TxnId/UnitId mismatch: exp ' + currentTxnId + '/' + slaveId + ' got ' + respTxnId + '/' + respUnitId);\n                    buf = Buffer.alloc(0);  // Discard and wait for correct frame\n                    return;\n                }\n                if (buf.length < 9) return;\n                var byteCount = buf[8];\n                if (buf.length >= expectedTotal) {\n                    resolved = true;\n                    var parsed = parseModbusResponse(buf, startA, wordCount);\n                    if (parsed && parsed.values) {\n                        grp.forEach(function (t) {\n                            var key = 'R' + t.addr;\n                            var reg = parsed.values[key];\n                            var rv, q = 0;\n                            if (!reg || reg.hi === undefined) { q = 2; rv = null; }\n                            else {\n                                var dt = t.dataType || 'INT16';\n                                if (dt === 'FLOAT32' || dt === 'INT32' || dt === 'UINT32') {\n                                    var reg2 = parsed.values['R' + (t.addr + 1)];\n                                    if (!reg2) { q = 2; rv = null; }\n                                    else {\n                                        var b4 = reorderBytes(reg.hi, reg.lo, reg2.hi, reg2.lo, byteOrder);\n                                        if (dt === 'FLOAT32') rv = parseFloat(b4.readFloatBE(0).toFixed(4));\n                                        else if (dt === 'UINT32') rv = b4.readUInt32BE(0);\n                                        else rv = b4.readInt32BE(0);\n                                    }\n                                } else if (dt === 'UINT16') {\n                                    rv = read16(reg.hi, reg.lo, byteOrder, false);\n                                } else {\n                                    rv = read16(reg.hi, reg.lo, byteOrder, true);\n                                }\n                            }\n                            allStdData[t.id] = {\n                                rawValue: rv,\n                                quality: q,\n                                ts: new Date().toISOString()\n                            };\n                        });\n                        try { client.destroy(); } catch (e) {}\n                        setImmediate(function () { processGroup(gi + 1); });\n                    } else if (parsed && parsed.error) {\n                        hasFailed = true;\n                        if (!firstError) firstError = parsed.error;\n                        try { client.destroy(); } catch (e) {}\n                        setImmediate(function () { processGroup(gi + 1); });\n                    } else {\n                        try { client.destroy(); } catch (e) {}\n                        setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n                    }\n                }\n            }\n        });\n\n        client.on('timeout', function () {\n            if (resolved) return;\n            resolved = true;\n            try { client.destroy(); } catch (e) {}\n            setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n        });\n\n        client.on('error', function (e) {\n            if (resolved) return;\n            resolved = true;\n            try { client.destroy(); } catch (e2) {}\n            setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n        });\n\n        client.on('close', function () {\n            if (!resolved) {\n                resolved = true;\n                if (buf.length === 0) {\n                    hasFailed = true;\n                    if (!firstError) firstError = 'TCP closed (no data)';\n                    setImmediate(function () { processGroup(gi + 1); });\n                } else {\n                    try { client.destroy(); } catch (e) {}\n                    setTimeout(function () { attemptGroup(attempt + 1); }, retryInterval);\n                }\n            }\n        });\n    }\n\n    attemptGroup(0);\n}\n\nprocessGroup(0);\nreturn null;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-mb-dbg-output",
+          "type": "debug",
+          "z": "sf-modbus-driver",
+          "name": "Modbus驱动输出",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 420,
+          "y": 100,
+          "wires": []
+        }
+      ]
+    },
+    "sf_data_processor": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-data-processor",
+          "type": "subflow",
+          "name": "sf-data-processor",
+          "info": "数据管道 v10: 换算/死区/质量码/历史缓存/双输出路由\n\n输入: msg.payload = { deviceId, deviceName, success, data: {tagId: {rawValue, quality, ts}}, error, driverType, plcIp, plcPort }\n输出1 (MQTT): { topic, payload, qos } → edgelink-v10/data/{nodeId}/{deviceId}\n输出2 (PG): { payload: { pgRecords: [...] } } → sf-pg-writer\n\nv10 P0修正:\n- triggerKind=2 变化检测由主Flow调度器负责，本节点不做过滤\n- device-comm 仅状态变化时推入 edge_commPending（在线↔离线）\n- deadband 过滤减少无效MQTT",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-dp-fn-process"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-dp-fn-process",
+                  "port": 0
+                }
+              ]
+            },
+            {
+              "wires": [
+                {
+                  "id": "sf-dp-fn-process",
+                  "port": 1
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#FDD0A2"
+        },
+        {
+          "id": "sf-dp-fn-process",
+          "type": "function",
+          "z": "sf-data-processor",
+          "name": "数据管道处理",
+          "func": "// === sf-data-processor v10: 换算 + 死区 + 质量码 + 历史 + 双输出 ===\nvar result = msg.payload;\nif (!result) { node.send([null, null]); return; }\n\n// === Per-device processing guard (prevents read-modify-write race) ===\nvar procGuard = global.get('edge_proc_guard') || {};\nvar guardEntry = procGuard[result.deviceId];\n// If locked but expired (>30s), force release (uncaught exception recovery)\nif (guardEntry && (Date.now() - guardEntry.ts > 30000)) {\n    delete procGuard[result.deviceId];\n    guardEntry = undefined;\n}\nif (guardEntry) {\n    // Drop duplicate — scheduler will re-collect this device next cycle\n    return;\n}\nprocGuard[result.deviceId] = { ts: Date.now() };\n\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar tagConfigs = global.get('edge_tagConfigs') || {};\nvar devTags = tagConfigs[result.deviceId] || [];\nvar now = new Date().toISOString();\nvar nowMs = Date.now();\nvar DEBUG = global.get('edge_debug') || false;\n\n// === State references ===\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar historyData = global.get('edge_historyData') || {};\nvar commStatus = global.get('edge_commStatus') || {};\nvar commPending = global.get('edge_commPending') || [];\nvar lastBadSend = global.get('edge_lastBadSend') || {};\n\nvar devId = result.deviceId;\nvar devName = result.deviceName || ('PLC-' + devId);\n\n// ===== FAILURE PATH =====\nif (!result.success) {\n    var status = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\n    status.consecutiveFails = (status.consecutiveFails || 0) + 1;\n    status.lastFailTime = nowMs;\n\n    // P0-3: Only push to pending on state change (online → offline)\n    if (status.lastState !== 'offline') {\n        status.lastState = 'offline';\n        commPending.push({\n            deviceId: devId,\n            success: false,\n            error: result.error || 'communication failure',\n            consecutiveFails: status.consecutiveFails,\n            ts: now\n        });\n        global.set('edge_commPending', commPending);\n        if (DEBUG) node.warn('[DP] Device ' + devName + ' state: online → offline');\n        // Publish PLC_OFFLINE alarm via MQTT (v9.1 parity)\n        var alarmMsg = {\n            topic: 'edgelink/alarm/plc_offline/' + devId,\n            payload: JSON.stringify({\n                alert_type: 'PLC_OFFLINE',\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                msg: devName + ' communication failure: ' + (result.error || 'unknown'),\n                ts: now\n            }),\n            qos: 1,\n            retain: false\n        };\n        var alerts = global.get('edge_recentAlerts') || [];\n        alerts.push({\n            alertType: 'PLC_OFFLINE',\n            deviceId: devId,\n            deviceName: devName,\n            msg: result.error || 'communication failure',\n            ts: now\n        });\n        if (alerts.length > 20) alerts = alerts.slice(-20);\n        global.set('edge_recentAlerts', alerts);\n    }\n    commStatus[devId] = status;\n    global.set('edge_commStatus', commStatus);\n\n    // Re-publish last-good values with BAD quality (throttled: max every 30s)\n    var shouldSendBad = !lastBadSend[devId] || (nowMs - lastBadSend[devId] > 30000);\n    var mqttMsg = null;\n    if (shouldSendBad && lastGoodTags[devId] && lastGoodTags[devId].length > 0) {\n        lastBadSend[devId] = nowMs;\n        global.set('edge_lastBadSend', lastBadSend);\n        var badVals = JSON.parse(JSON.stringify(lastGoodTags[devId]));\n        badVals.forEach(function (v) { v.quality = 1; });\n        mqttMsg = {\n            topic: 'edgelink-v10/data/' + nodeId + '/' + devId,\n            payload: JSON.stringify({\n                node_id: nodeId,\n                device_id: devId,\n                device_name: devName,\n                host_pc_ip: hostPcIp,\n                ts: now,\n                value_count: badVals.length,\n                values: badVals,\n                quality: 'BAD'\n            }),\n            qos: 1,\n            retain: false\n        };\n    }\n\n    delete procGuard[devId];\n    global.set('edge_proc_guard', procGuard);\n    // Send alarm + BAD data as array so mqtt-out publishes both\n    var mqttOut = alarmMsg ? (mqttMsg ? [alarmMsg, mqttMsg] : [alarmMsg]) : (mqttMsg || null);\n    node.send([mqttOut, null]);\n    node.status({ fill: 'red', shape: 'ring', text: devName + ' OFFLINE' });\n    return;\n}\n\n// ===== SUCCESS PATH =====\n\n// Reset comm status on success\nvar prevStatus = commStatus[devId] || { consecutiveFails: 0, lastState: 'online' };\nvar wasOffline = prevStatus.lastState === 'offline';\ncommStatus[devId] = { consecutiveFails: 0, lastState: 'online', lastSuccessTime: nowMs };\nglobal.set('edge_commStatus', commStatus);\n\n// P0-3: Push to pending on recovery (offline → online)\nif (wasOffline) {\n    commPending.push({\n        deviceId: devId,\n        success: true,\n        error: '',\n        consecutiveFails: 0,\n        ts: now\n    });\n    global.set('edge_commPending', commPending);\n    if (DEBUG) node.warn('[DP] Device ' + devName + ' state: offline → online (recovered)');\n}\n\nvar stdData = result.data || {};\nvar tagValues = [];\nvar pgRecords = [];\nvar validCount = 0;\nvar skippedCount = 0;\n\n// Process each tag\n(devTags.length > 0 ? devTags : []).forEach(function (tag) {\n    var entry = stdData[tag.id];\n    if (!entry || entry.rawValue === undefined || entry.rawValue === null) {\n        // Tag not in this read, mark as missing\n        tagValues.push({\n            tag_id: tag.id,\n            tag_address: tag.regAddr || '',\n            tag_name: tag.name || '',\n            raw_value: null,\n            eng_value: null,\n            unit: tag.unit || '',\n            quality: 2,\n            ts: now\n        });\n        return;\n    }\n\n    // Step 1: Transform (slope/offset, linear)\n    var eng = entry.rawValue;\n    var tform = tag.tform || tag.transformType || 'none';\n    if (tform === 'slope_offset' || tform === 'linear') {\n        eng = entry.rawValue * (tag.slope || tag.transformSlopeA || 1) + (tag.offset || tag.transformOffsetB || 0);\n    }\n    eng = parseFloat(parseFloat(eng).toFixed(2));\n\n    // Step 2: Deadband filtering\n    var prevVals = lastGoodTags[devId] || [];\n    var prev = null;\n    for (var pi = 0; pi < prevVals.length; pi++) {\n        if (prevVals[pi].tag_id === tag.id) { prev = prevVals[pi]; break; }\n    }\n    var deadband = tag.deadband || 0;\n    var forceInterval = tag.reportForceIntervalMs || 5000;\n\n    if (prev && deadband > 0) {\n        var delta = Math.abs(eng - (prev.eng_value || 0));\n        var prevTs = prev.ts ? new Date(prev.ts).getTime() : 0;\n        if (delta < deadband && (nowMs - prevTs) < forceInterval) {\n            skippedCount++;\n            return; // Skip: value within deadband, not forced yet\n        }\n    }\n\n    // Step 3: Quality code\n    var quality = entry.quality || 0;\n\n    var tv = {\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        ts: now\n    };\n    tagValues.push(tv);\n    validCount++;\n\n    // Step 4: PG record\n    pgRecords.push({\n        ts: now,\n        node_id: nodeId,\n        device_id: devId,\n        device_name: devName,\n        tag_id: tag.id,\n        tag_address: tag.regAddr || '',\n        tag_name: tag.name || '',\n        raw_value: entry.rawValue,\n        eng_value: eng,\n        unit: tag.unit || '',\n        quality: quality,\n        host_pc_ip: hostPcIp\n    });\n\n    // Step 5: History cache\n    if (!historyData[devId]) historyData[devId] = {};\n    if (!historyData[devId][tag.id]) historyData[devId][tag.id] = [];\n    historyData[devId][tag.id].push({ ts: now, raw: entry.rawValue, eng: eng, q: quality });\n    if (historyData[devId][tag.id].length > 100) {\n        historyData[devId][tag.id] = historyData[devId][tag.id].slice(-100);\n    }\n});\n\n// Update lastGoodTags (only for successfully read tags)\nif (tagValues.length > 0) {\n    lastGoodTags[devId] = tagValues.filter(function (v) { return v.quality !== 2; });\n    global.set('edge_lastGoodTags', lastGoodTags);\n}\nglobal.set('edge_historyData', historyData);\n\n// PG success counter is incremented by sf-pg-writer after successful write only\n\n// === Build outputs ===\nvar mqttMsg = null;\nif (tagValues.length > 0) {\n    mqttMsg = {\n        topic: 'edgelink-v10/data/' + nodeId + '/' + devId,\n        payload: JSON.stringify({\n            node_id: nodeId,\n            device_id: devId,\n            device_name: devName,\n            host_pc_ip: hostPcIp,\n            ts: now,\n            value_count: validCount,\n            values: tagValues\n        }),\n        qos: 1,\n        retain: false\n    };\n}\n\nvar pgMsg = null;\nif (pgRecords.length > 0) {\n    pgMsg = { payload: { pgRecords: pgRecords } };\n}\n\nif (DEBUG && validCount > 0) {\n    node.status({ fill: 'green', shape: 'dot', text: devName + ' ' + validCount + ' vals' + (skippedCount > 0 ? ' (' + skippedCount + ' skipped)' : '') });\n}\n\ndelete procGuard[devId];\nglobal.set('edge_proc_guard', procGuard);\nnode.send([mqttMsg, pgMsg]);\nreturn;",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-dp-dbg-mqtt",
+          "type": "debug",
+          "z": "sf-data-processor",
+          "name": "Output1: MQTT",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 440,
+          "y": 80,
+          "wires": []
+        },
+        {
+          "id": "sf-dp-dbg-pg",
+          "type": "debug",
+          "z": "sf-data-processor",
+          "name": "Output2: PG",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 440,
+          "y": 140,
+          "wires": []
+        }
+      ]
+    },
+    "sf_pg_writer": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-pg-writer",
+          "type": "subflow",
+          "name": "sf-pg-writer",
+          "info": "PG异步写入器 v10: 事件驱动队列 + 自适应批量 + 溢出保护\n\n⚠ 依赖: 需要在 settings.js functionGlobalContext 中暴露 pg 模块:\n    pg: require('pg')\n  安装: cd ~/.node-red && npm install pg\n\n输入: msg.payload.pgRecords = [{ ts, node_id, device_id, tag_id, raw_value, eng_value, quality, ... }]\n输出: 无\n\n核心原则: 绝不阻塞主数据链\n\nP1修正: 事件驱动而非定时器轮询\n- 收到数据 → 入队 → 若空闲则立即触发写入\n- 写入完成 → 检查队列 → 有数据则继续 → 无数据则等待下次输入\n- 写失败时丢弃batch停止循环, 等下次input (防死循环)\n- 队列 > 10000 条时触发溢出告警并丢弃最旧数据",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-pw-fn-enqueue"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-pw-fn-enqueue",
+                  "port": 0
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#BEBADA"
+        },
+        {
+          "id": "sf-pw-fn-enqueue",
+          "type": "function",
+          "z": "sf-pg-writer",
+          "name": "入队 + 事件驱动写入",
+          "func": "// === sf-pg-writer v10: 事件驱动队列 + 自适应批量 ===\nvar pg = global.get('pg');\nvar DEBUG = global.get('edge_debug') || false;\nvar MAX_QUEUE = 10000;  // Max queue size before dropping\nvar BATCH_SIZE = 200;    // Default batch size, adjusted dynamically\n\nvar records = (msg.payload && msg.payload.pgRecords) ? msg.payload.pgRecords : [];\nif (records.length === 0) {\n    node.status({ fill: 'grey', shape: 'dot', text: 'no records' });\n    return null;\n}\n\n// === Enqueue ===\nvar queue = global.get('edge_pg_queue') || [];\nvar totalLen = queue.length + records.length;\n\nif (totalLen > MAX_QUEUE) {\n    var dropCount = totalLen - MAX_QUEUE;\n    queue = queue.slice(dropCount);  // Drop oldest\n    node.warn('[PG-Writer] Queue overflow! Dropped ' + dropCount + ' oldest records. Current: ' + queue.length);\n    // Alert via global for sf-monitor to pick up\n    var alerts = global.get('edge_recentAlerts') || [];\n    alerts.push({\n        alertType: 'PG_QUEUE_OVERFLOW',\n        deviceId: 0,\n        deviceName: 'PG-Writer',\n        msg: 'Queue overflow, dropped ' + dropCount + ' records',\n        ts: new Date().toISOString()\n    });\n    if (alerts.length > 20) alerts = alerts.slice(-20);\n    global.set('edge_recentAlerts', alerts);\n}\n\nqueue = queue.concat(records);\nglobal.set('edge_pg_queue', queue);\n\nif (DEBUG) node.status({ fill: 'yellow', shape: 'dot', text: 'Q:' + queue.length });\n\n// === Event-driven write: trigger only if not already writing ===\nif (global.get('edge_pg_writing')) {\n    // Write in progress, data will be picked up after current batch completes\n    return null;\n}\n\n// Start writing\nstartWrite();\nreturn null;\n\n// ===== Internal write function =====\nfunction startWrite() {\n    global.set('edge_pg_writing', true);\n    doWrite();\n}\n\nfunction doWrite() {\n    var q = global.get('edge_pg_queue') || [];\n    if (q.length === 0) {\n        global.set('edge_pg_writing', false);\n        node.status({ fill: 'green', shape: 'dot', text: 'idle' });\n        return;\n    }\n\n    // Adaptive batch size: bigger queue → bigger batch\n    var batchSize = BATCH_SIZE;\n    if (q.length > 5000) batchSize = 500;\n    else if (q.length > 2000) batchSize = 300;\n\n    var batch = q.splice(0, batchSize);\n    global.set('edge_pg_queue', q);\n\n    node.status({ fill: 'yellow', shape: 'dot', text: 'writing ' + batch.length + '/' + q.length });\n\n    // Check if pg module is available\n    if (!pg) {\n        // No PG driver — just count and clear (development mode)\n        if (DEBUG) node.warn('[PG-Writer] pg not available, discarding ' + batch.length + ' records (dev mode)');\n        var total = global.get('edge_pg_success_count') || 0;\n        global.set('edge_pg_success_count', total + batch.length);\n        finishWrite(true);\n        return;\n    }\n\n    // Build parameterized INSERT\n    var valStrs = [];\n    var params = [];\n    var idx = 0;\n    batch.forEach(function (r) {\n        var qStr = r.quality === 0 ? 'GOOD' : (r.quality === 1 ? 'BAD' : 'UNCERTAIN');\n        var vals = [\n            r.device_id, r.tag_id, r.node_id,\n            r.raw_value, r.eng_value, qStr, r.ts || new Date().toISOString()\n        ];\n        var placeholders = vals.map(function () { idx++; return '$' + idx; });\n        valStrs.push('(' + placeholders.join(',') + ')');\n        params = params.concat(vals.map(function (v) { return v === undefined ? null : v; }));\n    });\n\n    var sql = 'INSERT INTO plc_data_log '\n        + '(device_id,tag_id,node_id,raw_value,eng_value,quality,ts) VALUES ' + valStrs.join(',');\n\n    // Acquire/reuse pg pool\n    var pool = getPool();\n    if (!pool) {\n        // No pool available — discard, don't requeue (avoids infinite loop)\n        global.set('edge_pg_writing', false);\n        node.status({ fill: 'red', shape: 'ring', text: 'no pool' });\n        return;\n    }\n\n    var writeStart = Date.now();\n    pool.query({ text: sql, values: params }, function (err, result) {\n        var elapsed = Date.now() - writeStart;\n        if (err) {\n            node.warn('[PG-Writer] Write failed (' + elapsed + 'ms): ' + err.message);\n            node.status({ fill: 'red', shape: 'ring', text: 'FAIL ' + err.message.substring(0, 20) });\n            finishWrite(false, batch);\n            return;\n        } else {\n            var count = result.rowCount || batch.length;\n            var total = global.get('edge_pg_success_count') || 0;\n            global.set('edge_pg_success_count', total + count);\n            global.set('edge_pg_last_latency_ms', elapsed);\n            if (DEBUG) node.status({ fill: 'green', shape: 'dot', text: count + ' OK ' + elapsed + 'ms' });\n        }\n\n        // Adaptive: if write latency > 200ms, reduce batch size for next round\n        if (elapsed > 200 && BATCH_SIZE > 50) {\n            BATCH_SIZE = Math.max(50, BATCH_SIZE - 25);\n        } else if (elapsed < 50 && BATCH_SIZE < 500) {\n            BATCH_SIZE = Math.min(500, BATCH_SIZE + 25);\n        }\n\n        // Event-driven: continue if queue has more data\n        finishWrite(!err);\n    });\n}\n\nfunction getPool() {\n    var pool = global.get('edge_pgPool');\n    var wanted = {\n        host: global.get('edge_pgHost') || '127.0.0.1',\n        port: global.get('edge_pgPort') || 5432,\n        database: global.get('edge_pgDatabase') || 'edgelink',\n        user: global.get('edge_pgUser') || 'postgres',\n        password: global.get('edge_pgPassword') || '',\n        max: 5\n    };\n\n    if (pool) {\n        var current = pool.options;\n        if (current.host === wanted.host && current.port === wanted.port &&\n            current.database === wanted.database && current.user === wanted.user &&\n            current.password === wanted.password) {\n            return pool;\n        }\n        try { pool.end(); } catch (e) {}\n        pool = null;\n    }\n\n    if (!pg) return null;\n    if (!wanted.password) {\n        node.error('[PG-Writer] PG password not configured in settings.js (edge_pgPassword)');\n        return null;\n    }\n    try {\n        pool = new pg.Pool(wanted);\n        pool.on('error', function (e) {\n            node.warn('[PG-Writer] Pool error: ' + e.message);\n            global.set('edge_pgPool', null);\n        });\n        global.set('edge_pgPool', pool);\n        return pool;\n    } catch (e) {\n        node.warn('[PG-Writer] Cannot create pool: ' + e.message);\n        global.set('edge_pgPool', null);\n        return null;\n    }\n}\n\nfunction finishWrite(ok, failedBatch) {\n    if (!ok) {\n        // Requeue failed batch at head, retry after backoff (5s)\n        global.set('edge_pg_writing', false);\n        var q = global.get('edge_pg_queue') || [];\n        global.set('edge_pg_queue', q.concat(failedBatch || []));\n        node.status({ fill: 'red', shape: 'ring', text: 'retry in 5s' });\n        setTimeout(function () {\n            if (!global.get('edge_pg_writing')) startWrite();\n        }, 5000);\n        return;\n    }\n    var q = global.get('edge_pg_queue') || [];\n    if (q.length > 0) {\n        // More data waiting — continue immediately (event-driven, only on success)\n        doWrite();\n    } else {\n        // Queue empty — go idle, wait for next input\n        global.set('edge_pg_writing', false);\n        node.status({ fill: 'green', shape: 'dot', text: 'idle' });\n    }\n}",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-pw-dbg-status",
+          "type": "debug",
+          "z": "sf-pg-writer",
+          "name": "PG Writer Status",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 440,
+          "y": 100,
+          "wires": []
+        }
+      ]
+    },
+    "sf_monitor": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-monitor",
+          "type": "subflow",
+          "name": "sf-monitor",
+          "info": "监控与心跳 v10: 30s心跳 + device-comm批量 + PG统计 + 401reauth\n\n输入: inject(30s) → 触发心跳 + 批量上报\n输出1: MQTT心跳消息\n输出2: reauth触发 (401时)\n\n⚠ HTTP API 已拆出 → sf-local-api (6端点, /api/v10/monitor/)\n\nv10 P0修正:\n- device-comm 仅状态变化时上报 (edge_commPending由sf-data-processor推入)\n- 消费频率与心跳一致(30s)\n- 401检测 → Output2 → 主Flow回连sf-config-manager",
+          "category": "edgelink-v10",
+          "in": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mon-fn-heartbeat"
+                }
+              ]
+            }
+          ],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-mon-fn-heartbeat",
+                  "port": 0
+                }
+              ]
+            },
+            {
+              "wires": [
+                {
+                  "id": "sf-mon-fn-heartbeat",
+                  "port": 1
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#FB8072"
+        },
+        {
+          "id": "sf-mon-fn-heartbeat",
+          "type": "function",
+          "z": "sf-monitor",
+          "name": "心跳 + 批量上报",
+          "func": "// === sf-monitor: 30s心跳 + device-comm批量消费 + PG统计 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar jwt = global.get('edge_jwt') || '';\nvar DEBUG = global.get('edge_debug') || false;\nvar apiKey = global.get('edge_apiKey') || '';\nvar devices = global.get('edge_devices') || [];\n\nvar now = new Date().toISOString();\n\nif (!global.get('edge_configReady')) {\n    node.status({ fill: 'grey', shape: 'dot', text: 'wait config' });\n    return [null, null];\n}\n\n// === Memory usage ===\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? Math.round(pr.memoryUsage().rss / 1024 / 1024) : 0; } catch (e) { mem = 0; }\n\n// === Build MQTT heartbeat (Output 1) ===\nvar devList = devices.map(function (d) {\n    var status = (global.get('edge_commStatus') || {})[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName,\n        online: (status.consecutiveFails || 0) === 0,\n        consecutiveFails: status.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\n\nvar mqttMsg = {\n    topic: 'edgelink-v10/heartbeat/' + nodeId,\n    payload: JSON.stringify({\n        node_id: nodeId, host_pc_ip: hostPcIp,\n        device_count: devices.length, devices: devList,\n        running_flows: 5, memory_usage_mb: mem, status: 'online', ts: now\n    }),\n    qos: 1, retain: false\n};\n\n// === HTTP Heartbeat (async) ===\nvar reauthNeeded = false;\nvar params = 'host_pc_ip=' + encodeURIComponent(hostPcIp)\n    + '&node_ip=' + encodeURIComponent(hostPcIp)\n    + '&running_flows=5&memory_usage_mb=' + mem;\n\nvar hbOpts = {\n    hostname: HOST, port: PORT, path: '/monitor/heartbeat?' + params, method: 'POST',\n    headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n};\n\nvar hbReq = http.request(hbOpts, function (res) {\n    var b = '';\n    res.on('data', function (d) { b += d; });\n    res.on('end', function () {\n        if (res.statusCode === 401 && !global.get('edge_reauthInProgress')) {\n            node.warn('[Monitor] JWT expired (401), trigger re-login');\n            global.set('edge_jwt', '');\n            global.set('edge_configReady', false);\n            global.set('edge_reauthInProgress', true);\n            reauthNeeded = true;\n        }\n        try {\n            var j = JSON.parse(b);\n            var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n            if (nid > 0 && nid !== nodeId) {\n                global.set('edge_nodeId', nid);\n                if (DEBUG) node.warn('[Monitor] nodeId updated: ' + nodeId + ' → ' + nid);\n            }\n        } catch (e) {}\n        node.status({ fill: res.statusCode === 200 ? 'green' : 'red', shape: 'dot', text: 'HB ' + res.statusCode });\n        consumeDeviceComm();\n        reportPgStats();\n        var reauthMsg = reauthNeeded ? { payload: { action: 'reauth' } } : null;\n        node.send([mqttMsg, reauthMsg]);\n    });\n});\nhbReq.setTimeout(5000, function () {\n    hbReq.destroy();\n    consumeDeviceComm();\n    reportPgStats();\n    node.send([mqttMsg, null]);\n});\nhbReq.on('error', function (e) {\n    if (DEBUG) node.warn('[Monitor] HB err: ' + e.message);\n    consumeDeviceComm();\n    reportPgStats();\n    node.send([mqttMsg, null]);\n});\nhbReq.write('{}');\nhbReq.end();\n\n// === Device-comm consumer: drain edge_commPending (30s batch) ===\nfunction consumeDeviceComm() {\n    var pending = global.get('edge_commPending') || [];\n    if (pending.length === 0) return;\n    global.set('edge_commPending', []);\n    if (DEBUG) node.warn('[Monitor] Draining ' + pending.length + ' device-comm events');\n    pending.forEach(function (item) {\n        var p = 'node_id=' + nodeId + '&device_id=' + item.deviceId\n            + '&success=' + (item.success ? 'true' : 'false')\n            + '&error_msg=' + encodeURIComponent(item.error || '');\n        var opts = {\n            hostname: HOST, port: PORT, path: '/monitor/device-comm?' + p, method: 'POST',\n            headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n        };\n        var req = http.request(opts, function (res) {\n            if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n            res.resume();\n        });\n        req.setTimeout(3000, function () { req.destroy(); });\n        req.on('error', function () {});\n        req.write('{}');\n        req.end();\n    });\n}\n\n// === PG Write Stats reporter ===\nfunction reportPgStats() {\n    var pgCount = global.get('edge_pg_success_count') || 0;\n    var pgPrev = global.get('edge_pg_prev_count') || 0;\n    var writeCount = pgCount - pgPrev;\n    global.set('edge_pg_prev_count', pgCount);\n    var p = 'node_id=' + nodeId + '&success=true&latency_ms=' + (global.get('edge_pg_last_latency_ms') || 5)\n        + '&write_count=' + writeCount + '&device_count=' + devices.length + '&error_msg=';\n    var opts = {\n        hostname: HOST, port: PORT, path: '/monitor/pg-write?' + p, method: 'POST',\n        headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n    };\n    var req = http.request(opts, function (res) {\n        if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n        res.resume();\n    });\n    req.setTimeout(3000, function () { req.destroy(); });\n    req.on('error', function () {});\n    req.write('{}');\n    req.end();\n}\n\nreturn null;",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 200,
+          "y": 100,
+          "wires": []
+        }
+      ]
+    },
+    "sf_local_api": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "sf-local-api",
+          "type": "subflow",
+          "name": "sf-local-api",
+          "info": "本地监控 HTTP API v10 (独立子Flow, 与 sf-monitor 解耦)\n\n6 个端点, /api/v10/monitor/ 前缀:\n- GET  /api/v10/monitor/status — 节点状态+设备摘要\n- GET  /api/v10/monitor/device/:id — 设备详情+最新点位\n- GET  /api/v10/monitor/alerts — 最近告警\n- GET  /api/v10/monitor/history/:deviceId/:tagId — 点位历史\n- POST /api/v10/monitor/alarms/clear — 清除告警\n- POST /api/v10/monitor/config/refresh — 手动刷新配置 → Output 触发sf-config-manager\n\n⚠ 重要: http-in节点全局注册, 本子Flow只能拖1个实例, 否则路由冲突\n\nv10 P1修正: 从sf-monitor拆出, 避免心跳逻辑与HTTP路由耦合",
+          "category": "edgelink-v10",
+          "in": [],
+          "out": [
+            {
+              "wires": [
+                {
+                  "id": "sf-api-fn-refresh",
+                  "port": 1
+                }
+              ]
+            }
+          ],
+          "env": [],
+          "meta": {},
+          "color": "#80B1D3"
+        },
+        {
+          "id": "sf-api-http-status",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "GET 节点状态",
+          "url": "/api/v10/monitor/status",
+          "method": "get",
+          "x": 100,
+          "y": 100,
+          "wires": [
+            [
+              "sf-api-fn-status"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-status",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "节点状态汇总",
+          "func": "var nodeId = global.get('edge_nodeId') || 0;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar devices = global.get('edge_devices') || [];\nvar commStatus = global.get('edge_commStatus') || {};\nvar configReady = global.get('edge_configReady') || false;\nvar startTime = global.get('edge_startTime');\nif (!startTime) { startTime = new Date().toISOString(); global.set('edge_startTime', startTime); }\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? parseFloat((pr.memoryUsage().rss / 1024 / 1024).toFixed(1)) : 0; } catch (e) { mem = 0; }\n\nvar deviceList = devices.map(function (d) {\n    var s = commStatus[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        online: (s.consecutiveFails || 0) === 0,\n        consecutiveFails: s.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\nvar uptime = Math.floor((Date.now() - new Date(startTime).getTime()) / 1000);\nmsg.payload = {\n    nodeId: nodeId, hostPcIp: hostPcIp,\n    configReady: configReady, uptimeSeconds: uptime, memoryUsageMb: mem,\n    deviceCount: devices.length,\n    onlineCount: deviceList.filter(function (d) { return d.online; }).length,\n    devices: deviceList,\n    pgQueueSize: (global.get('edge_pg_queue') || []).length,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 100,
+          "wires": [
+            [
+              "sf-api-resp-status"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-resp-status",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应状态",
+          "x": 540,
+          "y": 100,
+          "wires": []
+        },
+        {
+          "id": "sf-api-http-device",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "GET 设备详情",
+          "url": "/api/v10/monitor/device/:id",
+          "method": "get",
+          "x": 100,
+          "y": 180,
+          "wires": [
+            [
+              "sf-api-fn-device"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-device",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "设备详情",
+          "func": "var deviceId = parseInt(msg.req.params.id);\nvar devices = global.get('edge_devices') || [];\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\nvar commStatus = global.get('edge_commStatus') || {};\n\nvar device = null;\nfor (var i = 0; i < devices.length; i++) {\n    if (devices[i].id === deviceId) { device = devices[i]; break; }\n}\nif (!device) {\n    msg.payload = { error: 'Device not found' };\n    msg.statusCode = 404;\n    return msg;\n}\nvar status = commStatus[deviceId] || {};\nvar tags = lastGoodTags[deviceId] || [];\nmsg.payload = {\n    id: device.id, name: device.deviceName,\n    comType: device.comType, plcIp: device.plcIp, plcPort: device.plcPort,\n    online: (status.consecutiveFails || 0) === 0,\n    consecutiveFails: status.consecutiveFails || 0,\n    tagCount: (device.tags || []).length,\n    latestValues: tags,\n    ts: new Date().toISOString()\n};\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 180,
+          "wires": [
+            [
+              "sf-api-resp-device"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-resp-device",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应设备",
+          "x": 540,
+          "y": 180,
+          "wires": []
+        },
+        {
+          "id": "sf-api-http-alerts",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "GET 告警列表",
+          "url": "/api/v10/monitor/alerts",
+          "method": "get",
+          "x": 100,
+          "y": 260,
+          "wires": [
+            [
+              "sf-api-fn-alerts"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-alerts",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "告警列表",
+          "func": "var alerts = global.get('edge_recentAlerts') || [];\nmsg.payload = {\n    alerts: alerts.slice(-10).reverse(),\n    ts: new Date().toISOString()\n};\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 260,
+          "wires": [
+            [
+              "sf-api-resp-alerts"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-resp-alerts",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应告警",
+          "x": 540,
+          "y": 260,
+          "wires": []
+        },
+        {
+          "id": "sf-api-http-history",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "GET 点位历史",
+          "url": "/api/v10/monitor/history/:deviceId/:tagId",
+          "method": "get",
+          "x": 100,
+          "y": 340,
+          "wires": [
+            [
+              "sf-api-fn-history"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-history",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "点位历史",
+          "func": "var deviceId = parseInt(msg.req.params.deviceId);\nvar tagId = parseInt(msg.req.params.tagId);\nvar limit = parseInt(msg.req.query.limit) || 300;\nvar history = global.get('edge_historyData') || {};\nvar devHistory = history[deviceId] || {};\nvar tagHistory = devHistory[tagId] || [];\nmsg.payload = {\n    deviceId: deviceId, tagId: tagId,\n    points: tagHistory.slice(-limit)\n};\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 340,
+          "wires": [
+            [
+              "sf-api-resp-history"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-resp-history",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应历史",
+          "x": 540,
+          "y": 340,
+          "wires": []
+        },
+        {
+          "id": "sf-api-http-alarm-clear",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "POST 清除告警",
+          "url": "/api/v10/monitor/alarms/clear",
+          "method": "post",
+          "x": 100,
+          "y": 420,
+          "wires": [
+            [
+              "sf-api-fn-alarm-clear"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-alarm-clear",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "清除告警",
+          "func": "var body = {};\ntry { body = msg.payload ? JSON.parse(typeof msg.payload === 'string' ? msg.payload : JSON.stringify(msg.payload)) : {}; } catch (e) {}\nvar deviceId = body.deviceId || parseInt((msg.req.query || {}).deviceId) || 0;\n\nif (deviceId > 0) {\n    var la = global.get('edge_lastAlarmTime') || {};\n    delete la['dev_' + deviceId];\n    global.set('edge_lastAlarmTime', la);\n}\nvar ra = global.get('edge_recentAlerts') || [];\nglobal.set('edge_recentAlerts', ra.filter(function (a) { return a.deviceId !== deviceId; }));\n\nmsg.payload = { ok: true, deviceId: deviceId };\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 420,
+          "wires": [
+            [
+              "sf-api-resp-alarm-clear"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-resp-alarm-clear",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应清除",
+          "x": 540,
+          "y": 420,
+          "wires": []
+        },
+        {
+          "id": "sf-api-http-refresh",
+          "type": "http in",
+          "z": "sf-local-api",
+          "name": "POST 刷新配置",
+          "url": "/api/v10/monitor/config/refresh",
+          "method": "post",
+          "x": 100,
+          "y": 500,
+          "wires": [
+            [
+              "sf-api-fn-refresh"
+            ]
+          ]
+        },
+        {
+          "id": "sf-api-fn-refresh",
+          "type": "function",
+          "z": "sf-local-api",
+          "name": "触发配置刷新",
+          "func": "// Clear JWT → trigger full re-login in sf-config-manager\nglobal.set('edge_jwt', '');\nglobal.set('edge_configReady', false);\nmsg.payload = { ok: true, msg: 'Config refresh triggered' };\n// Output 0: HTTP response, Output 1: reauth signal to sf-config-manager\nreturn [msg, { payload: { action: 'reauth' } }];",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 320,
+          "y": 500,
+          "wires": [
+            [
+              "sf-api-resp-refresh"
+            ],
+            []
+          ]
+        },
+        {
+          "id": "sf-api-resp-refresh",
+          "type": "http response",
+          "z": "sf-local-api",
+          "name": "响应刷新",
+          "x": 540,
+          "y": 500,
+          "wires": []
+        }
+      ]
+    },
+    "main_flow_phase3": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "tab-v10-phase3",
+          "type": "tab",
+          "label": "EdgeLink v10 采集",
+          "disabled": false,
+          "info": "EdgeLink v10 主编排流程 — Phase 3: 完整版 (7子Flow): 完整采集链路\n\n=== v10 最终架构 ===\nConfig Pipeline:\n  inject(2s/300s) → sf-config-manager → mqtt-out(node online) + global.edge_devices\n\nCollection Pipeline:\n  inject(1s) → fn-scheduler (读 edge_devices, triggerKind过滤)\n    → fn-router (按 comType 分流)\n      → MC_Protocol → sf-mc-driver → sf-data-processor\n      → Modbus_TCP  → sf-modbus-driver → sf-data-processor\n                        ↓\n              ┌────────┼────────┐\n              ↓        ↓\n         mqtt-out(data)  sf-pg-writer\n\nHandshake Trigger:\n  mqtt-in(edgelink-v10/trigger/scan/#) → fn-handshake\n\nv10 MQTT Topic 前缀: edgelink-v10/\nv10 全局变量前缀: edge_"
+        },
+        {
+          "id": "cmt-v10-config",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== 1. 配置管线 (启动 + 5min刷新) =====",
+          "info": "sf-config-manager: IP检测 → JWT登录 → nodeId注册 → 拉取点位 → 分组 → 筛选 → 输出配置 + MQTT上线",
+          "x": 120,
+          "y": 40,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-init",
+          "type": "inject",
+          "z": "tab-v10-phase3",
+          "name": "启动触发 (2s)",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "once": true,
+          "onceDelay": 2,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 100,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "inj-v10-config-refresh",
+          "type": "inject",
+          "z": "tab-v10-phase3",
+          "name": "5分钟刷新",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "300",
+          "once": false,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 160,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-config-mgr",
+          "type": "subflow:sf-config-manager",
+          "z": "tab-v10-phase3",
+          "name": "配置管理中心",
+          "x": 400,
+          "y": 120,
+          "wires": [
+            [
+              "fn-v10-config-ready"
+            ],
+            [
+              "mqtt-v10-node-online"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-config-ready",
+          "type": "function",
+          "z": "tab-v10-phase3",
+          "name": "配置就绪",
+          "func": "var DEBUG = global.get('edge_debug') || false;\nvar devices = global.get('edge_devices') || [];\nif (DEBUG) node.warn('[Main] Config ready, ' + devices.length + ' devices');\nnode.status({ fill: 'green', shape: 'dot', text: devices.length + ' devs configured' });\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 660,
+          "y": 120,
+          "wires": []
+        },
+        {
+          "id": "mqtt-v10-node-online",
+          "type": "mqtt out",
+          "z": "tab-v10-phase3",
+          "name": "节点上线 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "true",
+          "broker": "cfg-mqtt-v10",
+          "x": 660,
+          "y": 180,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-collect",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== 2. 采集管线 (1s, 协议可插拔) =====",
+          "info": "调度器 → comType分流 → MC Driver / Modbus Driver → Data Processor → MQTT数据 + PG写入\n\nP0修正:\n- triggerKind=2 过滤保留在调度器(本Flow)\n- 字段平铺, 使用 id 不是 deviceId\n- device-comm 仅状态变化时推入 edge_commPending",
+          "x": 120,
+          "y": 260,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-scan",
+          "type": "inject",
+          "z": "tab-v10-phase3",
+          "name": "1秒采集触发",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "1",
+          "once": true,
+          "onceDelay": 10,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 320,
+          "wires": [
+            [
+              "fn-v10-scheduler"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-scheduler",
+          "type": "function",
+          "z": "tab-v10-phase3",
+          "name": "调度器: 过滤+分流",
+          "func": "// === v10 调度器: 读 edge_devices, triggerKind过滤, 输出单设备消息 ===\nvar configReady = global.get('edge_configReady') || false;\nif (!configReady) { node.status({ fill: 'grey', shape: 'dot', text: 'wait config' }); return null; }\n\nvar devices = global.get('edge_devices') || [];\nif (devices.length === 0) { node.status({ fill: 'grey', shape: 'dot', text: 'no devices' }); return null; }\n\nvar now = Date.now();\nvar deviceLastScan = global.get('edge_deviceLastScan') || {};\n\nvar DEBUG = global.get('edge_debug') || false;\nvar handshakeFlags = global.get('edge_handshakeFlags') || {};\nvar triggerLastRaw = global.get('edge_triggerLastRaw') || {};\nvar triggerForceTimes = global.get('edge_triggerForceTimes') || {};\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\n\nvar activeDevices = [];\nvar skippedTrig2 = 0;\nvar skippedTrig1 = 0;\nvar skippedHandshake = 0;\n\ndevices.forEach(function (d) {\n    if (d.triggerKind === 0) {\n        if (!handshakeFlags[d.id]) { skippedHandshake++; return; }\n        delete handshakeFlags[d.id];\n        global.set('edge_handshakeFlags', handshakeFlags);\n        // Handshake-triggered: bypass interval, collect immediately\n        deviceLastScan[d.id] = now;\n        activeDevices.push({\n            id: d.id, deviceName: d.deviceName, comType: d.comType,\n            plcIp: d.plcIp, plcPort: d.plcPort,\n            protocolParams: d.protocolParams || {},\n            tags: d.tags || [],\n            timeout: d.commTimeoutMs || d.timeout || 3000,\n            maxRetries: d.retryCount || d.maxRetries || 2,\n            retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n            triggerKind: d.triggerKind || 1\n        });\n        return;\n    }\n    if (d.triggerKind === 2) {\n        var forceDue = !triggerForceTimes[d.id] || (now - triggerForceTimes[d.id] >= 5000);\n        if (!forceDue && lastGoodTags[d.id]) {\n            var prevVals = triggerLastRaw[d.id] || {};\n            var changed = false;\n            for (var i = 0; i < lastGoodTags[d.id].length; i++) {\n                if (prevVals[lastGoodTags[d.id][i].tag_id] !== lastGoodTags[d.id][i].raw_value) { changed = true; break; }\n            }\n            if (!changed) { skippedTrig2++; return; }\n        }\n        if (forceDue) { triggerForceTimes[d.id] = now; global.set('edge_triggerForceTimes', triggerForceTimes); }\n        if (lastGoodTags[d.id]) {\n            var newVals = {};\n            lastGoodTags[d.id].forEach(function (v) { newVals[v.tag_id] = v.raw_value; });\n            triggerLastRaw[d.id] = newVals;\n            global.set('edge_triggerLastRaw', triggerLastRaw);\n        }\n    }\n    // Per-device scan interval\n    var dInt = d.scanIntervalMs || 1000;\n    var dLast = deviceLastScan[d.id] || 0;\n    if (now - dLast < dInt) { skippedTrig1 = (skippedTrig1 || 0) + 1; return; }\n    deviceLastScan[d.id] = now;\n\n    activeDevices.push({\n        id: d.id, deviceName: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        protocolParams: d.protocolParams || {},\n        tags: d.tags || [],\n        timeout: d.commTimeoutMs || d.timeout || 3000,\n        maxRetries: d.retryCount || d.maxRetries || 2,\n        retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n        triggerKind: d.triggerKind || 1\n    });\n});\n\nglobal.set('edge_deviceLastScan', deviceLastScan);\n\nif (activeDevices.length === 0) {\n    var st = devices.length + ' devs';\n    if (skippedTrig2 > 0) st += ' (' + skippedTrig2 + ' unchanged)';\n    if (skippedTrig1 > 0) st += ' (' + skippedTrig1 + ' not-due)';\n    if (skippedHandshake > 0) st += ' (' + skippedHandshake + ' wait-trigger)';\n    node.status({ fill: 'green', shape: 'dot', text: st });\n    return null;\n}\n\nreturn activeDevices.map(function (d) { return { payload: d }; });",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 380,
+          "y": 320,
+          "wires": [
+            [
+              "fn-v10-router"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-router",
+          "type": "function",
+          "z": "tab-v10-phase3",
+          "name": "comType 分流",
+          "func": "// === comType 分流: MC_Protocol → Output1, Modbus_TCP → Output2 ===\nvar dev = msg.payload;\nif (!dev || !dev.comType) { return null; }\n\nif (dev.comType === 'Modbus_TCP') {\n    return [null, { payload: dev }];\n}\n// Default: MC_Protocol or any unrecognized → MC driver\nreturn [{ payload: dev }, null];",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 580,
+          "y": 320,
+          "wires": [
+            [
+              "sub-v10-mc-driver"
+            ],
+            [
+              "sub-v10-modbus-driver"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-mc-driver",
+          "type": "subflow:sf-mc-driver",
+          "z": "tab-v10-phase3",
+          "name": "MC协议驱动",
+          "x": 800,
+          "y": 280,
+          "wires": [
+            [
+              "sub-v10-data-processor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-modbus-driver",
+          "type": "subflow:sf-modbus-driver",
+          "z": "tab-v10-phase3",
+          "name": "Modbus TCP驱动",
+          "x": 800,
+          "y": 360,
+          "wires": [
+            [
+              "sub-v10-data-processor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-data-processor",
+          "type": "subflow:sf-data-processor",
+          "z": "tab-v10-phase3",
+          "name": "数据管道",
+          "x": 1060,
+          "y": 320,
+          "wires": [
+            [
+              "mqtt-v10-data"
+            ],
+            [
+              "sub-v10-pg-writer"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-data",
+          "type": "mqtt out",
+          "z": "tab-v10-phase3",
+          "name": "MQTT实时数据 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "false",
+          "broker": "cfg-mqtt-v10",
+          "x": 1320,
+          "y": 280,
+          "wires": []
+        },
+        {
+          "id": "sub-v10-pg-writer",
+          "type": "subflow:sf-pg-writer",
+          "z": "tab-v10-phase3",
+          "name": "PG异步写入",
+          "x": 1320,
+          "y": 360,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-handshake",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== 3. 握手触发 (triggerKind=0) =====",
+          "info": "MQTT Subscribe edgelink-v10/trigger/scan/# → 设 edge_handshakeFlags[deviceId]",
+          "x": 120,
+          "y": 460,
+          "wires": []
+        },
+        {
+          "id": "mqtt-v10-handshake",
+          "type": "mqtt in",
+          "z": "tab-v10-phase3",
+          "name": "握手触发订阅 v10",
+          "topic": "edgelink-v10/trigger/scan/#",
+          "qos": "1",
+          "broker": "cfg-mqtt-v10",
+          "x": 160,
+          "y": 520,
+          "wires": [
+            [
+              "fn-v10-handshake"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-handshake",
+          "type": "function",
+          "z": "tab-v10-phase3",
+          "name": "解析握手触发",
+          "func": "var deviceId = 0;\ntry {\n    var p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    deviceId = p.deviceId || 0;\n} catch (e) {\n    var m = (msg.topic || '').match(/edgelink-v10\\/trigger\\/scan\\/(\\d+)/);\n    if (m) deviceId = parseInt(m[1]) || 0;\n}\nif (deviceId > 0) {\n    var flags = global.get('edge_handshakeFlags') || {};\n    flags[deviceId] = true;\n    global.set('edge_handshakeFlags', flags);\n    if (global.get('edge_debug')) node.warn('[Handshake] Triggered scan for device ' + deviceId);\n}\nreturn null;",
+          "outputs": 0,
+          "noerr": 0,
+          "libs": [],
+          "x": 380,
+          "y": 520,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-debug",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== Debug (默认关闭) =====",
+          "info": "",
+          "x": 120,
+          "y": 600,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-scheduler-out",
+          "type": "debug",
+          "z": "tab-v10-phase3",
+          "name": "1. 调度器输出",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 580,
+          "y": 260,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-router-out",
+          "type": "debug",
+          "z": "tab-v10-phase3",
+          "name": "2. 路由分流",
+          "active": false,
+          "console": false,
+          "complete": "payload.comType",
+          "targetType": "msg",
+          "x": 800,
+          "y": 440,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-monitor",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== 4. 监控管线 (30s心跳 + device-comm + PG统计 + 401reauth) =====",
+          "info": "sf-monitor 30s: HTTP心跳 + MQTT心跳 + 消费edge_commPending + PG统计上报 + 401检测→reauth",
+          "x": 120,
+          "y": 680,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-monitor",
+          "type": "inject",
+          "z": "tab-v10-phase3",
+          "name": "30秒监控触发",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "30",
+          "once": true,
+          "onceDelay": 30,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 740,
+          "wires": [
+            [
+              "sub-v10-monitor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-monitor",
+          "type": "subflow:sf-monitor",
+          "z": "tab-v10-phase3",
+          "name": "监控与心跳",
+          "x": 420,
+          "y": 740,
+          "wires": [
+            [
+              "mqtt-v10-heartbeat"
+            ],
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-heartbeat",
+          "type": "mqtt out",
+          "z": "tab-v10-phase3",
+          "name": "MQTT心跳 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "false",
+          "broker": "cfg-mqtt-v10",
+          "x": 700,
+          "y": 720,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-api",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "===== 5. 本地监控 HTTP API (sf-local-api, 独立子Flow) =====",
+          "info": "6端点 /api/v10/monitor/: status, device/:id, alerts, history, alarms/clear, config/refresh→reauth\n⚠ http-in全局注册, 只能拖1个实例",
+          "x": 120,
+          "y": 820,
+          "wires": []
+        },
+        {
+          "id": "sub-v10-local-api",
+          "type": "subflow:sf-local-api",
+          "z": "tab-v10-phase3",
+          "name": "本地监控API",
+          "x": 420,
+          "y": 880,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "cfg-mqtt-v10",
+          "type": "mqtt-broker",
+          "name": "EMQX v10",
+          "broker": "127.0.0.1",
+          "port": "1883",
+          "clientid": "edgelink-v10-nodered",
+          "autoConnect": true,
+          "usetls": false,
+          "protocolVersion": "4",
+          "keepalive": "30",
+          "cleansession": true,
+          "birthTopic": "",
+          "birthQos": "0",
+          "birthRetain": "false",
+          "birthPayload": "",
+          "closeTopic": "",
+          "closeQos": "0",
+          "closeRetain": "false",
+          "closePayload": "",
+          "willTopic": "edgelink/alarm/node_offline/UNKNOWN",
+          "willQos": "1",
+          "willRetain": "false",
+          "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":\"UNKNOWN\",\"host_pc_ip\":\"UNKNOWN\",\"msg\":\"[LWT] EdgeLink v10 Node-RED disconnected\"}"
+        },
+        {
+          "id": "cmt-v10-footer",
+          "type": "comment",
+          "z": "tab-v10-phase3",
+          "name": "=== EdgeLink v10 Phase 3 完成 | 7子Flow ===  ",
+          "info": "✓ sf-config-manager: 后端登录 + 设备发现\n✓ fn-scheduler: triggerKind过滤 + 单设备输出\n✓ fn-router: comType分流 (MC/Modbus)\n✓ sf-mc-driver: MC协议3E/4E + 模拟模式\n✓ sf-modbus-driver: Modbus TCP + 字节序 + 模拟模式\n✓ sf-data-processor: 换算/死区/质量码/双输出\n✓ sf-pg-writer: 事件驱动队列 + 自适应批量\n✓ Handshake Trigger: MQTT握手触发\n\n✓\n✓ sf-monitor (Phase 3): 30s心跳 + device-comm + 告警 + HTTP API",
+          "x": 120,
+          "y": 960,
+          "wires": []
+        }
+      ]
+    },
+    "main_flow_phase2": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "tab-v10-phase2",
+          "type": "tab",
+          "label": "EdgeLink v10 采集",
+          "disabled": false,
+          "info": "EdgeLink v10 主编排流程 — Phase 2: 完整采集链路\n\n=== v10 最终架构 ===\nConfig Pipeline:\n  inject(2s/300s) → sf-config-manager → mqtt-out(node online) + global.edge_devices\n\nCollection Pipeline:\n  inject(1s) → fn-scheduler (读 edge_devices, triggerKind过滤)\n    → fn-router (按 comType 分流)\n      → MC_Protocol → sf-mc-driver → sf-data-processor\n      → Modbus_TCP  → sf-modbus-driver → sf-data-processor\n                        ↓\n              ┌────────┼────────┐\n              ↓        ↓\n         mqtt-out(data)  sf-pg-writer\n\nHandshake Trigger:\n  mqtt-in(edgelink-v10/trigger/scan/#) → fn-handshake\n\nv10 MQTT Topic 前缀: edgelink-v10/\nv10 全局变量前缀: edge_"
+        },
+        {
+          "id": "cmt-v10-config",
+          "type": "comment",
+          "z": "tab-v10-phase2",
+          "name": "===== 1. 配置管线 (启动 + 5min刷新) =====",
+          "info": "sf-config-manager: IP检测 → JWT登录 → nodeId注册 → 拉取点位 → 分组 → 筛选 → 输出配置 + MQTT上线",
+          "x": 120,
+          "y": 40,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-init",
+          "type": "inject",
+          "z": "tab-v10-phase2",
+          "name": "启动触发 (2s)",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "once": true,
+          "onceDelay": 2,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 100,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "inj-v10-config-refresh",
+          "type": "inject",
+          "z": "tab-v10-phase2",
+          "name": "5分钟刷新",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "300",
+          "once": false,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 160,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-config-mgr",
+          "type": "subflow:sf-config-manager",
+          "z": "tab-v10-phase2",
+          "name": "配置管理中心",
+          "x": 400,
+          "y": 120,
+          "wires": [
+            [
+              "fn-v10-config-ready"
+            ],
+            [
+              "mqtt-v10-node-online"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-config-ready",
+          "type": "function",
+          "z": "tab-v10-phase2",
+          "name": "配置就绪",
+          "func": "var DEBUG = global.get('edge_debug') || false;\nvar devices = global.get('edge_devices') || [];\nif (DEBUG) node.warn('[Main] Config ready, ' + devices.length + ' devices');\nnode.status({ fill: 'green', shape: 'dot', text: devices.length + ' devs configured' });\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 660,
+          "y": 120,
+          "wires": []
+        },
+        {
+          "id": "mqtt-v10-node-online",
+          "type": "mqtt out",
+          "z": "tab-v10-phase2",
+          "name": "节点上线 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "true",
+          "broker": "cfg-mqtt-v10",
+          "x": 660,
+          "y": 180,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-collect",
+          "type": "comment",
+          "z": "tab-v10-phase2",
+          "name": "===== 2. 采集管线 (1s, 协议可插拔) =====",
+          "info": "调度器 → comType分流 → MC Driver / Modbus Driver → Data Processor → MQTT数据 + PG写入\n\nP0修正:\n- triggerKind=2 过滤保留在调度器(本Flow)\n- 字段平铺, 使用 id 不是 deviceId\n- device-comm 仅状态变化时推入 edge_commPending",
+          "x": 120,
+          "y": 260,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-scan",
+          "type": "inject",
+          "z": "tab-v10-phase2",
+          "name": "1秒采集触发",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "1",
+          "once": true,
+          "onceDelay": 10,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 320,
+          "wires": [
+            [
+              "fn-v10-scheduler"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-scheduler",
+          "type": "function",
+          "z": "tab-v10-phase2",
+          "name": "调度器: 过滤+分流",
+          "func": "// === v10 调度器: 读 edge_devices, triggerKind过滤, 输出单设备消息 ===\nvar configReady = global.get('edge_configReady') || false;\nif (!configReady) { node.status({ fill: 'grey', shape: 'dot', text: 'wait config' }); return null; }\n\nvar devices = global.get('edge_devices') || [];\nif (devices.length === 0) { node.status({ fill: 'grey', shape: 'dot', text: 'no devices' }); return null; }\n\nvar now = Date.now();\nvar deviceLastScan = global.get('edge_deviceLastScan') || {};\n\nvar DEBUG = global.get('edge_debug') || false;\nvar handshakeFlags = global.get('edge_handshakeFlags') || {};\nvar triggerLastRaw = global.get('edge_triggerLastRaw') || {};\nvar triggerForceTimes = global.get('edge_triggerForceTimes') || {};\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\n\nvar activeDevices = [];\nvar skippedTrig2 = 0;\nvar skippedTrig1 = 0;\nvar skippedHandshake = 0;\n\ndevices.forEach(function (d) {\n    if (d.triggerKind === 0) {\n        if (!handshakeFlags[d.id]) { skippedHandshake++; return; }\n        delete handshakeFlags[d.id];\n        global.set('edge_handshakeFlags', handshakeFlags);\n        // Handshake-triggered: bypass interval, collect immediately\n        deviceLastScan[d.id] = now;\n        activeDevices.push({\n            id: d.id, deviceName: d.deviceName, comType: d.comType,\n            plcIp: d.plcIp, plcPort: d.plcPort,\n            protocolParams: d.protocolParams || {},\n            tags: d.tags || [],\n            timeout: d.commTimeoutMs || d.timeout || 3000,\n            maxRetries: d.retryCount || d.maxRetries || 2,\n            retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n            triggerKind: d.triggerKind || 1\n        });\n        return;\n    }\n    if (d.triggerKind === 2) {\n        var forceDue = !triggerForceTimes[d.id] || (now - triggerForceTimes[d.id] >= 5000);\n        if (!forceDue && lastGoodTags[d.id]) {\n            var prevVals = triggerLastRaw[d.id] || {};\n            var changed = false;\n            for (var i = 0; i < lastGoodTags[d.id].length; i++) {\n                if (prevVals[lastGoodTags[d.id][i].tag_id] !== lastGoodTags[d.id][i].raw_value) { changed = true; break; }\n            }\n            if (!changed) { skippedTrig2++; return; }\n        }\n        if (forceDue) { triggerForceTimes[d.id] = now; global.set('edge_triggerForceTimes', triggerForceTimes); }\n        if (lastGoodTags[d.id]) {\n            var newVals = {};\n            lastGoodTags[d.id].forEach(function (v) { newVals[v.tag_id] = v.raw_value; });\n            triggerLastRaw[d.id] = newVals;\n            global.set('edge_triggerLastRaw', triggerLastRaw);\n        }\n    }\n    // Per-device scan interval\n    var dInt = d.scanIntervalMs || 1000;\n    var dLast = deviceLastScan[d.id] || 0;\n    if (now - dLast < dInt) { skippedTrig1 = (skippedTrig1 || 0) + 1; return; }\n    deviceLastScan[d.id] = now;\n\n    activeDevices.push({\n        id: d.id, deviceName: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        protocolParams: d.protocolParams || {},\n        tags: d.tags || [],\n        timeout: d.commTimeoutMs || d.timeout || 3000,\n        maxRetries: d.retryCount || d.maxRetries || 2,\n        retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n        triggerKind: d.triggerKind || 1\n    });\n});\n\nglobal.set('edge_deviceLastScan', deviceLastScan);\n\nif (activeDevices.length === 0) {\n    var st = devices.length + ' devs';\n    if (skippedTrig2 > 0) st += ' (' + skippedTrig2 + ' unchanged)';\n    if (skippedTrig1 > 0) st += ' (' + skippedTrig1 + ' not-due)';\n    if (skippedHandshake > 0) st += ' (' + skippedHandshake + ' wait-trigger)';\n    node.status({ fill: 'green', shape: 'dot', text: st });\n    return null;\n}\n\nreturn activeDevices.map(function (d) { return { payload: d }; });",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 380,
+          "y": 320,
+          "wires": [
+            [
+              "fn-v10-router"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-router",
+          "type": "function",
+          "z": "tab-v10-phase2",
+          "name": "comType 分流",
+          "func": "// === comType 分流: MC_Protocol → Output1, Modbus_TCP → Output2 ===\nvar dev = msg.payload;\nif (!dev || !dev.comType) { return null; }\n\nif (dev.comType === 'Modbus_TCP') {\n    return [null, { payload: dev }];\n}\n// Default: MC_Protocol or any unrecognized → MC driver\nreturn [{ payload: dev }, null];",
+          "outputs": 2,
+          "noerr": 0,
+          "libs": [],
+          "x": 580,
+          "y": 320,
+          "wires": [
+            [
+              "sub-v10-mc-driver"
+            ],
+            [
+              "sub-v10-modbus-driver"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-mc-driver",
+          "type": "subflow:sf-mc-driver",
+          "z": "tab-v10-phase2",
+          "name": "MC协议驱动",
+          "x": 800,
+          "y": 280,
+          "wires": [
+            [
+              "sub-v10-data-processor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-modbus-driver",
+          "type": "subflow:sf-modbus-driver",
+          "z": "tab-v10-phase2",
+          "name": "Modbus TCP驱动",
+          "x": 800,
+          "y": 360,
+          "wires": [
+            [
+              "sub-v10-data-processor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-data-processor",
+          "type": "subflow:sf-data-processor",
+          "z": "tab-v10-phase2",
+          "name": "数据管道",
+          "x": 1060,
+          "y": 320,
+          "wires": [
+            [
+              "mqtt-v10-data"
+            ],
+            [
+              "sub-v10-pg-writer"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-data",
+          "type": "mqtt out",
+          "z": "tab-v10-phase2",
+          "name": "MQTT实时数据 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "false",
+          "broker": "cfg-mqtt-v10",
+          "x": 1320,
+          "y": 280,
+          "wires": []
+        },
+        {
+          "id": "sub-v10-pg-writer",
+          "type": "subflow:sf-pg-writer",
+          "z": "tab-v10-phase2",
+          "name": "PG异步写入",
+          "x": 1320,
+          "y": 360,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-handshake",
+          "type": "comment",
+          "z": "tab-v10-phase2",
+          "name": "===== 3. 握手触发 (triggerKind=0) =====",
+          "info": "MQTT Subscribe edgelink-v10/trigger/scan/# → 设 edge_handshakeFlags[deviceId]",
+          "x": 120,
+          "y": 460,
+          "wires": []
+        },
+        {
+          "id": "mqtt-v10-handshake",
+          "type": "mqtt in",
+          "z": "tab-v10-phase2",
+          "name": "握手触发订阅 v10",
+          "topic": "edgelink-v10/trigger/scan/#",
+          "qos": "1",
+          "broker": "cfg-mqtt-v10",
+          "x": 160,
+          "y": 520,
+          "wires": [
+            [
+              "fn-v10-handshake"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-handshake",
+          "type": "function",
+          "z": "tab-v10-phase2",
+          "name": "解析握手触发",
+          "func": "var deviceId = 0;\ntry {\n    var p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    deviceId = p.deviceId || 0;\n} catch (e) {\n    var m = (msg.topic || '').match(/edgelink-v10\\/trigger\\/scan\\/(\\d+)/);\n    if (m) deviceId = parseInt(m[1]) || 0;\n}\nif (deviceId > 0) {\n    var flags = global.get('edge_handshakeFlags') || {};\n    flags[deviceId] = true;\n    global.set('edge_handshakeFlags', flags);\n    if (global.get('edge_debug')) node.warn('[Handshake] Triggered scan for device ' + deviceId);\n}\nreturn null;",
+          "outputs": 0,
+          "noerr": 0,
+          "libs": [],
+          "x": 380,
+          "y": 520,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-debug",
+          "type": "comment",
+          "z": "tab-v10-phase2",
+          "name": "===== Debug (默认关闭) =====",
+          "info": "",
+          "x": 120,
+          "y": 600,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-scheduler-out",
+          "type": "debug",
+          "z": "tab-v10-phase2",
+          "name": "1. 调度器输出",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 580,
+          "y": 260,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-router-out",
+          "type": "debug",
+          "z": "tab-v10-phase2",
+          "name": "2. 路由分流",
+          "active": false,
+          "console": false,
+          "complete": "payload.comType",
+          "targetType": "msg",
+          "x": 800,
+          "y": 440,
+          "wires": []
+        },
+        {
+          "id": "cfg-mqtt-v10",
+          "type": "mqtt-broker",
+          "name": "EMQX v10",
+          "broker": "127.0.0.1",
+          "port": "1883",
+          "clientid": "edgelink-v10-nodered",
+          "autoConnect": true,
+          "usetls": false,
+          "protocolVersion": "4",
+          "keepalive": "30",
+          "cleansession": true,
+          "birthTopic": "",
+          "birthQos": "0",
+          "birthRetain": "false",
+          "birthPayload": "",
+          "closeTopic": "",
+          "closeQos": "0",
+          "closeRetain": "false",
+          "closePayload": "",
+          "willTopic": "edgelink/alarm/node_offline/UNKNOWN",
+          "willQos": "1",
+          "willRetain": "false",
+          "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":\"UNKNOWN\",\"host_pc_ip\":\"UNKNOWN\",\"msg\":\"[LWT] EdgeLink v10 Node-RED disconnected\"}"
+        },
+        {
+          "id": "cmt-v10-footer",
+          "type": "comment",
+          "z": "tab-v10-phase2",
+          "name": "=== Phase 2 完成 | 下一步: Phase 3 (sf-monitor) ===",
+          "info": "✓ sf-config-manager: 后端登录 + 设备发现\n✓ fn-scheduler: triggerKind过滤 + 单设备输出\n✓ fn-router: comType分流 (MC/Modbus)\n✓ sf-mc-driver: MC协议3E/4E + 模拟模式\n✓ sf-modbus-driver: Modbus TCP + 字节序 + 模拟模式\n✓ sf-data-processor: 换算/死区/质量码/双输出\n✓ sf-pg-writer: 事件驱动队列 + 自适应批量\n✓ Handshake Trigger: MQTT握手触发\n\n待集成 (Phase 3):\n□ sf-monitor: 30s心跳 + device-comm + 告警 + HTTP API",
+          "x": 120,
+          "y": 660,
+          "wires": []
+        }
+      ]
+    },
+    "main_flow_phase1c": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "tab-v10-phase1c",
+          "type": "tab",
+          "label": "EdgeLink v10 采集",
+          "disabled": false,
+          "info": "EdgeLink v10 主编排流程 — Phase 1c: 闭环\n\nConfig Pipeline:\n  inject(2s/300s) → sf-config-manager → mqtt-out(node online)\n  sf-config-manager 写 global.edge_devices\n\nCollection Pipeline:\n  inject(1s) → fn-scheduler (读 edge_devices, triggerKind过滤)\n    → sf-mc-driver → sf-data-processor → mqtt-out(data)\n\nHandshake Trigger:\n  mqtt-in(edgelink-v10/trigger/scan/#) → fn-handshake → 设 edge_handshakeFlags\n\nv10 全局变量前缀: edge_\nv10 MQTT 主题前缀: edgelink-v10/"
+        },
+        {
+          "id": "cmt-v10-config",
+          "type": "comment",
+          "z": "tab-v10-phase1c",
+          "name": "===== 配置管线 (启动 + 5min刷新) =====",
+          "info": "sf-config-manager 负责:\n- IP检测 (跳过虚拟网卡)\n- JWT登录\n- nodeId反查/注册\n- 拉取全局点位, 按deviceId分组, 按hostPcIp筛选\n- 发布MQTT节点上线消息\n- 写入 global.edge_devices, edge_tagConfigs, edge_jwt 等",
+          "x": 120,
+          "y": 40,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-init",
+          "type": "inject",
+          "z": "tab-v10-phase1c",
+          "name": "启动触发 (2s延迟)",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "once": true,
+          "onceDelay": 2,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 100,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "inj-v10-config-refresh",
+          "type": "inject",
+          "z": "tab-v10-phase1c",
+          "name": "5分钟刷新配置",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "300",
+          "once": false,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 160,
+          "wires": [
+            [
+              "sub-v10-config-mgr"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-config-mgr",
+          "type": "subflow:sf-config-manager",
+          "z": "tab-v10-phase1c",
+          "name": "配置管理中心",
+          "x": 420,
+          "y": 120,
+          "wires": [
+            [
+              "fn-v10-config-relay"
+            ],
+            [
+              "mqtt-v10-node-online"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-config-relay",
+          "type": "function",
+          "z": "tab-v10-phase1c",
+          "name": "配置就绪 → 触发首次采集",
+          "func": "// 配置完成后通知调度器可以开始采集\n// msg.payload 包含 config 信息，调度器从 edge_devices 读取\nvar DEBUG = global.get('edge_debug') || false;\nif (DEBUG) node.warn('[Main] Config ready, devices=' + (global.get('edge_devices') || []).length);\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 660,
+          "y": 100,
+          "wires": [
+            [
+              "fn-v10-scheduler"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-node-online",
+          "type": "mqtt out",
+          "z": "tab-v10-phase1c",
+          "name": "发布节点上线 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "true",
+          "broker": "cfg-mqtt-v10",
+          "x": 660,
+          "y": 160,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-collect",
+          "type": "comment",
+          "z": "tab-v10-phase1c",
+          "name": "===== 采集管线 (1s, 协议可插拔) =====",
+          "info": "fn-scheduler: 从 edge_devices 读设备列表, 应用 triggerKind 过滤, 输出单设备消息\nsf-mc-driver: MC协议 3E/4E帧, TCP通信\nsf-data-processor: 换算/死区/质量码/双输出 (MQTT + PG)",
+          "x": 120,
+          "y": 240,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-scan",
+          "type": "inject",
+          "z": "tab-v10-phase1c",
+          "name": "1秒采集触发",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "1",
+          "once": true,
+          "onceDelay": 10,
+          "payload": "{}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 300,
+          "wires": [
+            [
+              "fn-v10-scheduler"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-scheduler",
+          "type": "function",
+          "z": "tab-v10-phase1c",
+          "name": "调度器: 过滤+分流",
+          "func": "// === v10 调度器: 读 edge_devices, triggerKind过滤, 输出单设备消息 ===\nvar configReady = global.get('edge_configReady') || false;\nif (!configReady) { node.status({ fill: 'grey', shape: 'dot', text: 'wait config' }); return null; }\n\nvar devices = global.get('edge_devices') || [];\nif (devices.length === 0) { node.status({ fill: 'grey', shape: 'dot', text: 'no devices' }); return null; }\n\nvar now = Date.now();\nvar deviceLastScan = global.get('edge_deviceLastScan') || {};\n\nvar DEBUG = global.get('edge_debug') || false;\nvar handshakeFlags = global.get('edge_handshakeFlags') || {};\nvar triggerLastRaw = global.get('edge_triggerLastRaw') || {};\nvar triggerForceTimes = global.get('edge_triggerForceTimes') || {};\nvar lastGoodTags = global.get('edge_lastGoodTags') || {};\n\nvar activeDevices = [];\nvar skippedTrig2 = 0;\nvar skippedTrig1 = 0;\nvar skippedHandshake = 0;\n\ndevices.forEach(function (d) {\n    if (d.triggerKind === 0) {\n        if (!handshakeFlags[d.id]) { skippedHandshake++; return; }\n        delete handshakeFlags[d.id];\n        global.set('edge_handshakeFlags', handshakeFlags);\n        // Handshake-triggered: bypass interval, collect immediately\n        deviceLastScan[d.id] = now;\n        activeDevices.push({\n            id: d.id, deviceName: d.deviceName, comType: d.comType,\n            plcIp: d.plcIp, plcPort: d.plcPort,\n            protocolParams: d.protocolParams || {},\n            tags: d.tags || [],\n            timeout: d.commTimeoutMs || d.timeout || 3000,\n            maxRetries: d.retryCount || d.maxRetries || 2,\n            retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n            triggerKind: d.triggerKind || 1\n        });\n        return;\n    }\n    if (d.triggerKind === 2) {\n        var forceDue = !triggerForceTimes[d.id] || (now - triggerForceTimes[d.id] >= 5000);\n        if (!forceDue && lastGoodTags[d.id]) {\n            var prevVals = triggerLastRaw[d.id] || {};\n            var changed = false;\n            for (var i = 0; i < lastGoodTags[d.id].length; i++) {\n                if (prevVals[lastGoodTags[d.id][i].tag_id] !== lastGoodTags[d.id][i].raw_value) { changed = true; break; }\n            }\n            if (!changed) { skippedTrig2++; return; }\n        }\n        if (forceDue) { triggerForceTimes[d.id] = now; global.set('edge_triggerForceTimes', triggerForceTimes); }\n        if (lastGoodTags[d.id]) {\n            var newVals = {};\n            lastGoodTags[d.id].forEach(function (v) { newVals[v.tag_id] = v.raw_value; });\n            triggerLastRaw[d.id] = newVals;\n            global.set('edge_triggerLastRaw', triggerLastRaw);\n        }\n    }\n    // Per-device scan interval\n    var dInt = d.scanIntervalMs || 1000;\n    var dLast = deviceLastScan[d.id] || 0;\n    if (now - dLast < dInt) { skippedTrig1 = (skippedTrig1 || 0) + 1; return; }\n    deviceLastScan[d.id] = now;\n\n    activeDevices.push({\n        id: d.id, deviceName: d.deviceName, comType: d.comType,\n        plcIp: d.plcIp, plcPort: d.plcPort,\n        protocolParams: d.protocolParams || {},\n        tags: d.tags || [],\n        timeout: d.commTimeoutMs || d.timeout || 3000,\n        maxRetries: d.retryCount || d.maxRetries || 2,\n        retryInterval: d.retryIntervalMs || d.retryInterval || 300,\n        triggerKind: d.triggerKind || 1\n    });\n});\n\nglobal.set('edge_deviceLastScan', deviceLastScan);\n\nif (activeDevices.length === 0) {\n    var st = devices.length + ' devs';\n    if (skippedTrig2 > 0) st += ' (' + skippedTrig2 + ' unchanged)';\n    if (skippedTrig1 > 0) st += ' (' + skippedTrig1 + ' not-due)';\n    if (skippedHandshake > 0) st += ' (' + skippedHandshake + ' wait-trigger)';\n    node.status({ fill: 'green', shape: 'dot', text: st });\n    return null;\n}\n\nreturn activeDevices.map(function (d) { return { payload: d }; });",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 400,
+          "y": 300,
+          "wires": [
+            [
+              "sub-v10-mc-driver"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-mc-driver",
+          "type": "subflow:sf-mc-driver",
+          "z": "tab-v10-phase1c",
+          "name": "MC协议驱动",
+          "x": 660,
+          "y": 300,
+          "wires": [
+            [
+              "sub-v10-data-processor"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-data-processor",
+          "type": "subflow:sf-data-processor",
+          "z": "tab-v10-phase1c",
+          "name": "数据管道",
+          "x": 900,
+          "y": 300,
+          "wires": [
+            [
+              "mqtt-v10-data"
+            ],
+            [
+              "dbg-v10-pg-records"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-data",
+          "type": "mqtt out",
+          "z": "tab-v10-phase1c",
+          "name": "MQTT实时数据 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "false",
+          "broker": "cfg-mqtt-v10",
+          "x": 1160,
+          "y": 280,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-handshake",
+          "type": "comment",
+          "z": "tab-v10-phase1c",
+          "name": "===== 握手触发 (triggerKind=0) =====",
+          "info": "MQTT Subscribe → fn-handshake 设 edge_handshakeFlags[deviceId]\n调度器每轮检查并消费该 flag",
+          "x": 120,
+          "y": 400,
+          "wires": []
+        },
+        {
+          "id": "mqtt-v10-handshake",
+          "type": "mqtt in",
+          "z": "tab-v10-phase1c",
+          "name": "握手触发订阅 v10",
+          "topic": "edgelink-v10/trigger/scan/#",
+          "qos": "1",
+          "broker": "cfg-mqtt-v10",
+          "x": 160,
+          "y": 460,
+          "wires": [
+            [
+              "fn-v10-handshake"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-handshake",
+          "type": "function",
+          "z": "tab-v10-phase1c",
+          "name": "解析握手触发",
+          "func": "// MQTT payload: {\"deviceId\":23} → 设置 edge_handshakeFlags[23]\nvar deviceId = 0;\ntry {\n    var p = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    deviceId = p.deviceId || 0;\n} catch (e) {\n    var m = (msg.topic || '').match(/edgelink-v10\\/trigger\\/scan\\/(\\d+)/);\n    if (m) deviceId = parseInt(m[1]) || 0;\n}\nif (deviceId > 0) {\n    var flags = global.get('edge_handshakeFlags') || {};\n    flags[deviceId] = true;\n    global.set('edge_handshakeFlags', flags);\n    if (global.get('edge_debug')) node.warn('[Handshake] Triggered scan for device ' + deviceId);\n}\nreturn null;",
+          "outputs": 0,
+          "noerr": 0,
+          "libs": [],
+          "x": 400,
+          "y": 460,
+          "wires": []
+        },
+        {
+          "id": "cmt-v10-debug",
+          "type": "comment",
+          "z": "tab-v10-phase1c",
+          "name": "===== Debug 输出 (验证后关闭) =====",
+          "info": "",
+          "x": 120,
+          "y": 540,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-scheduler",
+          "type": "debug",
+          "z": "tab-v10-phase1c",
+          "name": "1. 调度器输出",
+          "active": false,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 660,
+          "y": 360,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-pg-records",
+          "type": "debug",
+          "z": "tab-v10-phase1c",
+          "name": "2. PG记录",
+          "active": true,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 1160,
+          "y": 340,
+          "wires": []
+        },
+        {
+          "id": "cfg-mqtt-v10",
+          "type": "mqtt-broker",
+          "name": "EMQX v10",
+          "broker": "127.0.0.1",
+          "port": "1883",
+          "clientid": "edgelink-v10-nodered",
+          "autoConnect": true,
+          "usetls": false,
+          "protocolVersion": "4",
+          "keepalive": "30",
+          "cleansession": true,
+          "birthTopic": "",
+          "birthQos": "0",
+          "birthRetain": "false",
+          "birthPayload": "",
+          "closeTopic": "",
+          "closeQos": "0",
+          "closeRetain": "false",
+          "closePayload": "",
+          "willTopic": "edgelink/alarm/node_offline/UNKNOWN",
+          "willQos": "1",
+          "willRetain": "false",
+          "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":\"UNKNOWN\",\"host_pc_ip\":\"UNKNOWN\",\"msg\":\"[LWT] EdgeLink v10 Node-RED disconnected\"}"
+        },
+        {
+          "id": "cmt-v10-footer",
+          "type": "comment",
+          "z": "tab-v10-phase1c",
+          "name": "=== Phase 1c 完成 | 下一步: Phase 2 (sf-modbus-driver + sf-pg-writer) ===",
+          "info": "已验证:\n✓ sf-config-manager → 后端登录 + 设备发现\n✓ fn-scheduler → triggerKind过滤 + 单设备输出\n✓ sf-mc-driver → MC协议TCP通信 + 模拟模式\n✓ sf-data-processor → 换算/死区/质量码/双输出\n\n待集成:\n□ sf-modbus-driver (Phase 2)\n□ sf-pg-writer (Phase 2)\n□ sf-monitor (Phase 3)",
+          "x": 120,
+          "y": 600,
+          "wires": []
+        }
+      ]
+    },
+    "main_flow_phase1a": {
+      "type": "node-red-flow",
+      "nodes": [
+        {
+          "id": "tab-v10-phase1a",
+          "type": "tab",
+          "label": "EdgeLink v10 采集",
+          "disabled": false,
+          "info": "EdgeLink v10 主编排流程 — Phase 1a: 最小闭环验证\n\n硬编码测试设备 → sf-mc-driver → sf-data-processor → MQTT\n不依赖后端，模拟模式验证数据格式。\n\n部署前设置 functionGlobalContext:\n  edge_simulationMode: true\n  edge_debug: true\n  edge_nodeId: 999\n  edge_hostPcIp: '127.0.0.1'\n  edge_tagConfigs: {}"
+        },
+        {
+          "id": "cmt-v10-init",
+          "type": "comment",
+          "z": "tab-v10-phase1a",
+          "name": "===== Phase 1a: 最小闭环 (硬编码设备 → MC驱动 → 数据管道 → MQTT) =====",
+          "info": "不依赖后端。\n\n验证目标:\n1. sf-mc-driver 模拟模式输出格式正确\n2. sf-data-processor 双输出正确\n3. MQTT消息 topic/payload 格式正确\n\n部署后观察 debug 面板和 MQTT 消息。",
+          "x": 120,
+          "y": 40,
+          "wires": []
+        },
+        {
+          "id": "inj-v10-scan",
+          "type": "inject",
+          "z": "tab-v10-phase1a",
+          "name": "1秒采集 (硬编码测试设备)",
+          "props": [
+            {
+              "p": "payload"
+            }
+          ],
+          "repeat": "1",
+          "once": true,
+          "onceDelay": 2,
+          "payload": "{\"id\":1,\"deviceName\":\"Test-PLC-1\",\"comType\":\"MC_Protocol\",\"plcIp\":\"127.0.0.1\",\"plcPort\":5007,\"protocolParams\":{\"mcFrame\":\"3E\",\"stationNo\":0,\"networkNo\":0},\"tags\":[{\"id\":101,\"addr\":100,\"regAddr\":\"D100\",\"regType\":\"D\",\"name\":\"温度\",\"dataType\":\"INT16\",\"tform\":\"linear\",\"slope\":0.1,\"offset\":0,\"unit\":\"℃\",\"deadband\":0.5,\"reportForceIntervalMs\":5000},{\"id\":102,\"addr\":101,\"regAddr\":\"D101\",\"regType\":\"D\",\"name\":\"压力\",\"dataType\":\"INT16\",\"tform\":\"none\",\"slope\":1,\"offset\":0,\"unit\":\"kPa\",\"deadband\":0,\"reportForceIntervalMs\":5000},{\"id\":103,\"addr\":10,\"regAddr\":\"X10\",\"regType\":\"X\",\"name\":\"启动信号\",\"dataType\":\"BOOL\",\"tform\":\"none\",\"slope\":1,\"offset\":0,\"unit\":\"\",\"deadband\":0,\"reportForceIntervalMs\":5000}],\"timeout\":3000,\"maxRetries\":2,\"retryInterval\":300,\"triggerKind\":1}",
+          "payloadType": "json",
+          "x": 160,
+          "y": 100,
+          "wires": [
+            [
+              "fn-v10-init-globals"
+            ]
+          ]
+        },
+        {
+          "id": "fn-v10-init-globals",
+          "type": "function",
+          "z": "tab-v10-phase1a",
+          "name": "初始化全局变量",
+          "func": "// === Phase 1a: 初始化 edge_ 全局变量 ===\nif (!global.get('edge_initialized')) {\n    global.set('edge_nodeId', global.get('edge_nodeId') || 999);\n    global.set('edge_hostPcIp', global.get('edge_hostPcIp') || '127.0.0.1');\n    global.set('edge_tagConfigs', global.get('edge_tagConfigs') || {\n        1: [\n            { id: 101, addr: 100, regAddr: 'D100', regType: 'D', name: '温度', tform: 'linear', slope: 0.1, offset: 0, unit: '℃', deadband: 0.5, reportForceIntervalMs: 5000 },\n            { id: 102, addr: 101, regAddr: 'D101', regType: 'D', name: '压力', tform: 'none', slope: 1, offset: 0, unit: 'kPa', deadband: 0, reportForceIntervalMs: 5000 },\n            { id: 103, addr: 10, regAddr: 'X10', regType: 'X', name: '启动信号', tform: 'none', slope: 1, offset: 0, unit: '', deadband: 0, reportForceIntervalMs: 5000 }\n        ]\n    });\n    global.set('edge_simulationMode', global.get('edge_simulationMode') !== undefined ? global.get('edge_simulationMode') : true);\n    global.set('edge_debug', global.get('edge_debug') !== undefined ? global.get('edge_debug') : true);\n    global.set('edge_commStatus', {});\n    global.set('edge_lastGoodTags', {});\n    global.set('edge_historyData', {});\n    global.set('edge_pg_queue', []);\n    global.set('edge_pg_success_count', 0);\n    global.set('edge_commPending', []);\n    global.set('edge_lastBadSend', {});\n    global.set('edge_handshakeFlags', {});\n    global.set('edge_initialized', true);\n    node.warn('[V10-Main] Globals initialized, simulationMode=' + global.get('edge_simulationMode'));\n}\n\n// Pass device payload to MC driver\nreturn msg;",
+          "outputs": 1,
+          "noerr": 0,
+          "libs": [],
+          "x": 400,
+          "y": 100,
+          "wires": [
+            [
+              "sub-v10-mc-driver"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-mc-driver",
+          "type": "subflow:sf-mc-driver",
+          "z": "tab-v10-phase1a",
+          "name": "MC协议驱动",
+          "x": 640,
+          "y": 100,
+          "wires": [
+            [
+              "sub-v10-data-processor",
+              "dbg-v10-driver-out"
+            ]
+          ]
+        },
+        {
+          "id": "sub-v10-data-processor",
+          "type": "subflow:sf-data-processor",
+          "z": "tab-v10-phase1a",
+          "name": "数据管道",
+          "x": 880,
+          "y": 100,
+          "wires": [
+            [
+              "mqtt-v10-data",
+              "dbg-v10-mqtt-out"
+            ],
+            [
+              "dbg-v10-pg-out"
+            ]
+          ]
+        },
+        {
+          "id": "mqtt-v10-data",
+          "type": "mqtt out",
+          "z": "tab-v10-phase1a",
+          "name": "MQTT实时数据 v10",
+          "topic": "",
+          "qos": "1",
+          "retain": "false",
+          "broker": "cfg-mqtt-v10",
+          "x": 1140,
+          "y": 80,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-driver-out",
+          "type": "debug",
+          "z": "tab-v10-phase1a",
+          "name": "1. 驱动输出",
+          "active": true,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 880,
+          "y": 160,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-mqtt-out",
+          "type": "debug",
+          "z": "tab-v10-phase1a",
+          "name": "2. MQTT消息",
+          "active": true,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 1140,
+          "y": 140,
+          "wires": []
+        },
+        {
+          "id": "dbg-v10-pg-out",
+          "type": "debug",
+          "z": "tab-v10-phase1a",
+          "name": "3. PG记录",
+          "active": true,
+          "console": false,
+          "complete": "payload",
+          "targetType": "msg",
+          "x": 1140,
+          "y": 200,
+          "wires": []
+        },
+        {
+          "id": "cfg-mqtt-v10",
+          "type": "mqtt-broker",
+          "name": "EMQX v10",
+          "broker": "127.0.0.1",
+          "port": "1883",
+          "clientid": "edgelink-v10-nodered",
+          "autoConnect": true,
+          "usetls": false,
+          "protocolVersion": "4",
+          "keepalive": "30",
+          "cleansession": true,
+          "birthTopic": "",
+          "birthQos": "0",
+          "birthRetain": "false",
+          "birthPayload": "",
+          "closeTopic": "",
+          "closeQos": "0",
+          "closeRetain": "false",
+          "closePayload": "",
+          "willTopic": "edgelink/alarm/node_offline/999",
+          "willQos": "1",
+          "willRetain": "false",
+          "willPayload": "{\"alert_type\":\"NODE_OFFLINE\",\"node_id\":999,\"host_pc_ip\":\"127.0.0.1\",\"msg\":\"[LWT] EdgeLink v10 Node-RED disconnected\"}"
+        },
+        {
+          "id": "cmt-v10-status",
+          "type": "comment",
+          "z": "tab-v10-phase1a",
+          "name": "===== Debug 输出 (Phase 1a 默认开启，验证后关闭) =====",
+          "info": "1. 驱动输出: 查看标准化结果 { deviceId, success, data, ... }\n2. MQTT消息: 查看最终 topic + JSON payload\n3. PG记录: 查看 pgRecords 数组格式\n\n验证通过后将 active 改为 false。",
+          "x": 120,
+          "y": 160,
+          "wires": []
+        }
+      ]
+    },
+    "migration_guide": {
+      "type": "markdown",
+      "content": "# EdgeLink v9.1 → v10 迁移指南\n\n## 变更概述\n\nv9.1 的 50 节点单体 Flow 拆分为 **6 个子 Flow + 1 个主编排 Flow**。\n两个版本使用不同全局变量前缀，**可同时部署，互不干扰**。\n\n## 文件清单\n\n| 文件 | 用途 |\n|------|------|\n| `edgelink_v10_sf_config_manager.json` | 子Flow: 配置管理中心 |\n| `edgelink_v10_sf_mc_driver.json` | 子Flow: MC协议驱动 |\n| `edgelink_v10_sf_modbus_driver.json` | 子Flow: Modbus TCP驱动 |\n| `edgelink_v10_sf_data_processor.json` | 子Flow: 数据管道 |\n| `edgelink_v10_sf_pg_writer.json` | 子Flow: PG异步写入 |\n| `edgelink_v10_sf_monitor.json` | 子Flow: 监控与心跳 |\n| `edgelink_v10_main_flow_phase3.json` | 主编排Flow (完整版) |\n\n## 全局变量映射\n\n| v9.1 (`mcSim_`) | v10 (`edge_`) | 说明 |\n|---|---|---|\n| `mcSim_jwtToken` | `edge_jwt` | JWT Token |\n| `mcSim_nodeId` | `edge_nodeId` | 采集节点ID |\n| `mcSim_devices` | `edge_devices` | 设备列表 |\n| `mcSim_tagConfigs` | `edge_tagConfigs` | 点位配置 {deviceId: [tags]} |\n| `mcSim_hostPcIp` | `edge_hostPcIp` | 本机IP |\n| `mcSim_configReady` | `edge_configReady` | 配置就绪标志 |\n| `mcSim_devCommStatus` | `edge_commStatus` | 通信状态 {deviceId: {consecutiveFails, lastState}} |\n| `mcSim_lastGoodTags` | `edge_lastGoodTags` | 最后好值 |\n| `mcSim_handshakeFlags` | `edge_handshakeFlags` | 握手触发标记 |\n| `mcSim_historyData` | `edge_historyData` | 历史缓存 |\n| `mcSim_recentAlerts` | `edge_recentAlerts` | 最近告警 |\n| `mcSim_lastAlarmTime` | `edge_lastAlarmTime` | 告警抑制时间 |\n| `mcSim_triggerLastRaw` | `edge_triggerLastRaw` | 变化触发上次值 |\n| `mcSim_triggerForceTimes` | `edge_triggerForceTimes` | 变化触发强制时间 |\n| `mcSim_reauthInProgress` | `edge_reauthInProgress` | 重登进行中 |\n| `mcSim_pgSuccessCount` | `edge_pg_success_count` | PG累计写入数 |\n| `mcSim_debug` | `edge_debug` | 调试开关 |\n| `mcSim_backendHost` | `edge_backendHost` | 后端地址 |\n| `mcSim_backendPort` | `edge_backendPort` | 后端端口 |\n| `mcSim_apiKey` | `edge_apiKey` | API Key |\n| `mcSim_simulationMode` | `edge_simulationMode` | 模拟模式 |\n| — | `edge_commPending` | ⭐新增: device-comm事件缓冲 |\n| — | `edge_pg_queue` | ⭐新增: PG写入队列 |\n| — | `edge_pg_writing` | ⭐新增: PG写入锁 |\n| — | `edge_config_manager_lock` | ⭐新增: 配置管理器单例锁 |\n| — | `edge_mc_driver_lock` | ⭐新增: MC驱动单例锁 |\n| — | `edge_modbus_driver_lock` | ⭐新增: Modbus驱动单例锁 |\n\n## MQTT Topic 变更\n\n| v9.1 Topic | v10 Topic |\n|---|---|\n| `edgelink/nodes/{nid}/status` | `edgelink-v10/nodes/{nid}/status` |\n| `edgelink/heartbeat/{nid}` | `edgelink-v10/heartbeat/{nid}` |\n| `edgelink/data/{nid}/{did}` | `edgelink-v10/data/{nid}/{did}` |\n| `edgelink/alarm/plc_offline/{did}` | `edgelink-v10/alarm/plc_offline/{did}` |\n| `edgelink/trigger/scan/#` | `edgelink-v10/trigger/scan/#` |\n\n## HTTP API 端点变更\n\nv10 本地监控 API 加 `/api/v10/` 前缀：\n\n| v9.1 | v10 |\n|---|---|\n| `GET /api/monitor/status` | `GET /api/v10/monitor/status` |\n| `GET /api/monitor/device/:id` | `GET /api/v10/monitor/device/:id` |\n| `GET /api/monitor/alerts` | `GET /api/v10/monitor/alerts` |\n| `GET /api/monitor/history/:did/:tid` | `GET /api/v10/monitor/history/:did/:tid` |\n| `POST /api/monitor/alarms/clear` | `POST /api/v10/monitor/alarms/clear` |\n| `POST /api/monitor/config/refresh` | `POST /api/v10/monitor/config/refresh` |\n\n## 部署步骤\n\n### Step 1: 配置 functionGlobalContext (settings.js)\n\n```javascript\nfunctionGlobalContext: {\n    // 基础模块 (必需)\n    http: require('http'),\n    net: require('net'),\n    os: require('os'),\n    process: process,\n\n    // v10 默认配置 (可选，有默认值)\n    edge_backendUser: 'admin',\n    edge_backendPass: '',\n    edge_apiKey: '',\n    edge_backendHost: '127.0.0.1',\n    edge_backendPort: 9099,\n    edge_debug: true,\n    edge_simulationMode: true,\n\n    // PG配置 (可选，仅 sf-pg-writer 使用)\n    // edge_pgHost: '127.0.0.1',\n    // edge_pgPort: 5432,\n    // edge_pgDatabase: 'postgres',\n    // edge_pgUser: 'postgres',\n    // edge_pgPassword: 'postgres',\n\n    // 自定义驱动注册表 (可选)\n    // edge_driverRegistry: { 'MC_Protocol': 'driver-mc-protocol', 'Modbus_TCP': 'driver-modbus-tcp' }\n}\n```\n\n### Step 2: 导入子 Flow\n\n按顺序导入 6 个子 Flow JSON 文件：\n1. Node-RED → Import → 选择 `edgelink_v10_sf_config_manager.json` → Import\n2. 重复以上步骤导入其余 5 个子 Flow\n3. 检查 Subflow 面板确认 6 个子 Flow 已注册\n\n### Step 3: 导入主 Flow\n\n1. Import → 选择 `edgelink_v10_main_flow_phase3.json` → Import\n2. 确认 MQTT broker 配置节点已关联到所有 mqtt-out/mqtt-in 节点\n\n### Step 4: 验证部署\n\n1. **Phase 1a 先验证**: 导入 `edgelink_v10_main_flow_phase1a.json`（硬编码设备，不依赖后端）\n   - 部署后观察 Debug 面板\n   - 验证 MC 驱动模拟模式输出格式\n   - 验证数据管道 MQTT topic 和 PG 记录格式\n\n2. **Phase 1c 验证**: 导入 `edgelink_v10_main_flow_phase1c.json`（需要后端）\n   - 验证 sf-config-manager 能登录后端\n   - 验证 edge_devices 数组正确填充\n   - 验证调度器正确过滤和输出\n\n3. **Phase 3 完整验证**:\n   - 全部 6 子 Flow + 主 Flow 部署\n   - 检查 MQTT 消息: `edgelink-v10/nodes/+/status`, `edgelink-v10/heartbeat/+`, `edgelink-v10/data/+/+`\n   - 检查 HTTP API: `GET http://127.0.0.1:1880/api/v10/monitor/status`\n\n### Step 5: 下线 v9.1\n\n验证 v10 稳定运行后：\n1. 在 Node-RED 中禁用 v9.1 的 tab\n2. 观察一段时间确认无异常\n3. 导出 v9.1 备份后删除\n\n## 共存测试\n\nv9.1 和 v10 使用不同前缀，可同时运行：\n\n```bash\n# 测试 v9.1 状态\ncurl http://127.0.0.1:1880/api/monitor/status\n\n# 测试 v10 状态\ncurl http://127.0.0.1:1880/api/v10/monitor/status\n```\n\n## 回滚步骤\n\n1. Node-RED → 禁用 v10 tab\n2. 重新启用 v9.1 tab\n3. Deploy\n4. 两个版本共享同一 MQTT broker 和后端 API，无数据冲突\n\n## v10 新增功能\n\n| 功能 | 说明 |\n|------|------|\n| **死区过滤 (Deadband)** | sf-data-processor 中按 `deadband` 字段过滤，减少 70% 无效 MQTT |\n| **Modbus 字节序** | ABCD/BADC/CDAB/DCBA，由 `protocolParams.byteOrder` 控制 |\n| **单例锁** | 所有子 Flow 60s 过期单例锁，防重复部署 |\n| **事件驱动 PG 写入** | sf-pg-writer 收到数据立即写入，非定时器轮询 |\n| **自适应批量** | PG 写入批量根据队列深度和延迟动态调整 (50-500条) |\n| **device-comm 仅状态变化上报** | 在线↔离线切换时才推入 edge_commPending，30s 批量消费 |\n| **接口契约标准化** | 每个子 Flow 输入/输出格式明确，可独立 mock 测试 |\n\n## v10 架构优势\n\n| v9.1 | v10 |\n|------|-----|\n| 50 节点单体 Flow | 6 子Flow + 1 主编排 |\n| 900+ 行单文件 | 每子Flow ≤ 300 行 |\n| 修改需整体重新部署 | 子Flow 独立部署 |\n| 调试靠 console.log | Debug 节点可插入子Flow 内部 |\n| 新增协议需改动多处 | 注册新子Flow + router 加映射 |\n| 全局变量 `mcSim_` 散落 | `edge_` 前缀 + 所有权明确 |\n| 无接口文档 | 契约标准化 (见子Flow info) |\n| — | 7 子Flow + sf-local-api (HTTP 端点独立) |\n| — | Modbus FLOAT32/INT32 支持 |\n\n## 已知技术债务 (Phase 2 修复)\n\n| # | 问题 | 影响 | 修复方向 |\n|---|------|------|----------|\n| 4 | 驱动子Flow 内部是巨型单 Function (~300行) | 无法在帧构造/拆包阶段插 Debug 节点，排查效率低 | 拆为 split→帧构造→tcp→拆包→join 多节点 |\n| 6 | Modbus FLOAT32 未充分测试 | 现场变频器等 32 位设备待验证 | 需要真实 Modbus 设备回归测试 |\n| 9 | sf-local-api http-in 节点全局注册 | 拖出多个实例部署时报路由冲突 | 文档已标明\"只能拖1个实例\" |\n| 10 | 模拟模式 Modbus 位元件仍生成 0~65535 | 联调体验不完美 | 增加 BOOL 数据类型支持 |\n\n## PG 写入器依赖\n\n`sf-pg-writer` 需要 `pg` 模块 (node-postgres)：\n\n```bash\ncd ~/.node-red\nnpm install pg\n```\n\nsettings.js:\n```javascript\nfunctionGlobalContext: {\n    pg: require('pg'),    // ← 必需\n    // 可选: 覆盖 PG 连接参数\n    // edge_pgHost: '127.0.0.1',\n    // edge_pgPort: 5432,\n    // edge_pgDatabase: 'edgelink',\n    // edge_pgUser: 'postgres',\n    // edge_pgPassword: 'dss@2025',\n}\n```\n\n如不需要 PG 写入，`sf-pg-writer` 会自动跳过 (开发模式，只累加计数)。\n"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+[
+  {
+    "id": "sf-monitor",
+    "type": "subflow",
+    "name": "sf-monitor",
+    "info": "监控与心跳 v10: 30s心跳 + device-comm批量 + PG统计 + 401reauth\n\n输入: inject(30s) → 触发心跳 + 批量上报\n输出1: MQTT心跳消息\n输出2: reauth触发 (401时)\n\n⚠ HTTP API 已拆出 → sf-local-api (6端点, /api/v10/monitor/)\n\nv10 P0修正:\n- device-comm 仅状态变化时上报 (edge_commPending由sf-data-processor推入)\n- 消费频率与心跳一致(30s)\n- 401检测 → Output2 → 主Flow回连sf-config-manager",
+    "category": "edgelink-v10",
+    "in": [
+      {
+        "wires": [
+          {
+            "id": "sf-mon-fn-heartbeat"
+          }
+        ]
+      }
+    ],
+    "out": [
+      {
+        "wires": [
+          {
+            "id": "sf-mon-fn-heartbeat",
+            "port": 0
+          }
+        ]
+      },
+      {
+        "wires": [
+          {
+            "id": "sf-mon-fn-heartbeat",
+            "port": 1
+          }
+        ]
+      }
+    ],
+    "env": [],
+    "meta": {},
+    "color": "#FB8072",
+    "func": ""
+  },
+  {
+    "id": "sf-mon-fn-heartbeat",
+    "type": "function",
+    "z": "sf-monitor",
+    "name": "心跳 + 批量上报",
+    "func": "// === sf-monitor: 30s心跳 + device-comm批量消费 + PG统计 ===\nvar http = global.get('http');\nvar HOST = global.get('edge_backendHost') || '127.0.0.1';\nvar PORT = global.get('edge_backendPort') || 9099;\nvar nodeId = global.get('edge_nodeId') || 999;\nvar hostPcIp = global.get('edge_hostPcIp') || '127.0.0.1';\nvar jwt = global.get('edge_jwt') || '';\nvar DEBUG = global.get('edge_debug') || false;\nvar apiKey = global.get('edge_apiKey') || '';\nvar devices = global.get('edge_devices') || [];\n\nvar now = new Date().toISOString();\n\n// Phase E: pendingOps ensures async 401 detection completes before node.send\nvar pendingOps = 1;  // 🔧 P1: consumed by tryFinalSend below; reportPgStats and consumeDeviceComm each add their share\nvar reauthNeeded = false;\nvar _sent = false;\nfunction tryFinalSend() {\n    if (_sent) return;\n    pendingOps--;\n    if (pendingOps <= 0) {\n        _sent = true;\n        var reauthMsg = reauthNeeded ? { payload: { action: 'reauth' } } : null;\n        node.send([mqttMsg, reauthMsg]);\n    }\n}\n\nif (!global.get('edge_configReady')) {\n    node.status({ fill: 'grey', shape: 'dot', text: 'wait config' });\n    return [null, null];\n}\n\n// === Memory usage ===\nvar mem = 0;\ntry { var pr = global.get('process'); mem = pr ? Math.round(pr.memoryUsage().rss / 1024 / 1024) : 0; } catch (e) { mem = 0; }\n\n// === Build MQTT heartbeat (Output 1) ===\nvar devList = devices.map(function (d) {\n    var status = (global.get('edge_commStatus') || {})[d.id] || {};\n    return {\n        id: d.id, name: d.deviceName,\n        online: (status.consecutiveFails || 0) === 0,\n        consecutiveFails: status.consecutiveFails || 0,\n        tagCount: (d.tags || []).length\n    };\n});\n\nvar mqttMsg = {\n    topic: 'edgelink/heartbeat/' + nodeId,\n    payload: JSON.stringify({\n        node_id: nodeId, host_pc_ip: hostPcIp,\n        device_count: devices.length, devices: devList,\n        running_flows: 5, memory_usage_mb: mem, status: 'online', ts: now\n    }),\n    qos: 1, retain: false\n};\n\n// === HTTP Heartbeat (async) ===\nvar params = 'host_pc_ip=' + encodeURIComponent(hostPcIp)\n    + '&node_ip=' + encodeURIComponent(hostPcIp)\n    + '&running_flows=5&memory_usage_mb=' + mem;\n\nvar hbOpts = {\n    hostname: HOST, port: PORT, path: '/monitor/heartbeat?' + params, method: 'POST',\n    headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n};\n\nvar hbReq = http.request(hbOpts, function (res) {\n    var b = '';\n    res.on('data', function (d) { b += d; });\n    res.on('end', function () {\n        if (res.statusCode === 401 && !global.get('edge_reauthInProgress')) {\n            node.warn('[Monitor] JWT expired (401), trigger re-login');\n            global.set('edge_jwt', '');\n            global.set('edge_configReady', false);\n            global.set('edge_reauthInProgress', true);\n            reauthNeeded = true;\n        }\n        try {\n            var j = JSON.parse(b);\n            var nid = (j.data && j.data.node_id) ? j.data.node_id : 0;\n            if (nid > 0 && nid !== nodeId) {\n                global.set('edge_nodeId', nid);\n                if (DEBUG) node.warn('[Monitor] nodeId updated: ' + nodeId + ' → ' + nid);\n            }\n        } catch (e) {}\n        node.status({ fill: res.statusCode === 200 ? 'green' : 'red', shape: 'dot', text: 'HB ' + res.statusCode });\n        consumeDeviceComm(tryFinalSend);\n        reportPgStats(tryFinalSend);\n        tryFinalSend();\n    });\n});\nhbReq.setTimeout(5000, function () {\n    hbReq.destroy();\n    consumeDeviceComm(tryFinalSend);\n    reportPgStats(tryFinalSend);\n    tryFinalSend();\n});\nhbReq.on('error', function (e) {\n    if (DEBUG) node.warn('[Monitor] HB err: ' + e.message);\n    consumeDeviceComm(tryFinalSend);\n    reportPgStats(tryFinalSend);\n    tryFinalSend();\n});\nhbReq.write('{}');\nhbReq.end();\n\n// === Device-comm consumer: drain edge_commPending (30s batch) ===\nfunction consumeDeviceComm(done) {\n    var pending = global.get('edge_commPending') || [];\n    if (pending.length === 0) { return; }  // 🔧 Don't call done() — nothing to consume, doesn't count\n    global.set('edge_commPending', []);\n    pendingOps += pending.length;\n    if (DEBUG) node.warn('[Monitor] Draining ' + pending.length + ' device-comm events');\n    pending.forEach(function (item) {\n        var itemDone = false;\n        function itemFinish() {\n            if (itemDone) return;\n            itemDone = true;\n            if (done) done();\n        }\n        var p = 'node_id=' + nodeId + '&device_id=' + item.deviceId\n            + '&success=' + (item.success ? 'true' : 'false')\n            + '&error_msg=' + encodeURIComponent(item.error || '');\n        var opts = {\n            hostname: HOST, port: PORT, path: '/monitor/device-comm?' + p, method: 'POST',\n            headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n        };\n        var req = http.request(opts, function (res) {\n            if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n            res.resume();\n            itemFinish();\n        });\n        req.setTimeout(3000, function () { req.destroy(); itemFinish(); });\n        req.on('error', function () { itemFinish(); });\n        req.write('{}');\n        req.end();\n    });\n}\n\n// === PG Write Stats reporter ===\nfunction reportPgStats(done) {\n    pendingOps++;  // 🔧 P1: count this async op\n    var pgDone = false;\n    function pgFinish() {\n        if (pgDone) return;\n        pgDone = true;\n        if (done) done();\n    }\n    var pgCount = global.get('edge_pg_success_count') || 0;\n    var pgFailCount = global.get('edge_pg_fail_count') || 0;\n    var pgPrev = global.get('edge_pg_prev_count') || 0;\n    var pgFailPrev = global.get('edge_pg_fail_prev') || 0;\n    var writeCount = pgCount - pgPrev;\n    var failCount = pgFailCount - pgFailPrev;\n    global.set('edge_pg_prev_count', pgCount);\n    global.set('edge_pg_fail_prev', pgFailCount);\n    var lastError = global.get('edge_pg_last_error') || '';\n    var success = (failCount === 0);\n    var p = 'node_id=' + nodeId + '&success=' + (success ? 'true' : 'false') + '&latency_ms=' + (global.get('edge_pg_last_latency_ms') || 5)\n        + '&write_count=' + writeCount + '&device_count=' + devices.length + '&error_msg=' + encodeURIComponent(lastError);\n    var opts = {\n        hostname: HOST, port: PORT, path: '/monitor/pg-write?' + p, method: 'POST',\n        headers: { 'X-API-Key': apiKey, 'Authorization': 'Bearer ' + jwt, 'Content-Type': 'application/json' }\n    };\n    var req = http.request(opts, function (res) {\n        if (res.statusCode === 401 && !reauthNeeded) reauthNeeded = true;\n        res.resume();\n        pgFinish();\n    });\n    req.setTimeout(3000, function () { req.destroy(); pgFinish(); });\n    req.on('error', function () { pgFinish(); });\n    req.write('{}');\n    req.end();\n}\n\nreturn null;",
+    "outputs": 2,
+    "noerr": 0,
+    "libs": [],
+    "x": 200,
+    "y": 100,
+    "wires": []
+  }
+]
