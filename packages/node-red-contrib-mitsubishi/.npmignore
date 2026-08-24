@@ -1,0 +1,15 @@
+# Git
+.git/
+.gitattributes
+.gitignore
+
+# Nested duplicate (old version)
+node-red-contrib-mitsubishi/
+
+# Duplicate images at root (use images/ folder instead)
+config.png
+output.png
+palette.png
+
+# Dev files
+.npmignore

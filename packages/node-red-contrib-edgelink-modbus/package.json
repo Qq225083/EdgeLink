@@ -1,0 +1,60 @@
+{
+  "name": "node-red-contrib-edgelink-modbus",
+  "version": "1.5.0",
+  "description": "EdgeLink Modbus TCP/RTU 读写节点 — 串口支持 + 长连接池 + 表格编辑器 + 字节序 + 模拟模式",
+  "main": "nodes/modbus-read.js",
+  "scripts": {
+    "test": "mocha \"test/**/*_spec.js\" --timeout 10000"
+  },
+  "devDependencies": {
+    "mocha": "^10.8.2",
+    "node-red-node-test-helper": "^0.3.4",
+    "proxyquire": "^2.1.3"
+  },
+  "node-red": {
+    "nodes": {
+      "modbus-config": "nodes/modbus-config.js",
+      "modbus-read": "nodes/modbus-read.js",
+      "modbus-write": "nodes/modbus-write.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qq225083/node-red-contrib-edgelink-modbus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Qq225083/node-red-contrib-edgelink-modbus/issues"
+  },
+  "homepage": "https://github.com/Qq225083/node-red-contrib-edgelink-modbus#readme",
+  "author": {
+    "name": "EdgeLink Team"
+  },
+  "files": [
+    "nodes/",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
+  "keywords": [
+    "node-red",
+    "modbus",
+    "modbus-tcp",
+    "modbus-rtu",
+    "serialport",
+    "plc",
+    "scada",
+    "industrial",
+    "iot",
+    "edgelink",
+    "holding-register",
+    "coil"
+  ],
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "serialport": "^12.0.0"
+  }
+}

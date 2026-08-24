@@ -1,0 +1,8 @@
+node_modules/
+node-red-contrib-mitsubishi/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tgz

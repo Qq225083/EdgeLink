@@ -1,0 +1,107 @@
+<script type="text/html" data-template-name="modbus-config">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-config-input-name" placeholder="Modbus-1">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-host"><i class="fa fa-globe"></i> IP 地址</label>
+    <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> 端口</label>
+    <input type="number" id="node-config-input-port" placeholder="502" min="1" max="65535">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-unitId"><i class="fa fa-server"></i> 从站地址</label>
+    <input type="number" id="node-config-input-unitId" value="1" min="0" max="247">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-timeout"><i class="fa fa-clock-o"></i> 超时 (ms)</label>
+    <input type="number" id="node-config-input-timeout" value="3000" min="500" max="30000">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-maxRetries"><i class="fa fa-repeat"></i> 重试次数</label>
+    <input type="number" id="node-config-input-maxRetries" value="2" min="0" max="10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-retryInterval"><i class="fa fa-hourglass-half"></i> 重试间隔 (ms)</label>
+    <input type="number" id="node-config-input-retryInterval" value="300" min="50" max="10000">
+  </div>
+
+  <hr>
+  <div style="color:#888;font-size:11px;margin-bottom:4px">
+    <i class="fa fa-info-circle"></i> <b>串口 (RTU)</b> — 串口名留空 = Modbus TCP；填写后走 Modbus RTU
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-serialPort"><i class="fa fa-plug"></i> 串口名</label>
+    <input type="text" id="node-config-input-serialPort" placeholder="留空=TCP，如 COM3 / /dev/ttyUSB0">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-baudRate"><i class="fa fa-tachometer"></i> 波特率</label>
+    <select id="node-config-input-baudRate">
+      <option>1200</option><option>2400</option><option>4800</option>
+      <option selected>9600</option><option>19200</option><option>38400</option>
+      <option>57600</option><option>115200</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-dataBits"><i class="fa fa-bars"></i> 数据位</label>
+    <select id="node-config-input-dataBits">
+      <option>7</option><option selected>8</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-parity"><i class="fa fa-check-square-o"></i> 校验位</label>
+    <select id="node-config-input-parity">
+      <option value="none" selected>无 (N)</option>
+      <option value="even">偶 (E)</option>
+      <option value="odd">奇 (O)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-stopBits"><i class="fa fa-stop"></i> 停止位</label>
+    <select id="node-config-input-stopBits">
+      <option selected>1</option><option>2</option>
+    </select>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="modbus-config">
+  <h3>EdgeLink Modbus 连接配置（TCP / RTU）</h3>
+  <p>存储 Modbus 设备的连接参数，供 <b>modbus-read</b> / <b>modbus-write</b> 节点引用。</p>
+  <h4>传输选择</h4>
+  <ul>
+    <li><b>串口名留空</b>：Modbus TCP（按 IP 地址 + 端口连接）</li>
+    <li><b>填写串口名</b>（如 <code>COM3</code> / <code>/dev/ttyUSB0</code>）：Modbus RTU，按波特率/数据位/校验位/停止位打开串口</li>
+  </ul>
+  <h4>参数说明</h4>
+  <ul>
+    <li><b>从站地址</b>：Modbus 从站 ID（RTU 必填 1-247）</li>
+    <li><b>端口</b>：Modbus TCP 默认 502</li>
+    <li><b>超时</b>：读写超时时间（RTU 同时作为整帧等待上限）</li>
+    <li><b>重试次数</b>：失败重试次数（不含首次）</li>
+    <li><b>串口参数</b>：RTU 专用，默认 9600 / 8 / N / 1</li>
+  </ul>
+</script>
+
+<script type="text/javascript">
+  RED.nodes.registerType('modbus-config', {
+    category: 'config',
+    defaults: {
+      name: { value: 'Modbus-1' },
+      host: { value: '192.168.1.10', required: true },
+      port: { value: 502, required: true, validate: RED.validators.number() },
+      unitId: { value: 1, validate: RED.validators.number() },
+      timeout: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 2, validate: RED.validators.number() },
+      retryInterval: { value: 300, validate: RED.validators.number() },
+      serialPort: { value: '' },
+      baudRate: { value: '9600' },
+      dataBits: { value: '8' },
+      parity: { value: 'none' },
+      stopBits: { value: '1' }
+    },
+    label: function () { return this.name || 'Modbus-1'; },
+    paletteLabel: 'Modbus 连接配置'
+  });
+</script>

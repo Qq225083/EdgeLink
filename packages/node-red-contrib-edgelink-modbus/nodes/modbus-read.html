@@ -1,0 +1,337 @@
+<script type="text/html" data-template-name="modbus-read">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-input-name" placeholder="Modbus读取">
+  </div>
+  <div class="form-row">
+    <label for="node-input-modbus"><i class="fa fa-microchip"></i> Modbus 配置</label>
+    <input type="text" id="node-input-modbus" placeholder="选择 modbus-config 节点">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceId"><i class="fa fa-id-card"></i> 设备ID (独立使用时配置)</label>
+    <input type="text" id="node-input-deviceId" placeholder="2001">
+  </div>
+
+  <!-- 🆕 RTU 串口覆盖（留空 = 跟随 modbus-config；msg.payload.protocolParams 传入时优先） -->
+  <div class="form-row">
+    <label for="node-input-serialPort"><i class="fa fa-plug"></i> 串口名 (RTU)</label>
+    <input type="text" id="node-input-serialPort" placeholder="留空=跟随连接配置，如 COM3">
+  </div>
+  <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px">
+    <span style="font-size:11px;color:#888">波特率</span>
+    <select id="node-input-baudRate" style="width:80px;font-size:11px">
+      <option value="">默认</option><option>1200</option><option>2400</option><option>4800</option>
+      <option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option>
+    </select>
+    <span style="font-size:11px;color:#888">数据位</span>
+    <select id="node-input-dataBits" style="width:50px;font-size:11px">
+      <option value="">默认</option><option>7</option><option>8</option>
+    </select>
+    <span style="font-size:11px;color:#888">校验</span>
+    <select id="node-input-parity" style="width:60px;font-size:11px">
+      <option value="">默认</option><option value="none">无</option><option value="even">偶</option><option value="odd">奇</option>
+    </select>
+    <span style="font-size:11px;color:#888">停止位</span>
+    <select id="node-input-stopBits" style="width:50px;font-size:11px">
+      <option value="">默认</option><option>1</option><option>2</option>
+    </select>
+  </div>
+
+  <!-- 批量生成 -->
+  <div class="form-row" style="margin-top:8px">
+    <label><i class="fa fa-bolt"></i> 批量添加</label>
+  </div>
+  <div style="margin-bottom:6px;display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:11px">起始</span>
+    <input id="mb-batch-start" type="number" value="0" min="0" style="width:60px;font-size:11px">
+    <span style="font-size:11px">数量</span>
+    <input id="mb-batch-count" type="number" value="1" min="1" max="500" style="width:55px;font-size:11px">
+    <select id="mb-batch-reg" style="width:80px;font-size:11px">
+      <option value="holding">保持寄存器</option><option value="input">输入寄存器</option><option value="coil">线圈</option><option value="discrete">离散输入</option>
+    </select>
+    <select id="mb-batch-dt" style="width:75px;font-size:11px">
+      <option>INT16</option><option>UINT16</option><option>INT32</option><option>UINT32</option><option>FLOAT32</option><option>BOOL</option>
+    </select>
+    <button class="red-ui-button" onclick="mbAddTagBatch()" style="font-size:11px;padding:2px 8px">
+      <i class="fa fa-bolt"></i> 生成
+    </button>
+    <span style="flex:1"></span>
+    <button class="red-ui-button" onclick="$('#mb-csv-import-area').toggle()" style="font-size:11px;padding:2px 8px;background:#888">
+      <i class="fa fa-upload"></i> CSV导入
+    </button>
+    <button class="red-ui-button" onclick="mbEditor.exportCSV()" style="font-size:11px;padding:2px 8px;background:#888">
+      <i class="fa fa-download"></i> 导出CSV
+    </button>
+  </div>
+
+  <!-- CSV 导入区 (默认隐藏) -->
+  <div id="mb-csv-import-area" style="display:none;margin-bottom:6px">
+    <textarea id="mb-csv-import-text" style="width:100%;height:80px;font-size:11px;box-sizing:border-box" placeholder="regType,addr,dataType,byteOrder,slope,offset,operator,referenceTag,name,id
+holding,0,INT16,AB,1,0,,,温度,temp_001"></textarea>
+    <button class="red-ui-button" onclick="mbEditor.doImportCSV()" style="font-size:11px;padding:2px 8px;margin-top:2px">
+      <i class="fa fa-check"></i> 确认导入
+    </button>
+  </div>
+
+  <!-- 分页 + 批量删除 -->
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px" id="mb-tag-pager">
+    <span style="font-size:11px;color:#888">每页</span>
+    <select id="mb-pager-size" onchange="mbEditor.setPageSize(this.value)" style="width:55px;font-size:11px">
+      <option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option>
+    </select>
+    <button class="red-ui-button" onclick="mbEditor.goPage(0)" style="font-size:10px;padding:1px 5px">«</button>
+    <button class="red-ui-button" onclick="mbEditor.prevPage()" style="font-size:10px;padding:1px 5px">‹</button>
+    <span id="mb-pager-info" style="font-size:11px;color:#888;min-width:80px">0-0 / 0</span>
+    <button class="red-ui-button" onclick="mbEditor.nextPage()" style="font-size:10px;padding:1px 5px">›</button>
+    <button class="red-ui-button" onclick="mbEditor.goPage(-1)" style="font-size:10px;padding:1px 5px">»</button>
+    <span style="flex:1"></span>
+    <button class="red-ui-button" onclick="mbEditor.deleteSelected()" style="font-size:10px;padding:1px 6px;background:#c44">
+      <i class="fa fa-trash"></i> 删除选中
+    </button>
+  </div>
+
+  <!-- 点位表格 -->
+  <div class="form-row" style="margin-top:0">
+    <label><i class="fa fa-list"></i> 点位表格 (msg.tags 传入时覆盖)</label>
+  </div>
+  <div style="margin-bottom:4px;max-height:420px;overflow-y:auto">
+    <table style="width:100%;font-size:11px;border-collapse:collapse">
+      <thead>
+        <tr style="color:#888;position:sticky;top:0;background:#333">
+          <th style="width:3%"><input type="checkbox" id="mb-tag-select-all" onchange="mbEditor.toggleAll(this.checked)" title="全选"></th>
+          <th style="width:11%;text-align:left">寄存器类型</th>
+          <th style="width:7%;text-align:left">地址</th>
+          <th style="width:11%;text-align:left">数据类型</th>
+          <th style="width:8%;text-align:left">字节序</th>
+          <th style="width:5%;text-align:left" title="位偏移：BOOL 在字寄存器上取第几位(0-15)">位</th>
+          <th style="width:7%;text-align:left">斜率</th>
+          <th style="width:7%;text-align:left">偏移</th>
+          <th style="width:7%;text-align:left">运算</th>
+          <th style="width:12%;text-align:left">引用ID</th>
+          <th style="width:14%;text-align:left">名称</th>
+          <th style="width:4%"></th>
+          <th style="width:12%;text-align:left">ID</th>
+        </tr>
+      </thead>
+      <tbody id="mb-tags-tbody"></tbody>
+    </table>
+  </div>
+  <button class="red-ui-button" onclick="mbEditor.add(); mbEditor.goToLast();" style="margin-top:2px;font-size:11px">
+    <i class="fa fa-plus"></i> 添加点位
+  </button>
+  <input type="hidden" id="node-input-tags">
+
+  <hr>
+  <div style="color:#888;font-size:11px;margin-bottom:4px">
+    <i class="fa fa-info-circle"></i> 输出: msg.payload.data[点位ID] = {rawValue, engValue, quality, ts, regType}<br>
+    字节序: AB=大端 BA=小端 ABCD/CDAB/BADC/DCBA(32位)<br>
+    🆕 运算: add=this+ref, sub=this-ref, mul=this×ref, div=this÷ref<br>
+    🆕 分页: 支持任意数量点位不卡顿 | CSV导入导出
+  </div>
+</script>
+
+<script type="text/html" data-help-name="modbus-read">
+  <h3>EdgeLink Modbus 读取节点（TCP / RTU）</h3>
+  <p>一个节点配置 N 个点位，支持线圈(FC01)、离散输入(FC02)、保持寄存器(FC03)、输入寄存器(FC04)。</p>
+  <h4>传输</h4>
+  <p><b>串口名 (RTU)</b> 留空 = Modbus TCP；填写（或在 <code>msg.payload.protocolParams.serialPort</code> 传入，如 <code>COM3</code>）即走 Modbus RTU，波特率/数据位/校验/停止位缺省跟随连接配置（9600/8/N/1）。RTU 模式从站地址 unitId 必填 1-247。</p>
+  <h4>寄存器类型</h4>
+  <ul><li><b>保持寄存器</b> (FC03) — 可读写，最常用</li><li><b>输入寄存器</b> (FC04) — 只读，模拟量输入</li><li><b>线圈</b> (FC01) — 位读写</li><li><b>离散输入</b> (FC02) — 位只读</li></ul>
+  <h4>字节序</h4>
+  <ul><li>16位: AB (大端, 默认) / BA (小端)</li><li>32位: ABCD (大端) / CDAB / BADC / DCBA (小端)</li></ul>
+  <h4>数据类型</h4>
+  <p>INT16/UINT16/INT32/UINT32/FLOAT32/BOOL。32位类型自动读相邻两个寄存器并拼接。</p>
+  <h4>🆕 计算点位</h4>
+  <p>设置"运算"和"引用ID"可将两个寄存器值合并：add/sub/mul/div。如两个保持寄存器求和。</p>
+</script>
+
+<script type="text/javascript">
+  var mbEditor = {
+    rows: [],
+    page: 0,
+    pageSize: 100,
+    _selected: {},
+
+    init: function () {
+      try { this.rows = JSON.parse($('#node-input-tags').val() || '[]'); } catch (e) { this.rows = []; }
+      this.page = 0;
+      this.pageSize = parseInt($('#mb-pager-size').val()) || 100;
+      this._selected = {};
+      this.render();
+    },
+    add: function () {
+      this.rows.push({ id: '', regType: 'holding', addr: '', dataType: 'INT16', byteOrder: 'AB', slope: '1', offset: '0', operator: '', referenceTag: '', name: '' });
+      this.render();
+      this.save();
+    },
+    remove: function (idx) { this.rows.splice(idx, 1); delete this._selected[idx]; this.render(); this.save(); },
+    deleteSelected: function () {
+      var toRemove = Object.keys(this._selected).filter(function (k) { return this._selected[k]; }.bind(this)).map(Number).sort(function (a, b) { return b - a; });
+      if (toRemove.length === 0) { RED.notify('未选中任何点位', 'warning'); return; }
+      for (var i = 0; i < toRemove.length; i++) { this.rows.splice(toRemove[i], 1); }
+      this._selected = {}; this.render(); this.save();
+    },
+    toggleAll: function (checked) {
+      var self = this;
+      var start = this.page * this.pageSize;
+      var end = Math.min(start + this.pageSize, this.rows.length);
+      for (var i = start; i < end; i++) { self._selected[i] = checked; }
+      this.render();
+    },
+    update: function (idx, field, val) { this.rows[idx][field] = val; this.save(); },
+    save: function () { $('#node-input-tags').val(JSON.stringify(this.rows)); },
+    totalPages: function () { return Math.max(1, Math.ceil(this.rows.length / this.pageSize)); },
+    goPage: function (p) { if (p < 0) p = this.totalPages() - 1; this.page = Math.max(0, Math.min(this.totalPages() - 1, p)); this.render(); },
+    goToLast: function () { this.goPage(-1); },
+    prevPage: function () { this.goPage(this.page - 1); },
+    nextPage: function () { this.goPage(this.page + 1); },
+    setPageSize: function (sz) { this.pageSize = parseInt(sz) || 100; this.page = 0; this.render(); },
+
+    doImportCSV: function () {
+      var text = $('#mb-csv-import-text').val().trim();
+      if (!text) { RED.notify('请粘贴CSV数据', 'warning'); return; }
+      var lines = text.split('\n');
+      if (lines.length < 2) { RED.notify('CSV至少需要表头+1行数据', 'warning'); return; }
+      var headers = lines[0].split(',');
+      var added = 0;
+      for (var i = 1; i < lines.length; i++) {
+        var cols = lines[i].split(',');
+        if (cols.length < 2) continue;
+        var row = {};
+        for (var j = 0; j < headers.length; j++) {
+          var key = headers[j].trim();
+          if (key) row[key] = (cols[j] || '').trim();
+        }
+        this.rows.push({
+          id: row.id || '', regType: row.regType || 'holding',
+          addr: row.addr || '', dataType: row.dataType || 'INT16',
+          byteOrder: row.byteOrder || 'AB', slope: row.slope || '1', offset: row.offset || '0',
+          operator: row.operator || '', referenceTag: row.referenceTag || '',
+          name: row.name || ''
+        });
+        added++;
+      }
+      this.render(); this.save(); this.goToLast();
+      $('#mb-csv-import-area').hide(); $('#mb-csv-import-text').val('');
+      RED.notify('导入 ' + added + ' 个点位');
+    },
+
+    exportCSV: function () {
+      var csv = 'regType,addr,dataType,byteOrder,slope,offset,operator,referenceTag,name,id\n';
+      for (var i = 0; i < this.rows.length; i++) {
+        var r = this.rows[i];
+        csv += [r.regType||'', r.addr||'', r.dataType||'', r.byteOrder||'AB', r.slope||'1', r.offset||'0', r.operator||'', r.referenceTag||'', r.name||'', r.id||''].join(',') + '\n';
+      }
+      var blob = new Blob(['﻿' + csv], {type: 'text/csv;charset=utf-8'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = url; a.download = 'mb-tags.csv';
+      a.click(); URL.revokeObjectURL(url);
+    },
+
+    render: function () {
+      var self = this;
+      var start = this.page * this.pageSize;
+      var end = Math.min(start + this.pageSize, this.rows.length);
+      var pageRows = this.rows.slice(start, end);
+      $('#mb-pager-info').text((this.rows.length > 0 ? (start + 1) : 0) + '-' + end + ' / ' + this.rows.length);
+      var tbody = $('#mb-tags-tbody'); tbody.empty();
+
+      pageRows.forEach(function (row) {
+        var idx = start + pageRows.indexOf(row);
+        var mkSel = function (opts, cur) { var s = ''; opts.forEach(function (o) { s += '<option' + (cur === o ? ' selected' : '') + '>' + o + '</option>'; }); return $('<select style="width:95%;font-size:11px">' + s + '</select>'); };
+        var mkInp = function (val, ph, type, w) { return $('<input type="' + (type||'text') + '" style="width:' + (w||'90%') + ';font-size:11px" placeholder="' + (ph||'') + '">').val(val || ''); };
+
+        var tr = $('<tr>');
+        var cb = $('<input type="checkbox" style="margin:0">').prop('checked', !!self._selected[idx]);
+        cb.on('change', function () { self._selected[idx] = $(this).prop('checked'); });
+        tr.append($('<td>').append(cb));
+
+        var reg = mkSel(['holding', 'input', 'coil', 'discrete'], row.regType || 'holding');
+        reg.on('change', function () { self.update(idx, 'regType', $(this).val()); });
+        tr.append($('<td>').append(reg));
+
+        var addr = mkInp(row.addr, '0', 'number', '85%');
+        addr.on('change', function () { self.update(idx, 'addr', $(this).val()); });
+        tr.append($('<td>').append(addr));
+
+        var dt = mkSel(['INT16', 'UINT16', 'INT32', 'UINT32', 'FLOAT32', 'BOOL'], row.dataType || 'INT16');
+        dt.on('change', function () { self.update(idx, 'dataType', $(this).val()); });
+        tr.append($('<td>').append(dt));
+
+        var bo = mkSel(['AB', 'BA', 'ABCD', 'CDAB', 'BADC', 'DCBA'], row.byteOrder || 'AB');
+        bo.on('change', function () { self.update(idx, 'byteOrder', $(this).val()); });
+        tr.append($('<td>').append(bo));
+
+        // 🔧 Day6: 位偏移列（与运行时 decodeValue 能力对齐）
+        var bit = mkInp(row.bitOffset, '0-15', 'number', '80%');
+        bit.on('change', function () { self.update(idx, 'bitOffset', $(this).val()); });
+        tr.append($('<td>').append(bit));
+
+        var sl = mkInp(row.slope, '1', 'number', '85%');
+        sl.on('change', function () { self.update(idx, 'slope', $(this).val()); });
+        tr.append($('<td>').append(sl));
+
+        var off = mkInp(row.offset, '0', 'number', '85%');
+        off.on('change', function () { self.update(idx, 'offset', $(this).val()); });
+        tr.append($('<td>').append(off));
+
+        var op = mkSel(['','add','sub','mul','div'], row.operator || '');
+        op.on('change', function () { self.update(idx, 'operator', $(this).val()); });
+        tr.append($('<td>').append(op));
+
+        var ref = mkInp(row.referenceTag, '目标点位ID', 'text', '90%');
+        ref.on('change', function () { self.update(idx, 'referenceTag', $(this).val()); });
+        tr.append($('<td>').append(ref));
+
+        var nm = mkInp(row.name, '温度', 'text', '90%');
+        nm.on('change', function () { self.update(idx, 'name', $(this).val()); });
+        tr.append($('<td>').append(nm));
+
+        var del = $('<button class="red-ui-button" style="font-size:10px;padding:1px 5px">✕</button>');
+        del.on('click', function (e) { e.preventDefault(); self.remove(idx); });
+        tr.append($('<td>').append(del));
+
+        var id = mkInp(row.id, 'auto', 'text', '85%');
+        id.on('change', function () { self.update(idx, 'id', $(this).val()); });
+        tr.append($('<td>').append(id));
+
+        tbody.append(tr);
+      });
+    }
+  };
+
+  RED.nodes.registerType('modbus-read', {
+    category: 'edgelink',
+    color: '#D4E6F1',
+    defaults: {
+      name: { value: 'Modbus读取' },
+      modbus: { type: 'modbus-config', required: true },
+      deviceId: { value: '' },
+      serialPort: { value: '' },
+      baudRate: { value: '' },
+      dataBits: { value: '' },
+      parity: { value: '' },
+      stopBits: { value: '' },
+      tags: { value: '[]' }
+    },
+    inputs: 1,
+    outputs: 1,
+    paletteLabel: 'Modbus 读取',
+    label: function () { return this.name || 'Modbus读取'; },
+    oneditprepare: function () {
+      mbEditor.init();
+      window.mbAddTagRow = function () { mbEditor.add(); mbEditor.goToLast(); };
+      window.mbAddTagBatch = function () {
+        var start = parseInt($('#mb-batch-start').val(), 10) || 0;
+        var count = parseInt($('#mb-batch-count').val(), 10) || 1;
+        var reg = $('#mb-batch-reg').val() || 'holding';
+        var dt = $('#mb-batch-dt').val() || 'INT16';
+        for (var i = 0; i < count; i++) {
+          mbEditor.rows.push({ id: '', regType: reg, addr: String(start + i), dataType: dt, byteOrder: 'AB', slope: '1', offset: '0', operator: '', referenceTag: '', name: reg + (start + i) });
+        }
+        mbEditor.render(); mbEditor.save(); mbEditor.goToLast();
+      };
+    },
+    oneditsave: function () { delete window.mbAddTagRow; delete window.mbAddTagBatch; }
+  });
+</script>

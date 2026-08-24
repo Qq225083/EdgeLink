@@ -1,0 +1,269 @@
+[
+    {
+        "id": "mc-config-0001",
+        "type": "MC Protocol Connection",
+        "name": "老方案-PLC连接",
+        "host": "192.168.1.11",
+        "port": "10002",
+        "protocol": "TCP",
+        "frame": "3E",
+        "plcType": "QnA",
+        "ascii": false,
+        "PLCStation": "",
+        "PCStation": "",
+        "PLCModuleNo": "",
+        "network": "",
+        "octalInputOutput": false,
+        "timeout": "3000"
+    },
+    {
+        "id": "mc-config-0002",
+        "type": "mitsubishi-config",
+        "name": "新方案-PLC连接",
+        "host": "192.168.1.11",
+        "port": "10002",
+        "frame": "3E",
+        "series": "Q",
+        "protocol": "tcp",
+        "networkNo": "0",
+        "stationNo": "0",
+        "timeout": "3000",
+        "maxRetries": "2",
+        "retryInterval": "300"
+    },
+    {
+        "id": "inj-old-00001",
+        "type": "inject",
+        "z": "tab-demo-0001",
+        "g": "grp-old-00001",
+        "name": "每秒触发",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 190,
+        "y": 280,
+        "wires": [
+            [
+                "mc-read-00001"
+            ]
+        ]
+    },
+    {
+        "id": "mc-read-00001",
+        "type": "MC Read",
+        "z": "tab-demo-0001",
+        "g": "grp-old-00001",
+        "name": "MC Read",
+        "topic": "",
+        "connection": "mc-config-0001",
+        "address": "D0,10",
+        "addressType": "str",
+        "outputFormat": 0,
+        "errorHandling": "throw",
+        "outputs": 1,
+        "x": 380,
+        "y": 280,
+        "wires": [
+            [
+                "func-old-0001"
+            ]
+        ]
+    },
+    {
+        "id": "func-old-0001",
+        "type": "function",
+        "z": "tab-demo-0001",
+        "g": "grp-old-00001",
+        "name": "⚠️ 手动命名+换算",
+        "func": "// =========================================\n// 老方案必需的后处理代码\n// 每新增/修改一个点位 → 必须改这段代码 → 重新部署\n// =========================================\nvar pointConfig = {\n    \"D0\":  {name: \"炉温1区\",   slope: 0.1, unit: \"℃\"},\n    \"D1\":  {name: \"炉温2区\",   slope: 0.1, unit: \"℃\"},\n    \"D2\":  {name: \"炉温3区\",   slope: 0.1, unit: \"℃\"},\n    \"D3\":  {name: \"炉温4区\",   slope: 0.1, unit: \"℃\"},\n    \"D4\":  {name: \"炉温5区\",   slope: 0.1, unit: \"℃\"},\n    \"D5\":  {name: \"压力A\",     slope: 1,   unit: \"kPa\"},\n    \"D6\":  {name: \"压力B\",     slope: 1,   unit: \"kPa\"},\n    \"D7\":  {name: \"流量1\",     slope: 0.01,unit: \"m³/h\"},\n    \"D8\":  {name: \"流量2\",     slope: 0.01,unit: \"m³/h\"},\n    \"D9\":  {name: \"传送带速度\", slope: 0.1, unit: \"m/s\"},\n};\n\nvar output = {};\nfor (var addr in msg.payload) {\n    if (msg.payload.hasOwnProperty(addr)) {\n        var cfg = pointConfig[addr];\n        if (cfg) {\n            output[cfg.name] = {\n                value: +(msg.payload[addr] * cfg.slope).toFixed(1),\n                unit: cfg.unit\n            };\n        } else {\n            output[addr] = msg.payload[addr];\n        }\n    }\n}\nmsg.payload = output;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 280,
+        "wires": [
+            [
+                "debug-old-001"
+            ]
+        ]
+    },
+    {
+        "id": "debug-old-001",
+        "type": "debug",
+        "z": "tab-demo-0001",
+        "g": "grp-old-00001",
+        "name": "🔴 老方案输出",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 790,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "inj-new-00001",
+        "type": "inject",
+        "z": "tab-demo-0001",
+        "g": "grp-new-00001",
+        "name": "每秒触发",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 190,
+        "y": 500,
+        "wires": [
+            [
+                "mc-read-new001"
+            ]
+        ]
+    },
+    {
+        "id": "mc-read-new001",
+        "type": "mitsubishi-read",
+        "z": "tab-demo-0001",
+        "g": "grp-new-00001",
+        "name": "EdgeLink 读取",
+        "config": "mc-config-0002",
+        "tags": "[{\"id\":\"t0\",\"regType\":\"D\",\"addr\":\"0\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"炉温1区\"},{\"id\":\"t1\",\"regType\":\"D\",\"addr\":\"1\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"炉温2区\"},{\"id\":\"t2\",\"regType\":\"D\",\"addr\":\"2\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"炉温3区\"},{\"id\":\"t3\",\"regType\":\"D\",\"addr\":\"3\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"炉温4区\"},{\"id\":\"t4\",\"regType\":\"D\",\"addr\":\"4\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"炉温5区\"},{\"id\":\"t5\",\"regType\":\"D\",\"addr\":\"5\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"压力A\"},{\"id\":\"t6\",\"regType\":\"D\",\"addr\":\"6\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"压力B\"},{\"id\":\"t7\",\"regType\":\"D\",\"addr\":\"7\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.01\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"流量1\"},{\"id\":\"t8\",\"regType\":\"D\",\"addr\":\"8\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.01\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"流量2\"},{\"id\":\"t9\",\"regType\":\"D\",\"addr\":\"9\",\"dataType\":\"INT16\",\"byteOrder\":\"LITTLE_ENDIAN\",\"wordOrder\":\"LOW_FIRST\",\"bitOffset\":\"\",\"slope\":\"0.1\",\"offset\":\"0\",\"operator\":\"\",\"referenceTag\":\"\",\"name\":\"传送带速度\"}]",
+        "outputs": 1,
+        "x": 420,
+        "y": 500,
+        "wires": [
+            [
+                "debug-new-0001"
+            ]
+        ]
+    },
+    {
+        "id": "debug-new-0001",
+        "type": "debug",
+        "z": "tab-demo-0001",
+        "g": "grp-new-00001",
+        "name": "🟢 新方案输出",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 630,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "cmt-old-00001",
+        "type": "comment",
+        "z": "tab-demo-0001",
+        "g": "grp-old-00001",
+        "name": "⚠️ 老方案的代价",
+        "info": "1. 输出 {\"D0\":253,\"D1\":251...} — 没有名字，不知道每个数是什么\n2. 必须拖一个 function 节点做命名映射 + 工程值换算\n3. 新增一个点 = 改 function 代码 = 重新部署\n4. 读15000点 = 要么拖16个MC Read节点,要么搞loop循环(内存只涨不降)\n5. 三个月后回来看,function里的映射表你还记得维护吗？",
+        "x": 210,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "cmt-new-00001",
+        "type": "comment",
+        "z": "tab-demo-0001",
+        "g": "grp-new-00001",
+        "name": "✅ 新方案的优势",
+        "info": "1. 输出 {\"炉温1区\":{rawValue:253,engValue:25.3,quality:0}...}\n2. 命名/换算在表格里配置，不用写代码\n3. 新增一个点 = 表格加一行 = 30秒\n4. 读15000点 = 同一个节点,自动分帧\n5. 每个点有quality质量码 — 数据可不可信,一看便知",
+        "x": 210,
+        "y": 440,
+        "wires": []
+    },
+    {
+        "id": "cmt-scale-001",
+        "type": "comment",
+        "z": "tab-demo-0001",
+        "name": "📊 当规模扩大到15000个点",
+        "info": "老方案: 16个MC Read节点 + loop循环 + function映射 + 内存持续上涨 + GC丢帧\n新方案: 1个mitsubishi-read节点 + CSV粘贴 = Excel里拉好点位表,10分钟部署\n\n区别不在功能 — 在规模。点越多,差距越大。",
+        "x": 210,
+        "y": 640,
+        "wires": []
+    },
+    {
+        "id": "grp-old-00001",
+        "type": "group",
+        "z": "tab-demo-0001",
+        "style": {
+            "stroke": "#e03131",
+            "stroke-opacity": "1",
+            "fill": "#fff5f5",
+            "fill-opacity": "0.6",
+            "label": true,
+            "label-position": "nw",
+            "color": "#c92a2a"
+        },
+        "nodes": [
+            "inj-old-00001",
+            "mc-read-00001",
+            "func-old-0001",
+            "debug-old-001",
+            "cmt-old-00001"
+        ],
+        "x": 154,
+        "y": 199,
+        "w": 674,
+        "h": 160
+    },
+    {
+        "id": "grp-new-00001",
+        "type": "group",
+        "z": "tab-demo-0001",
+        "style": {
+            "stroke": "#2f9e44",
+            "stroke-opacity": "1",
+            "fill": "#f4fce3",
+            "fill-opacity": "0.6",
+            "label": true,
+            "label-position": "nw",
+            "color": "#2b8a3e"
+        },
+        "nodes": [
+            "inj-new-00001",
+            "mc-read-new001",
+            "debug-new-0001",
+            "cmt-new-00001"
+        ],
+        "x": 154,
+        "y": 419,
+        "w": 674,
+        "h": 160
+    }
+]

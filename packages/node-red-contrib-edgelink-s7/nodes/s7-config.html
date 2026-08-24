@@ -1,0 +1,65 @@
+<script type="text/html" data-template-name="s7-config">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-config-input-name" placeholder="S7-1">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-host"><i class="fa fa-globe"></i> IP 地址</label>
+    <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> 端口</label>
+    <input type="number" id="node-config-input-port" placeholder="102" min="1" max="65535">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-rack"><i class="fa fa-server"></i> 机架 (Rack)</label>
+    <input type="number" id="node-config-input-rack" value="0" min="0" max="7">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-slot"><i class="fa fa-server"></i> 槽位 (Slot)</label>
+    <input type="number" id="node-config-input-slot" value="1" min="0" max="31">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-timeout"><i class="fa fa-clock-o"></i> 超时 (ms)</label>
+    <input type="number" id="node-config-input-timeout" value="3000" min="500" max="30000">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-maxRetries"><i class="fa fa-repeat"></i> 重试次数</label>
+    <input type="number" id="node-config-input-maxRetries" value="2" min="0" max="10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-retryInterval"><i class="fa fa-hourglass-half"></i> 重试间隔 (ms)</label>
+    <input type="number" id="node-config-input-retryInterval" value="300" min="50" max="10000">
+  </div>
+</script>
+
+<script type="text/html" data-help-name="s7-config">
+  <h3>EdgeLink 西门子 S7 连接配置</h3>
+  <p>存储西门子 S7 PLC（ISO-on-TCP / RFC1006）的连接参数，供 <b>s7-read</b> 节点引用。</p>
+  <h4>参数说明</h4>
+  <ul>
+    <li><b>端口</b>：S7 协议默认 102</li>
+    <li><b>机架/槽位</b>：S7-1200/1500 通常 rack=0 slot=1；S7-300 通常 rack=0 slot=2；S7-400 按硬件组态</li>
+    <li><b>超时</b>：TCP 连接与读写超时时间</li>
+    <li><b>重试次数</b>：批次读取失败后的重试次数（不含首次）</li>
+  </ul>
+  <p>注意：S7-1200/1500 需在 TIA Portal 中开启「允许来自远程对象的 PUT/GET 通信访问」，DB 块需取消「优化的块访问」。</p>
+</script>
+
+<script type="text/javascript">
+  RED.nodes.registerType('s7-config', {
+    category: 'config',
+    defaults: {
+      name: { value: 'S7-1' },
+      host: { value: '192.168.1.10', required: true },
+      port: { value: 102, required: true, validate: RED.validators.number() },
+      rack: { value: 0, validate: RED.validators.number() },
+      slot: { value: 1, validate: RED.validators.number() },
+      timeout: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 2, validate: RED.validators.number() },
+      retryInterval: { value: 300, validate: RED.validators.number() }
+    },
+    label: function () { return this.name || 'S7-1'; },
+    paletteLabel: 'S7 连接配置'
+  });
+</script>

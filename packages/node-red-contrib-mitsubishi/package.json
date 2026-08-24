@@ -1,0 +1,64 @@
+{
+  "name": "node-red-contrib-mitsubishi",
+  "version": "1.7.0",
+  "description": "三菱 MC Protocol 3E/4E 读写节点 — TCP/UDP 双传输, 批量字写+原生位写+RMW, 写入表格默认值列, 960字聚类万点采集, 104项测试, 零依赖, 支持Q/L/iQ-R/iQ-F/FX5U",
+  "main": "nodes/mitsubishi-read.js",
+  "node-red": {
+    "nodes": {
+      "mitsubishi-config": "nodes/mitsubishi-config.js",
+      "mitsubishi-read": "nodes/mitsubishi-read.js",
+      "mitsubishi-write": "nodes/mitsubishi-write.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qq225083/node-red-contrib-mitsubishi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Qq225083/node-red-contrib-mitsubishi/issues"
+  },
+  "homepage": "https://github.com/Qq225083/node-red-contrib-mitsubishi#readme",
+  "author": {
+    "name": "EdgeLink Team"
+  },
+  "files": [
+    "nodes/",
+    "docs/",
+    "images/",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
+  "keywords": [
+    "node-red",
+    "mitsubishi",
+    "mitsubishi-electric",
+    "mc-protocol",
+    "slmp",
+    "plc",
+    "3e",
+    "4e",
+    "melsec",
+    "industrial",
+    "automation",
+    "iot",
+    "mcprotocol",
+    "q-series",
+    "iq-r",
+    "iq-f",
+    "fx5u",
+    "l-series"
+  ],
+  "scripts": {
+    "test": "mocha \"test/**/*_spec.js\" --timeout 10000"
+  },
+  "devDependencies": {
+    "mocha": "^10.8.2",
+    "node-red-node-test-helper": "^0.3.4"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "license": "MIT"
+}

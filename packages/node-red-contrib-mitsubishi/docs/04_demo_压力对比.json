@@ -1,0 +1,319 @@
+[
+    {
+        "id": "mc-config-stress",
+        "type": "MC Protocol Connection",
+        "name": "老方案-PLC连接",
+        "host": "192.168.1.11",
+        "port": "10002",
+        "protocol": "TCP",
+        "frame": "3E",
+        "plcType": "QnA",
+        "ascii": false,
+        "PLCStation": "",
+        "PCStation": "",
+        "PLCModuleNo": "",
+        "network": "",
+        "octalInputOutput": false,
+        "timeout": "3000"
+    },
+    {
+        "id": "mc-config-stress2",
+        "type": "mitsubishi-config",
+        "name": "新方案-PLC连接",
+        "host": "192.168.1.11",
+        "port": "10002",
+        "frame": "3E",
+        "series": "Q",
+        "protocol": "tcp",
+        "networkNo": "0",
+        "stationNo": "0",
+        "timeout": "3000",
+        "maxRetries": "2",
+        "retryInterval": "300"
+    },
+    {
+        "id": "inj-stress-1",
+        "type": "inject",
+        "z": "tab-stress-01",
+        "g": "grp-stress-old",
+        "name": "每500ms触发",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "0.5",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 210,
+        "y": 300,
+        "wires": [
+            [
+                "mc-stress-01"
+            ]
+        ]
+    },
+    {
+        "id": "mc-stress-01",
+        "type": "MC Read",
+        "z": "tab-stress-01",
+        "g": "grp-stress-old",
+        "name": "MC Read D0,100",
+        "topic": "",
+        "connection": "mc-config-stress",
+        "address": "D0,100",
+        "addressType": "str",
+        "outputFormat": 0,
+        "errorHandling": "throw",
+        "outputs": 1,
+        "x": 430,
+        "y": 300,
+        "wires": [
+            [
+                "func-stress-01"
+            ]
+        ]
+    },
+    {
+        "id": "func-stress-01",
+        "type": "function",
+        "z": "tab-stress-01",
+        "g": "grp-stress-old",
+        "name": "计数+时间戳",
+        "func": "var ctx = context.global || context;\nvar count = ctx.get('old_count') || 0;\ncount++;\nctx.set('old_count', count);\n\nmsg.old_count = count;\nmsg.old_time = new Date().toISOString();\nmsg.old_payload_size = JSON.stringify(msg.payload).length;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 300,
+        "wires": [
+            [
+                "debug-stress-old"
+            ]
+        ]
+    },
+    {
+        "id": "debug-stress-old",
+        "type": "debug",
+        "z": "tab-stress-01",
+        "g": "grp-stress-old",
+        "name": "🔴 老方案",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "old_count",
+        "targetType": "msg",
+        "statusVal": "old_count",
+        "statusType": "msg",
+        "x": 810,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "inj-stress-2",
+        "type": "inject",
+        "z": "tab-stress-01",
+        "g": "grp-stress-new",
+        "name": "每500ms触发",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "0.5",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 210,
+        "y": 500,
+        "wires": [
+            [
+                "mc-stress-02"
+            ]
+        ]
+    },
+    {
+        "id": "mc-stress-02",
+        "type": "mitsubishi-read",
+        "z": "tab-stress-01",
+        "g": "grp-stress-new",
+        "name": "EdgeLink D0-D99",
+        "config": "mc-config-stress2",
+        "tags": "[{\"id\":\"s0\",\"regType\":\"D\",\"addr\":\"0\",\"dataType\":\"INT16\",\"name\":\"D0\"},{\"id\":\"s1\",\"regType\":\"D\",\"addr\":\"1\",\"dataType\":\"INT16\",\"name\":\"D1\"},{\"id\":\"s2\",\"regType\":\"D\",\"addr\":\"2\",\"dataType\":\"INT16\",\"name\":\"D2\"},{\"id\":\"s3\",\"regType\":\"D\",\"addr\":\"3\",\"dataType\":\"INT16\",\"name\":\"D3\"},{\"id\":\"s4\",\"regType\":\"D\",\"addr\":\"4\",\"dataType\":\"INT16\",\"name\":\"D4\"},{\"id\":\"s5\",\"regType\":\"D\",\"addr\":\"5\",\"dataType\":\"INT16\",\"name\":\"D5\"},{\"id\":\"s6\",\"regType\":\"D\",\"addr\":\"6\",\"dataType\":\"INT16\",\"name\":\"D6\"},{\"id\":\"s7\",\"regType\":\"D\",\"addr\":\"7\",\"dataType\":\"INT16\",\"name\":\"D7\"},{\"id\":\"s8\",\"regType\":\"D\",\"addr\":\"8\",\"dataType\":\"INT16\",\"name\":\"D8\"},{\"id\":\"s9\",\"regType\":\"D\",\"addr\":\"9\",\"dataType\":\"INT16\",\"name\":\"D9\"}]",
+        "outputs": 1,
+        "x": 430,
+        "y": 500,
+        "wires": [
+            [
+                "func-stress-02"
+            ]
+        ]
+    },
+    {
+        "id": "func-stress-02",
+        "type": "function",
+        "z": "tab-stress-01",
+        "g": "grp-stress-new",
+        "name": "计数+时间戳",
+        "func": "var ctx = context.global || context;\nvar count = ctx.get('new_count') || 0;\ncount++;\nctx.set('new_count', count);\n\nmsg.new_count = count;\nmsg.new_time = new Date().toISOString();\nmsg.new_payload_size = JSON.stringify(msg.payload).length;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 500,
+        "wires": [
+            [
+                "debug-stress-new"
+            ]
+        ]
+    },
+    {
+        "id": "debug-stress-new",
+        "type": "debug",
+        "z": "tab-stress-01",
+        "g": "grp-stress-new",
+        "name": "🟢 新方案",
+        "active": false,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "new_count",
+        "targetType": "msg",
+        "statusVal": "new_count",
+        "statusType": "msg",
+        "x": 810,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "inj-stress-mon",
+        "type": "inject",
+        "z": "tab-stress-01",
+        "name": "每10秒统计",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "10",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.5,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 210,
+        "y": 700,
+        "wires": [
+            [
+                "func-stress-mon"
+            ]
+        ]
+    },
+    {
+        "id": "func-stress-mon",
+        "type": "function",
+        "z": "tab-stress-01",
+        "name": "📊 统计报告",
+        "func": "var ctx = context.global || context;\nvar oldCount = ctx.get('old_count') || 0;\nvar newCount = ctx.get('new_count') || 0;\nvar mem = process.memoryUsage();\n\nvar report = {\n    time: new Date().toISOString(),\n    old_count: oldCount,\n    new_count: newCount,\n    heap_mb: (mem.heapUsed / 1024 / 1024).toFixed(1),\n    diff_count: newCount - oldCount\n};\n\nnode.warn(JSON.stringify(report));\nmsg.payload = report;\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 700,
+        "wires": [
+            [
+                "debug-stress-mon"
+            ]
+        ]
+    },
+    {
+        "id": "debug-stress-mon",
+        "type": "debug",
+        "z": "tab-stress-01",
+        "name": "📊 统计输出",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 610,
+        "y": 700,
+        "wires": []
+    },
+    {
+        "id": "cmt-stress-title",
+        "type": "comment",
+        "z": "tab-stress-01",
+        "name": "🔬 长时间运行稳定性对比 — 每500ms读100点,持续运行",
+        "info": "操作步骤:\n1. 部署此Flow\n2. 打开Node-RED右上角菜单 → 系统信息 → 观察内存\n3. 运行5-10分钟,观察:\n   - 内存曲线: 哪个一直在涨? 哪个趋于平稳?\n   - 计数差异: 哪个丢了更多次?\n4. 每10秒控制台输出统计报告\n\n预期结果:\n- 老方案: 内存持续上涨,GC时有毛刺\n- 新方案: 内存平稳,IN_FLIGHT门禁防止队列堆积",
+        "x": 210,
+        "y": 200,
+        "wires": []
+    },
+    {
+        "id": "grp-stress-old",
+        "type": "group",
+        "z": "tab-stress-01",
+        "style": {
+            "stroke": "#e03131",
+            "stroke-opacity": "1",
+            "fill": "#fff5f5",
+            "fill-opacity": "0.6",
+            "label": true,
+            "label-position": "nw",
+            "color": "#c92a2a"
+        },
+        "nodes": [
+            "inj-stress-1",
+            "mc-stress-01",
+            "func-stress-01",
+            "debug-stress-old"
+        ],
+        "x": 174,
+        "y": 259,
+        "w": 674,
+        "h": 120
+    },
+    {
+        "id": "grp-stress-new",
+        "type": "group",
+        "z": "tab-stress-01",
+        "style": {
+            "stroke": "#2f9e44",
+            "stroke-opacity": "1",
+            "fill": "#f4fce3",
+            "fill-opacity": "0.6",
+            "label": true,
+            "label-position": "nw",
+            "color": "#2b8a3e"
+        },
+        "nodes": [
+            "inj-stress-2",
+            "mc-stress-02",
+            "func-stress-02",
+            "debug-stress-new"
+        ],
+        "x": 174,
+        "y": 459,
+        "w": 674,
+        "h": 120
+    }
+]

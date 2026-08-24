@@ -1,0 +1,65 @@
+<script type="text/html" data-template-name="edgelink-pg-config">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-config-input-name" placeholder="PG-本地">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-host"><i class="fa fa-server"></i> 主机</label>
+        <input type="text" id="node-config-input-host" placeholder="127.0.0.1">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-port"><i class="fa fa-plug"></i> 端口</label>
+        <input type="number" id="node-config-input-port" placeholder="5432">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-database"><i class="fa fa-database"></i> 数据库</label>
+        <input type="text" id="node-config-input-database" placeholder="ruoyi_pg">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-user"><i class="fa fa-user"></i> 用户名</label>
+        <input type="text" id="node-config-input-user" placeholder="postgres">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-password"><i class="fa fa-lock"></i> 密码</label>
+        <input type="password" id="node-config-input-password">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-maxConnections"><i class="fa fa-sitemap"></i> 最大连接数</label>
+        <input type="number" id="node-config-input-maxConnections" placeholder="10">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-idleTimeout"><i class="fa fa-clock-o"></i> 空闲超时(ms)</label>
+        <input type="number" id="node-config-input-idleTimeout" placeholder="30000">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="edgelink-pg-config">
+    <h3>EdgeLink PG 连接配置</h3>
+    <p>存储 PostgreSQL/TimescaleDB 连接参数。</p>
+    <p>多个 <b>edgelink-pg-store</b> 节点可引用同一配置，复用连接池。</p>
+    <h4>连接池</h4>
+    <ul>
+        <li><b>最大连接数</b>：连接池中保持的最大连接数（默认 10）</li>
+        <li><b>空闲超时</b>：空闲连接自动回收时间（默认 30000ms）</li>
+    </ul>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('edgelink-pg-config', {
+        category: 'config',
+        defaults: {
+            name: { value: 'PG-本地' },
+            host: { value: '127.0.0.1', required: true },
+            port: { value: 5432, required: true, validate: RED.validators.number() },
+            database: { value: 'ruoyi_pg', required: true },
+            user: { value: 'postgres', required: true },
+            password: { value: '' },
+            maxConnections: { value: 10, validate: RED.validators.number() },
+            idleTimeout: { value: 30000, validate: RED.validators.number() }
+        },
+        label: function () {
+            return this.name || 'PG-本地';
+        },
+        icon: 'font-awesome/fa-database'
+    });
+</script>

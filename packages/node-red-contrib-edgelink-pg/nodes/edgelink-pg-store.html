@@ -1,0 +1,124 @@
+<script type="text/html" data-template-name="edgelink-pg-store">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-input-name" placeholder="PG-写入">
+    </div>
+    <div class="form-row">
+        <label for="node-input-pgConfig"><i class="fa fa-database"></i> PG配置</label>
+        <input type="text" id="node-input-pgConfig">
+    </div>
+    <div class="form-row">
+        <label for="node-input-tableName"><i class="fa fa-table"></i> 表名</label>
+        <input type="text" id="node-input-tableName" placeholder="plc_data">
+    </div>
+    <div class="form-row">
+        <label></label>
+        <span style="font-size:0.85em; color:#888;">
+            支持 <code>${deviceId}</code> 动态分表：<code>plc_data_${deviceId}</code>
+        </span>
+    </div>
+    <hr style="margin:8px 0;">
+    <div class="form-row">
+        <label for="node-input-conflictStrategy"><i class="fa fa-shield"></i> 冲突策略</label>
+        <select id="node-input-conflictStrategy" style="width:150px">
+            <option value="ignore">忽略重复 (DO NOTHING)</option>
+            <option value="update">覆盖更新 (DO UPDATE)</option>
+            <option value="none">不处理 (报错)</option>
+        </select>
+    </div>
+    <hr style="margin:8px 0;">
+    <div class="form-row">
+        <label for="node-input-batchSize"><i class="fa fa-cubes"></i> 每批条数</label>
+        <input type="number" id="node-input-batchSize" placeholder="100" min="1" max="2000">
+    </div>
+    <div class="form-row">
+        <label for="node-input-bufferMax"><i class="fa fa-inbox"></i> 主缓冲上限</label>
+        <input type="number" id="node-input-bufferMax" placeholder="5000" min="50">
+    </div>
+    <div class="form-row">
+        <label for="node-input-flushInterval"><i class="fa fa-clock-o"></i> 定时刷新(ms)</label>
+        <input type="number" id="node-input-flushInterval" placeholder="5000">
+        <span style="font-size:0.85em; color:#888;">0 = 仅按批量或 msg.flush 触发</span>
+    </div>
+    <hr style="margin:8px 0;">
+    <div class="form-row">
+        <label for="node-input-retryBufferMax"><i class="fa fa-undo"></i> 重试缓冲上限</label>
+        <input type="number" id="node-input-retryBufferMax" placeholder="1000" min="50">
+    </div>
+    <div class="form-row">
+        <label for="node-input-retryInterval"><i class="fa fa-refresh"></i> 重试间隔(ms)</label>
+        <input type="number" id="node-input-retryInterval" placeholder="5000" min="1000">
+    </div>
+    <hr style="margin:8px 0;">
+    <div class="form-row">
+        <label></label>
+        <input type="checkbox" id="node-input-autoCreateTable" style="display:inline-block; width:auto;">
+        <label for="node-input-autoCreateTable" style="display:inline; width:auto; margin-left:4px;">
+            <i class="fa fa-magic"></i> 表不存在时自动建表
+        </label>
+    </div>
+    <div class="form-row" id="pg-create-opts" style="display:none">
+        <label for="node-input-idColumn"><i class="fa fa-key"></i> ID列名</label>
+        <input type="text" id="node-input-idColumn" placeholder="device_id" style="width:120px">
+        <label for="node-input-tsColumn" style="margin-left:8px"><i class="fa fa-clock-o"></i> 时间列名</label>
+        <input type="text" id="node-input-tsColumn" placeholder="insert_time" style="width:120px">
+    </div>
+    <div class="form-row">
+        <label></label>
+        <input type="checkbox" id="node-input-useTimescaleDB" style="display:inline-block; width:auto;">
+        <label for="node-input-useTimescaleDB" style="display:inline; width:auto; margin-left:4px;">
+            <i class="fa fa-line-chart"></i> 创建 TimescaleDB 超表
+        </label>
+        <span style="font-size:0.85em; color:#888;">（需数据库已安装 TimescaleDB 扩展）</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="edgelink-pg-store">
+    <h3>EdgeLink PG 批量写入节点</h3>
+    <p>接收上游数据，批量写入 PostgreSQL/TimescaleDB。</p>
+    <h4>冲突策略 🆕</h4>
+    <ul>
+        <li><b>忽略重复</b>：ON CONFLICT DO NOTHING（时序数据首选）</li>
+        <li><b>覆盖更新</b>：ON CONFLICT (时间, ID) DO UPDATE；MC 格式为 (insert_time, device_id, tag_id)（状态快照用）</li>
+        <li><b>不处理</b>：PG 报错则丢弃（需自行建唯一约束）</li>
+    </ul>
+    <h4>动态控制</h4>
+    <ul>
+        <li><code>msg.tableName</code>：动态覆盖表名</li>
+        <li><code>msg.flush = true</code>：强制立即写入</li>
+        <li><code>msg.conflictStrategy</code>：动态覆盖冲突策略</li>
+    </ul>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('edgelink-pg-store', {
+        category: 'edgelink',
+        color: '#C7E9C0',
+        defaults: {
+            name: { value: '' },
+            pgConfig: { type: 'edgelink-pg-config', required: true },
+            tableName: { value: 'plc_data', required: true },
+            conflictStrategy: { value: 'ignore' },
+            idColumn: { value: 'device_id' },
+            tsColumn: { value: 'insert_time' },
+            batchSize: { value: 100, validate: RED.validators.number() },
+            bufferMax: { value: 5000, validate: RED.validators.number() },
+            flushInterval: { value: 5000, validate: RED.validators.number() },
+            retryBufferMax: { value: 1000, validate: RED.validators.number() },
+            retryInterval: { value: 5000, validate: RED.validators.number() },
+            autoCreateTable: { value: false },
+            useTimescaleDB: { value: false }
+        },
+        inputs: 1, outputs: 1,
+        icon: 'font-awesome/fa-upload',
+        label: function () { return this.name || 'PG-写入'; },
+        paletteLabel: 'PG 写入',
+        oneditprepare: function () {
+            var $auto = $('#node-input-autoCreateTable');
+            var $opts = $('#pg-create-opts');
+            function toggle() { $opts.toggle($auto.prop('checked')); }
+            $auto.on('change', toggle);
+            toggle();
+        }
+    });
+</script>

@@ -1,0 +1,331 @@
+<script type="text/x-red" data-template-name="mitsubishi-write">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-input-name" placeholder="三菱MC写入">
+  </div>
+  <div class="form-row">
+    <label for="node-input-plc"><i class="fa fa-microchip"></i> PLC 配置</label>
+    <input type="text" id="node-input-plc" placeholder="选择 mitsubishi-config 节点">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceId"><i class="fa fa-id-card"></i> 设备ID</label>
+    <input type="text" id="node-input-deviceId" placeholder="1001">
+    <span style="font-size:0.85em;color:#888;margin-left:4px">独立使用时填入，输出 deviceId 固定为此值</span>
+  </div>
+  <div class="form-row">
+    <label for="node-input-serialNo"><i class="fa fa-hashtag"></i> 序列号 (4E帧, 0=不启用)</label>
+    <input type="number" id="node-input-serialNo" value="0" min="0" max="65535" style="width:100px">
+  </div>
+
+  <!-- 批量生成 + CSV -->
+  <div class="form-row" style="margin-top:8px">
+    <label><i class="fa fa-bolt"></i> 批量添加</label>
+  </div>
+  <div style="margin-bottom:6px;display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:11px">起始</span>
+    <input id="w-batch-start" type="number" value="0" min="0" style="width:60px;font-size:11px" placeholder="0">
+    <span style="font-size:11px">数量</span>
+    <input id="w-batch-count" type="number" value="1" min="1" max="500" style="width:55px;font-size:11px" placeholder="1">
+    <select id="w-batch-reg" style="width:55px;font-size:11px">
+      <option>D</option><option>W</option><option>R</option><option>X</option><option>Y</option><option>M</option><option>L</option><option>B</option>
+    </select>
+    <select id="w-batch-dt" style="width:75px;font-size:11px">
+      <option>INT16</option><option>UINT16</option><option>INT32</option><option>UINT32</option><option>FLOAT32</option><option>BOOL</option>
+    </select>
+    <button class="red-ui-button" onclick="addWriteTagBatch()" style="font-size:11px;padding:2px 8px">
+      <i class="fa fa-bolt"></i> 生成
+    </button>
+    <span style="flex:1"></span>
+    <button class="red-ui-button" onclick="$('#w-csv-import-area').toggle()" style="font-size:11px;padding:2px 8px;background:#888">
+      <i class="fa fa-upload"></i> CSV导入
+    </button>
+    <button class="red-ui-button" onclick="writeTagEditor.exportCSV()" style="font-size:11px;padding:2px 8px;background:#888">
+      <i class="fa fa-download"></i> 导出CSV
+    </button>
+  </div>
+
+  <!-- CSV 导入区 -->
+  <div id="w-csv-import-area" style="display:none;margin-bottom:6px">
+    <textarea id="w-csv-import-text" style="width:100%;height:60px;font-size:11px;box-sizing:border-box" placeholder="regType,addr,dataType,byteOrder,wordOrder,bitOffset,name,id,value
+D,100,INT16,,,src,温度设定点,temp_set,25.0
+M,0,BOOL,,,,,启动信号,m_start,"></textarea>
+    <button class="red-ui-button" onclick="writeTagEditor.doImportCSV()" style="font-size:11px;padding:2px 8px;margin-top:2px">
+      <i class="fa fa-check"></i> 确认导入
+    </button>
+    <span style="font-size:10px;color:#888;margin-left:4px">首行为列名，从第二行起每行一个点位。写入值：msg.payload.tags[].value 优先，缺省回落默认值列</span>
+  </div>
+
+  <!-- 分页 + 批量删除 -->
+  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px" id="w-tag-pager">
+    <span style="font-size:11px;color:#888">每页</span>
+    <select id="w-pager-size" onchange="writeTagEditor.setPageSize(this.value)" style="width:55px;font-size:11px">
+      <option value="50">50</option><option value="100" selected>100</option><option value="200">200</option><option value="500">500</option>
+    </select>
+    <button class="red-ui-button" onclick="writeTagEditor.goPage(0)" style="font-size:10px;padding:1px 5px">«</button>
+    <button class="red-ui-button" onclick="writeTagEditor.prevPage()" style="font-size:10px;padding:1px 5px">‹</button>
+    <span id="w-pager-info" style="font-size:11px;color:#888;min-width:80px">0-0 / 0</span>
+    <button class="red-ui-button" onclick="writeTagEditor.nextPage()" style="font-size:10px;padding:1px 5px">›</button>
+    <button class="red-ui-button" onclick="writeTagEditor.goPage(-1)" style="font-size:10px;padding:1px 5px">»</button>
+    <span style="flex:1"></span>
+    <button class="red-ui-button" onclick="writeTagEditor.deleteSelected()" style="font-size:10px;padding:1px 6px;background:#c44">
+      <i class="fa fa-trash"></i> 删除选中
+    </button>
+  </div>
+
+  <!-- 点位编辑表格 -->
+  <div class="form-row" style="margin-top:0">
+    <label><i class="fa fa-list"></i> 点位表格 (msg.payload.tags 传入时按 id/地址合并；value 缺省回落默认值)</label>
+  </div>
+  <div style="margin-bottom:4px;max-height:420px;overflow-y:auto">
+    <table style="width:100%;font-size:11px;border-collapse:collapse">
+      <thead>
+        <tr style="color:#888;position:sticky;top:0;background:#333">
+          <th style="width:3%"><input type="checkbox" id="w-tag-select-all" onchange="writeTagEditor.toggleAll(this.checked)" title="全选"></th>
+          <th style="width:8%;text-align:left">寄存器</th>
+          <th style="width:8%;text-align:left">地址</th>
+          <th style="width:10%;text-align:left">数据类型</th>
+          <th style="width:9%;text-align:left" title="字节序：16 位字内高低字节是否交换">字节序</th>
+          <th style="width:8%;text-align:left" title="字序：32/64 位类型高低字先后">字序</th>
+          <th style="width:6%;text-align:left" title="位偏移：BOOL 取字内第几位(0-15)">位</th>
+          <th style="width:12%;text-align:left">名称</th>
+          <th style="width:5%"></th>
+          <th style="width:10%;text-align:left">ID</th>
+          <th style="width:9%;text-align:left" title="静态默认值：msg 未提供 value 时使用；留空则必须由 msg 提供">默认值</th>
+        </tr>
+      </thead>
+      <tbody id="w-tags-tbody"></tbody>
+    </table>
+  </div>
+  <button class="red-ui-button" onclick="writeTagEditor.add(); writeTagEditor.goToLast();" style="margin-top:2px;font-size:11px">
+    <i class="fa fa-plus"></i> 添加点位
+  </button>
+  <input type="hidden" id="node-input-tags">
+
+  <hr>
+  <div style="color:#888;font-size:11px;margin-bottom:4px">
+    <i class="fa fa-info-circle"></i> 静态: 表格配置点位定义+默认值，任意消息触发即写入 | 动态: msg.payload.tags 按 id/地址合并覆盖<br>
+    写入值：msg.payload.tags[].value 优先，缺省回落表格默认值列；两者都无则跳过该点位<br>
+    输出: msg.payload.data[点位ID] = {value, quality, ts, regType}<br>
+    BOOL / 位设备地址自动走 RMW（读-改-写），非 BOOL 字元件直接批量写
+  </div>
+</script>
+
+<script type="text/javascript">
+  var writeTagEditor = {
+    rows: [],
+    page: 0,
+    pageSize: 100,
+    _selected: {},
+
+    init: function () {
+      try { this.rows = JSON.parse($('#node-input-tags').val() || '[]'); } catch (e) { this.rows = []; }
+      this.page = 0;
+      this.pageSize = parseInt($('#w-pager-size').val()) || 100;
+      this._selected = {};
+      this.render();
+    },
+
+    add: function () {
+      this.rows.push({ id: '', regType: 'D', addr: '', dataType: 'INT16', byteOrder: '', wordOrder: '', bitOffset: '', name: '', value: '' });
+      this.render();
+      this.save();
+    },
+
+    remove: function (idx) {
+      this.rows.splice(idx, 1);
+      delete this._selected[idx];
+      this.render();
+      this.save();
+    },
+
+    deleteSelected: function () {
+      var toRemove = Object.keys(this._selected).filter(function (k) { return this._selected[k]; }.bind(this)).map(Number).sort(function (a, b) { return b - a; });
+      if (toRemove.length === 0) { RED.notify('未选中任何点位', 'warning'); return; }
+      for (var i = 0; i < toRemove.length; i++) { this.rows.splice(toRemove[i], 1); }
+      this._selected = {};
+      this.render();
+      this.save();
+    },
+
+    toggleAll: function (checked) {
+      var self = this;
+      var start = this.page * this.pageSize;
+      var end = Math.min(start + this.pageSize, this.rows.length);
+      for (var i = start; i < end; i++) { self._selected[i] = checked; }
+      this.render();
+    },
+
+    update: function (idx, field, val) {
+      this.rows[idx][field] = val;
+      this.save();
+    },
+
+    save: function () {
+      $('#node-input-tags').val(JSON.stringify(this.rows));
+    },
+
+    totalPages: function () { return Math.max(1, Math.ceil(this.rows.length / this.pageSize)); },
+    goPage: function (p) {
+      if (p < 0) p = this.totalPages() - 1;
+      this.page = Math.max(0, Math.min(this.totalPages() - 1, p));
+      this.render();
+    },
+    goToLast: function () { this.goPage(-1); },
+    prevPage: function () { this.goPage(this.page - 1); },
+    nextPage: function () { this.goPage(this.page + 1); },
+    setPageSize: function (sz) { this.pageSize = parseInt(sz) || 100; this.page = 0; this.render(); },
+
+    doImportCSV: function () {
+      var text = $('#w-csv-import-text').val().trim();
+      if (!text) { RED.notify('请粘贴CSV数据', 'warning'); return; }
+      var lines = text.split('\n');
+      if (lines.length < 2) { RED.notify('CSV至少需要表头+1行数据', 'warning'); return; }
+      var headers = lines[0].split(',');
+      var added = 0;
+      for (var i = 1; i < lines.length; i++) {
+        var cols = lines[i].split(',');
+        if (cols.length < 2) continue;
+        var row = {};
+        for (var j = 0; j < headers.length; j++) {
+          var key = headers[j].trim();
+          if (key) row[key] = (cols[j] || '').trim();
+        }
+        this.rows.push({
+          id: row.id || '', regType: row.regType || 'D',
+          addr: row.addr || '', dataType: row.dataType || 'INT16',
+          byteOrder: row.byteOrder || '', wordOrder: row.wordOrder || '', bitOffset: row.bitOffset || '',
+          name: row.name || '', value: row.value || ''
+        });
+        added++;
+      }
+      this.render();
+      this.save();
+      this.goToLast();
+      $('#w-csv-import-area').hide();
+      $('#w-csv-import-text').val('');
+      RED.notify('导入 ' + added + ' 个点位');
+    },
+
+    exportCSV: function () {
+      var csv = 'regType,addr,dataType,byteOrder,wordOrder,bitOffset,name,id,value\n';
+      for (var i = 0; i < this.rows.length; i++) {
+        var r = this.rows[i];
+        csv += [r.regType||'', r.addr||'', r.dataType||'', r.byteOrder||'', r.wordOrder||'', r.bitOffset||'', r.name||'', r.id||'', r.value||''].join(',') + '\n';
+      }
+      var blob = new Blob(['﻿' + csv], {type: 'text/csv;charset=utf-8'});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a'); a.href = url; a.download = 'mc-write-tags.csv';
+      a.click(); URL.revokeObjectURL(url);
+    },
+
+    render: function () {
+      var self = this;
+      var start = this.page * this.pageSize;
+      var end = Math.min(start + this.pageSize, this.rows.length);
+      var pageRows = this.rows.slice(start, end);
+
+      $('#w-pager-info').text((this.rows.length > 0 ? (start + 1) : 0) + '-' + end + ' / ' + this.rows.length);
+
+      var tbody = $('#w-tags-tbody'); tbody.empty();
+
+      pageRows.forEach(function (row) {
+        var idx = start + pageRows.indexOf(row);
+
+        var mkOpt = function (vals, cur) {
+          var s = '';
+          vals.forEach(function (v) { s += '<option' + (cur === v ? ' selected' : '') + '>' + v + '</option>'; });
+          return s;
+        };
+        var mkSel = function (vals, cur) { return $('<select style="width:95%;font-size:11px">' + mkOpt(vals, cur) + '</select>'); };
+        var mkInp = function (val, ph, type, w) { return $('<input type="' + (type||'text') + '" style="width:' + (w||'90%') + ';font-size:11px" placeholder="' + (ph||'') + '">').val(val || ''); };
+
+        var tr = $('<tr>');
+
+        var cb = $('<input type="checkbox" style="margin:0">').prop('checked', !!self._selected[idx]);
+        cb.on('change', function () { self._selected[idx] = $(this).prop('checked'); });
+        tr.append($('<td>').append(cb));
+
+        var reg = mkSel(['D','W','R','X','Y','M','L','B'], row.regType || 'D');
+        reg.on('change', function () { self.update(idx, 'regType', $(this).val()); });
+        tr.append($('<td>').append(reg));
+
+        var addr = mkInp(row.addr, '100', 'text', '85%');
+        addr.on('change', function () { self.update(idx, 'addr', $(this).val()); });
+        tr.append($('<td>').append(addr));
+
+        var dt = mkSel(['INT16','UINT16','INT32','UINT32','FLOAT32','BOOL'], row.dataType || 'INT16');
+        dt.on('change', function () { self.update(idx, 'dataType', $(this).val()); });
+        tr.append($('<td>').append(dt));
+
+        var bo = mkSel(['','LITTLE_ENDIAN','BIG_ENDIAN'], row.byteOrder || '');
+        bo.on('change', function () { self.update(idx, 'byteOrder', $(this).val()); });
+        tr.append($('<td>').append(bo));
+
+        var wo = mkSel(['','LOW_FIRST','HIGH_FIRST'], row.wordOrder || '');
+        wo.on('change', function () { self.update(idx, 'wordOrder', $(this).val()); });
+        tr.append($('<td>').append(wo));
+
+        var bit = mkInp(row.bitOffset, '0-15', 'number', '80%');
+        bit.on('change', function () { self.update(idx, 'bitOffset', $(this).val()); });
+        tr.append($('<td>').append(bit));
+
+        var nm = mkInp(row.name, '温度设定点', 'text', '90%');
+        nm.on('change', function () { self.update(idx, 'name', $(this).val()); });
+        tr.append($('<td>').append(nm));
+
+        var del = $('<button class="red-ui-button" style="font-size:10px;padding:1px 5px">✕</button>');
+        del.on('click', function (e) { e.preventDefault(); self.remove(idx); });
+        tr.append($('<td>').append(del));
+
+        var id = mkInp(row.id, 'auto', 'text', '85%');
+        id.on('change', function () { self.update(idx, 'id', $(this).val()); });
+        tr.append($('<td>').append(id));
+
+        var val = mkInp(row.value, '静态值', 'text', '85%');
+        val.title = '静态默认值：msg 未提供 value 时使用';
+        val.on('change', function () { self.update(idx, 'value', $(this).val()); });
+        tr.append($('<td>').append(val));
+
+        tbody.append(tr);
+      });
+    }
+  };
+
+  RED.nodes.registerType('mitsubishi-write', {
+    category: 'edgelink',
+    color: '#FDD0A2',
+    defaults: {
+      name: { value: '三菱MC写入' },
+      plc: { type: 'mitsubishi-config', required: true },
+      deviceId: { value: '' },
+      serialNo: { value: 0 },
+      tags: { value: '[]' }
+    },
+    inputs: 1,
+    outputs: 1,
+    paletteLabel: 'MC 写入',
+    label: function () { return this.name || '三菱MC写入'; },
+    oneditprepare: function () {
+      writeTagEditor.init();
+      window.addWriteTagBatch = function () {
+        var start = parseInt($('#w-batch-start').val(), 10) || 0;
+        var count = parseInt($('#w-batch-count').val(), 10) || 1;
+        var reg   = $('#w-batch-reg').val() || 'D';
+        var dt    = $('#w-batch-dt').val() || 'INT16';
+        for (var i = 0; i < count; i++) {
+          writeTagEditor.rows.push({
+            id: '', regType: reg, addr: String(start + i),
+            dataType: dt, name: reg + (start + i),
+            byteOrder: '', wordOrder: '', bitOffset: '', value: ''
+          });
+        }
+        writeTagEditor.render();
+        writeTagEditor.save();
+        writeTagEditor.goToLast();
+      };
+    },
+    oneditsave: function () {
+      delete window.addWriteTagBatch;
+    }
+  });
+</script>

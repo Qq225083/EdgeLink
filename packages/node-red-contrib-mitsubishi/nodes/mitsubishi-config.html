@@ -1,0 +1,91 @@
+<script type="text/x-red" data-template-name="mitsubishi-config">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-config-input-name" placeholder="PLC-1">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-host"><i class="fa fa-globe"></i> IP 地址</label>
+    <input type="text" id="node-config-input-host" placeholder="192.168.1.10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> 端口</label>
+    <input type="number" id="node-config-input-port" placeholder="5007" min="1" max="65535">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-frame"><i class="fa fa-exchange"></i> 帧格式</label>
+    <select id="node-config-input-frame">
+      <option value="3E">3E (Q/L/FX3U)</option>
+      <option value="4E">4E (iQ-R/iQ-F/FX5U)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-series"><i class="fa fa-microchip"></i> PLC 系列</label>
+    <select id="node-config-input-series">
+      <option value="Q" selected>Q 系列</option>
+      <option value="L">L 系列</option>
+      <option value="iQ-R">iQ-R 系列</option>
+      <option value="FX">FX 系列（X/Y 为 8 进制地址）</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-protocol"><i class="fa fa-arrows-h"></i> 传输协议</label>
+    <select id="node-config-input-protocol">
+      <option value="tcp" selected>TCP（长连接，默认）</option>
+      <option value="udp">UDP（无连接，QJ71E71/内置以太网常用）</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-commCode"><i class="fa fa-font"></i> 数据代码</label>
+    <select id="node-config-input-commCode">
+      <option value="binary" selected>Binary（默认，绝大多数设备）</option>
+      <option value="ascii_q">ASCII-Q（Q/L/E71 老式 MC 协议，软元件名式）</option>
+      <option value="ascii_slmp">ASCII-SLMP（FX5/iQ-R，hex 直译式）</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-networkNo"><i class="fa fa-sitemap"></i> 网络号</label>
+    <input type="number" id="node-config-input-networkNo" value="0" min="0" max="255">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-stationNo"><i class="fa fa-server"></i> 站号</label>
+    <input type="number" id="node-config-input-stationNo" value="0" min="0" max="255">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-timeout"><i class="fa fa-clock-o"></i> 超时 (ms)</label>
+    <input type="number" id="node-config-input-timeout" value="3000" min="500" max="30000">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-maxRetries"><i class="fa fa-repeat"></i> 重试次数</label>
+    <input type="number" id="node-config-input-maxRetries" value="2" min="0" max="10">
+  </div>
+  <div class="form-row">
+    <label for="node-config-input-retryInterval"><i class="fa fa-hourglass-half"></i> 重试间隔 (ms)</label>
+    <input type="number" id="node-config-input-retryInterval" value="300" min="50" max="10000">
+  </div>
+</script>
+
+<script type="text/javascript">
+  RED.nodes.registerType('mitsubishi-config', {
+    category: 'config',
+    defaults: {
+      name: { value: 'PLC-1' },
+      host: { value: '192.168.1.10', required: true },
+      port: { value: 5007, required: true, validate: RED.validators.number() },
+      frame: { value: '3E', required: true },
+      series: { value: 'Q' },
+      protocol: { value: 'tcp', required: true },
+      ascii: { value: false },
+    
+      commCode: { value: 'binary' }, 
+      networkNo: { value: 0, validate: RED.validators.number() },
+      stationNo: { value: 0, validate: RED.validators.number() },
+      timeout: { value: 3000, validate: RED.validators.number() },
+      maxRetries: { value: 2, validate: RED.validators.number() },
+      retryInterval: { value: 300, validate: RED.validators.number() }
+    },
+    label: function () {
+      return this.name || 'PLC-1';
+    },
+    paletteLabel: 'PLC 连接配置'
+  });
+</script>

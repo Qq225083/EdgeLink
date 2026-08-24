@@ -1,0 +1,85 @@
+<script type="text/html" data-template-name="s7-read">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-input-name" placeholder="S7读取">
+  </div>
+  <div class="form-row">
+    <label for="node-input-s7"><i class="fa fa-globe"></i> S7 连接</label>
+    <input type="text" id="node-input-s7">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceId"><i class="fa fa-hashtag"></i> 设备ID</label>
+    <input type="text" id="node-input-deviceId" placeholder="留空则用上游 payload.id">
+  </div>
+  <div class="form-row">
+    <label style="width:100%">点位表（JSON，上游 msg.payload.tags 优先；此处留空 [] 则完全由上游驱动）</label>
+    <textarea id="node-input-tags" style="width:100%;height:180px;font-family:monospace;font-size:12px" spellcheck="false"></textarea>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="s7-read">
+  <h3>EdgeLink 西门子 S7 读取（只读，v1 不支持写入）</h3>
+  <p>按 EdgeLink 后端下发的快照批量采集西门子 S7 PLC（S7-200 SMART 除外，支持 S7-300/400/1200/1500）。</p>
+  <h4>输入（msg.payload）</h4>
+  <pre>{
+  id: 30, deviceName: 'xxx',
+  plcIp: '192.168.1.10', plcPort: 102,
+  protocolParams: { rack: 0, slot: 1 },
+  tags: [{ id: 59, regAddr: 'DB1.DBW0', regType: 'DB', dataType: 'INT16', name: '温度' }],
+  timeout: 3000, maxRetries: 2, retryInterval: 300
+}</pre>
+  <p>地址以 <b>regAddr</b>（TIA 风格字符串）为准；tag.addr 数字对 S7 无意义，忽略。</p>
+  <h4>输出（msg.payload）</h4>
+  <pre>{ success, deviceId, deviceName,
+  data: { &lt;tagId&gt;: { rawValue, quality, ts, regType } },
+  error, driverType: 'driver-s7', plcIp, plcPort, roundTimeMs }</pre>
+  <p>quality：0=GOOD，1=BAD（该点读取失败），2=UNCERTAIN。失败时同时触发 node.error（可被 catch 节点捕获）。</p>
+  <h4>地址格式（TIA 风格，大小写不敏感）</h4>
+  <ul>
+    <li>DB 区：<code>DB1.DBW0</code>（字）/ <code>DB1.DBD4</code>（双字）/ <code>DB1.DBX0.0</code>（位）</li>
+    <li>M 区：<code>MW10</code> / <code>MD10</code> / <code>M0.1</code></li>
+    <li>I 区：<code>IW0</code> / <code>ID0</code> / <code>I0.0</code></li>
+    <li>Q 区：<code>QW0</code> / <code>QD0</code> / <code>Q0.0</code></li>
+  </ul>
+  <h4>数据类型</h4>
+  <p>BOOL / INT16 / UINT16 / INT32 / UINT32 / FLOAT。<b>DOUBLE（LREAL）v1 暂不支持</b>，请改用 FLOAT。</p>
+  <p>S7 线序固定大端，byteOrder/wordOrder 设置无效。</p>
+  <p>S7-1200/1500 需在 TIA Portal 开启「允许 PUT/GET 访问」，DB 块取消「优化的块访问」。</p>
+</script>
+
+<script type="text/javascript">
+  RED.nodes.registerType('s7-read', {
+    category: 'edgelink',
+    color: '#D4E6F1',
+    defaults: {
+      name: { value: 'S7读取' },
+      s7: { type: 's7-config', required: true },
+      deviceId: { value: '' },
+      tags: { value: '[]' }
+    },
+    inputs: 1,
+    outputs: 1,
+    paletteLabel: 'S7 读取',
+    label: function () { return this.name || 'S7读取'; },
+    oneditprepare: function () {
+      // 点位表 JSON 美化展示（保存时由 Node-RED 原样收回字符串）
+      try {
+        var arr = JSON.parse(this.tags || '[]');
+        $('#node-input-tags').val(JSON.stringify(arr, null, 2));
+      } catch (e) {
+        $('#node-input-tags').val(this.tags || '[]');
+      }
+      var self = this;
+      $('#node-input-tags').on('change', function () {
+        // 校验 JSON 合法才写回，非法内容留待下次打开时人工处理
+        try {
+          var arr = JSON.parse($(this).val() || '[]');
+          self.tags = JSON.stringify(arr);
+          $('#node-input-tags').removeClass('input-error');
+        } catch (e) {
+          $('#node-input-tags').addClass('input-error');
+        }
+      });
+    }
+  });
+</script>

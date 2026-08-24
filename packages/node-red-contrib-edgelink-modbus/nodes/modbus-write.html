@@ -1,0 +1,122 @@
+<script type="text/html" data-template-name="modbus-write">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+    <input type="text" id="node-input-name" placeholder="Modbus写入">
+  </div>
+  <div class="form-row">
+    <label for="node-input-modbus"><i class="fa fa-microchip"></i> Modbus 配置</label>
+    <input type="text" id="node-input-modbus" placeholder="选择 modbus-config 节点">
+  </div>
+  <div class="form-row">
+    <label for="node-input-deviceId"><i class="fa fa-id-card"></i> 设备ID (独立使用时配置)</label>
+    <input type="text" id="node-input-deviceId" placeholder="2001">
+  </div>
+
+  <!-- 🆕 RTU 串口覆盖（留空 = 跟随 modbus-config；msg.payload.serialPort 传入时优先） -->
+  <div class="form-row">
+    <label for="node-input-serialPort"><i class="fa fa-plug"></i> 串口名 (RTU)</label>
+    <input type="text" id="node-input-serialPort" placeholder="留空=跟随连接配置，如 COM3">
+  </div>
+  <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px">
+    <span style="font-size:11px;color:#888">波特率</span>
+    <select id="node-input-baudRate" style="width:80px;font-size:11px">
+      <option value="">默认</option><option>1200</option><option>2400</option><option>4800</option>
+      <option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option>
+    </select>
+    <span style="font-size:11px;color:#888">数据位</span>
+    <select id="node-input-dataBits" style="width:50px;font-size:11px">
+      <option value="">默认</option><option>7</option><option>8</option>
+    </select>
+    <span style="font-size:11px;color:#888">校验</span>
+    <select id="node-input-parity" style="width:60px;font-size:11px">
+      <option value="">默认</option><option value="none">无</option><option value="even">偶</option><option value="odd">奇</option>
+    </select>
+    <span style="font-size:11px;color:#888">停止位</span>
+    <select id="node-input-stopBits" style="width:50px;font-size:11px">
+      <option value="">默认</option><option>1</option><option>2</option>
+    </select>
+  </div>
+
+  <hr>
+  <div style="color:#888;font-size:11px;margin-bottom:4px">
+    <i class="fa fa-info-circle"></i> 以下为静态默认，<b>msg.payload 传入时覆盖</b>。<br>
+    裸值触发: <code>msg.payload = 123</code> → 按面板地址/类型写入。
+  </div>
+
+  <div class="form-row">
+    <label for="node-input-regType"><i class="fa fa-database"></i> 寄存器类型</label>
+    <select id="node-input-regType" style="width:70%">
+      <option value="holding">保持寄存器 (FC06/16)</option>
+      <option value="coil">线圈 (FC05)</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-addr"><i class="fa fa-map-marker"></i> 地址</label>
+    <input type="number" id="node-input-addr" placeholder="0" min="0" max="65535">
+  </div>
+  <div class="form-row">
+    <label for="node-input-dataType"><i class="fa fa-font"></i> 数据类型</label>
+    <select id="node-input-dataType" style="width:70%">
+      <option>INT16</option><option>UINT16</option><option>INT32</option><option>UINT32</option><option>FLOAT32</option><option>DOUBLE</option><option>BOOL</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-byteOrder"><i class="fa fa-exchange"></i> 字节序</label>
+    <select id="node-input-byteOrder" style="width:70%">
+      <option value="">默认</option>
+      <option>AB</option><option>BA</option><option>ABCD</option><option>CDAB</option><option>BADC</option><option>DCBA</option>
+    </select>
+  </div>
+</script>
+
+<script type="text/html" data-help-name="modbus-write">
+  <h3>EdgeLink Modbus 写入节点（TCP / RTU）</h3>
+  <p>向 Modbus 设备写入单个点位：<b>线圈(FC05)</b>、<b>保持寄存器(FC06)</b>；32/64 位类型自动用 <b>FC16</b> 原子写入多寄存器。</p>
+  <h4>传输</h4>
+  <p><b>串口名 (RTU)</b> 留空 = Modbus TCP；填写（或 <code>msg.payload.serialPort</code> 传入，如 <code>COM3</code>）即走 Modbus RTU，串口参数缺省跟随连接配置（9600/8/N/1）。RTU 模式从站地址 unitId 必填 1-247。</p>
+  <h4>触发方式</h4>
+  <ul>
+    <li><b>裸值</b>：<code>msg.payload = 123</code> — 按面板配置的地址/类型写入</li>
+    <li><b>对象</b>：<code>msg.payload = { regType, addr, value, ... }</code> — 逐字段覆盖面板</li>
+  </ul>
+  <h4>对象字段</h4>
+  <ul>
+    <li><b>regType</b>：<code>holding</code> / <code>coil</code>（input/discrete 只读，拒绝）</li>
+    <li><b>addr</b>：0-65535（必填，除非面板已配）</li>
+    <li><b>value</b>：写入值（必填）。线圈接受 true/false/1/0/'on'</li>
+    <li><b>dataType</b>：INT16/UINT16/INT32/UINT32/FLOAT32/DOUBLE/BOOL（holding 用）</li>
+    <li><b>byteOrder</b>：AB/BA/ABCD/CDAB/BADC/DCBA；<b>wordOrder</b>：LOW_FIRST/HIGH_FIRST</li>
+    <li><b>unitId / plcIp / plcPort / serialPort / baudRate / timeout</b>：覆盖连接配置的默认值</li>
+  </ul>
+  <h4>输出</h4>
+  <p><code>msg.payload = { success, write:{regType,addr,value,fc,dataType}, error, deviceId, driverType, roundTimeMs }</code></p>
+  <h4>安全约定</h4>
+  <p>写失败<b>不自动重试</b>（写操作有副作用，超时请求可能已到达设备）；需要重试请在流程中自行决定重发。</p>
+  <h4>模拟模式</h4>
+  <p><code>RED.settings.mbSimulationMode = true</code> 时不连设备直接返回成功。</p>
+</script>
+
+<script type="text/javascript">
+  RED.nodes.registerType('modbus-write', {
+    category: 'edgelink',
+    color: '#F5D9C8',
+    defaults: {
+      name: { value: 'Modbus写入' },
+      modbus: { type: 'modbus-config', required: true },
+      deviceId: { value: '' },
+      serialPort: { value: '' },
+      baudRate: { value: '' },
+      dataBits: { value: '' },
+      parity: { value: '' },
+      stopBits: { value: '' },
+      regType: { value: 'holding' },
+      addr: { value: '' },
+      dataType: { value: 'INT16' },
+      byteOrder: { value: '' }
+    },
+    inputs: 1,
+    outputs: 1,
+    paletteLabel: 'Modbus 写入',
+    label: function () { return this.name || 'Modbus写入'; }
+  });
+</script>
