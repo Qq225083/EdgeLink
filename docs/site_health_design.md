@@ -140,7 +140,7 @@ EdgeLink 同时存在两套采集体系：
 
 ## 5. 前端页面 1：采集点登记（register）
 
-- 路由/菜单：EdgeLink 系统目录（menu_id=2083）下的二级目录「存量采集点监控」（menu_id=3000，与「连接配置」同级）→ `register`（完整 URL `/edgelink/site-health/register`）→ 组件 `plc/siteHealth/register/index`，权限 `site:health:add`。
+- 路由/菜单：EdgeLink 系统目录（menu_id=2083）下的二级目录「存量监控」（menu_id=3000，与「采集配置」同级）→ `register`（完整 URL `/edgelink/site-health/register`）→ 组件 `plc/siteHealth/register/index`，权限 `site:health:add`。
 - **表单字段**：
 
 | 字段 | 必填 | 校验 |
@@ -160,7 +160,7 @@ EdgeLink 同时存在两套采集体系：
 
 ## 6. 前端页面 2：采集点监控（monitor）
 
-- 路由/菜单：EdgeLink 系统目录（menu_id=2083）下的二级目录「存量采集点监控」（menu_id=3000，与「连接配置」同级）→ `monitor`（完整 URL `/edgelink/site-health/monitor`）→ 组件 `plc/siteHealth/monitor/index`，权限 `site:health:list`。
+- 路由/菜单：EdgeLink 系统目录（menu_id=2083）下的二级目录「存量监控」（menu_id=3000，与「采集配置」同级）→ `monitor`（完整 URL `/edgelink/site-health/monitor`）→ 组件 `plc/siteHealth/monitor/index`，权限 `site:health:list`。
 - **一览卡片**：顶部 5 张渐变色 KPI 卡（总数/在线/离线/未接入/已停用，复用 V12 监控页视觉语言），点击卡片即按状态过滤列表，再点一次回到全部；卡片数据来自 `GET /site/summary`。
 - **查询**：关键字模糊（采集场所/办公 IP/工业 IP/联系人）。
 - **列表列**：勾选、采集场所、办公网 IP、工业网 IP、**端口**、联系人、状态、最近心跳、心跳间隔、进程内存、整机已用、运行流、运行时长、上报 IP。
@@ -291,5 +291,5 @@ npm install node-red-contrib-edgelink-site-health-1.0.3.tgz
 | 前端 API | `ruoyi-fastapi-frontend/src/api/plc/siteHealth.js` |
 | Node-RED 节点 | `packages/node-red-contrib-edgelink-site-health/` |
 | 建表脚本（两表合一，手工建库用） | `docs/site_health_init.sql` |
-| 菜单初始化（EdgeLink 目录下二级目录「存量采集点监控」+ 两个页面 + 按钮权限） | `docs/site_health_menu_init.sql` |
+| 菜单初始化（EdgeLink 目录下二级目录「存量监控」+ 两个页面 + 按钮权限） | `docs/site_health_menu_init.sql` |
 | 迁移脚本（已有旧表补 `node_port` 列） | `docs/migration_site_health_node_port.sql` |
