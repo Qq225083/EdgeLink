@@ -1,0 +1,80 @@
+<script type="text/html" data-template-name="site-health">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-input-name" placeholder="采集点健康度">
+    </div>
+    <div class="form-row">
+        <label for="node-input-server"><i class="fa fa-server"></i> 服务器 IP</label>
+        <input type="text" id="node-input-server" placeholder="例如 192.168.1.10">
+    </div>
+    <div class="form-row">
+        <label for="node-input-port"><i class="fa fa-plug"></i> 端口</label>
+        <input type="number" id="node-input-port" placeholder="80">
+    </div>
+    <div class="form-row">
+        <label for="node-input-basePath"><i class="fa fa-link"></i> 接口路径前缀</label>
+        <input type="text" id="node-input-basePath" placeholder="/prod-api">
+        <span class="form-tips" style="margin-left:8px;color:#888;">系统在子目录/反代下填前缀；直连后端留空</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-interval"><i class="fa fa-clock-o"></i> 心跳频率（秒）</label>
+        <input type="number" id="node-input-interval" placeholder="30">
+        <span class="form-tips" style="margin-left:8px;color:#888;">10–180</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-https"><i class="fa fa-lock"></i> 使用 HTTPS</label>
+        <input type="checkbox" id="node-input-https" style="display:inline-block;width:auto;">
+    </div>
+    <div class="form-row">
+        <label for="node-input-key"><i class="fa fa-key"></i> 密钥 Key</label>
+        <input type="password" id="node-input-key" placeholder="登记时生成的 Key">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="site-health">
+    <h3>采集点健康度监视</h3>
+    <p>定期采集本机 Node-RED 的运行信息（进程 / 整机内存、运行流数量、Node-RED 版本、运行时长），
+       经 HTTP 直连上报到后端「存量采集点监控」，用于领导监控老版采集程序是否正常工作。</p>
+    <p><b>Key</b> 在管理端「存量采集点监控 → 采集点登记」页生成，<b>仅显示一次</b>，请立即复制保存。</p>
+    <h4>配置项</h4>
+    <ul>
+        <li><b>服务器 IP / 端口</b>：EdgeLink 后端地址（或反向代理地址）。</li>
+        <li><b>接口路径前缀</b>：系统部署在子目录/反向代理下时填前缀（如 <code>/prod-api</code>），直连后端则留空。</li>
+        <li><b>心跳频率</b>：10–180 秒，默认 30 秒。过于频繁无意义且增加后端负载。</li>
+        <li><b>使用 HTTPS</b>：后端若启用 TLS 则勾选。仅支持受信任 CA 签发的证书；自签名证书会握手失败（节点一直黄灯退避），此时请改用 HTTP 或在系统层信任该证书。</li>
+        <li><b>密钥 Key</b>：敏感信息，存于 <code>flows_cred.json</code>，不写入 <code>flows.json</code>。</li>
+    </ul>
+    <p>节点会自动上报 Node-RED 监听端口（<code>uiPort</code>），用于区分同一台机器上的多个 Node-RED 实例。</p>
+    <h4>状态灯</h4>
+    <ul>
+        <li><span style="color:#5cb85c;">● 绿</span>：上报正常。</li>
+        <li><span style="color:#f0ad4e;">● 黄</span>：连接失败 / 服务端异常，指数退避重试中。</li>
+        <li><span style="color:#d9534f;">● 红</span>：Key 无效或未配置，已停止上报。</li>
+        <li><span style="color:#f0ad4e;">● 黄</span>：上报来源 IP/端口与登记不符 —— 低频重探中（300s），服务端改回登记信息后自动恢复。</li>
+    </ul>
+    <p>本节点只读、旁观，不干预既有采集流；后端不可达时静默退避，不影响采集主流程。</p>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('site-health', {
+        category: 'function',
+        color: '#7bc2e3',
+        defaults: {
+            name: { value: '采集点健康度' },
+            server: { value: '', required: true },
+            port: { value: 80, required: true, validate: RED.validators.number() },
+            basePath: { value: '' },
+            interval: { value: 30, required: true, validate: function (v) { return v >= 10 && v <= 180; } },
+            https: { value: false }
+        },
+        credentials: {
+            key: { type: 'password' }
+        },
+        inputs: 0,
+        outputs: 0,
+        icon: 'font-awesome/fa-heartbeat',
+        label: function () {
+            return this.name || '采集点健康度';
+        }
+    });
+</script>

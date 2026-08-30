@@ -150,3 +150,6 @@ tmp_extract/
 
 # Node.js
 node_modules/
+
+# Node-RED 节点包构建产物（npm pack 生成，随时可重建，不入库）
+packages/node-red-contrib-edgelink-site-health/*.tgz

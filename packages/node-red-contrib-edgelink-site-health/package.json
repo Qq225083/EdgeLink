@@ -1,0 +1,31 @@
+{
+  "name": "node-red-contrib-edgelink-site-health",
+  "version": "1.0.6",
+  "description": "EdgeLink 存量采集点健康度监视节点 — 定期上报 Node-RED 心跳/内存/运行信息到后端，零依赖，兼容旧版 Node-RED",
+  "author": {
+    "name": "chunhailiu"
+  },
+  "license": "MIT",
+  "keywords": [
+    "node-red",
+    "edgelink",
+    "health",
+    "heartbeat",
+    "monitor",
+    "plc",
+    "scada"
+  ],
+  "engines": {
+    "node": ">=8.0.0"
+  },
+  "node-red": {
+    "version": ">=1.0.0",
+    "nodes": {
+      "site-health": "nodes/site-health.js"
+    }
+  },
+  "files": [
+    "nodes/",
+    "README.md"
+  ]
+}

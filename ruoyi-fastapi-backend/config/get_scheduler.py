@@ -151,6 +151,7 @@ class SchedulerUtil:
     def _register_builtin_monitor_tasks(cls) -> None:
         """注册 EdgeLink 监控中心内置后台任务"""
         from module_task.monitor_task import check_offline_nodes_task, check_offline_devices_task, clean_heartbeat_logs_task
+        from module_task.site_health_task import clean_site_health_heartbeat_logs_task
 
         # 离线节点检测：每30秒执行一次
         scheduler.add_job(
@@ -190,7 +191,19 @@ class SchedulerUtil:
             coalesce=True,
             max_instances=1,
         )
-        logger.info('📎 内置监控任务已注册：离线检测（每30s）、心跳日志清理（每天3:00）')
+        # 存量采集点心跳履历清理：每天凌晨3点30执行（与 V12 心跳日志清理错开）
+        scheduler.add_job(
+            func=clean_site_health_heartbeat_logs_task,
+            trigger=CronTrigger(hour=3, minute=30),
+            id='builtin_clean_site_health_heartbeat_logs',
+            name='存量采集点履历清理',
+            replace_existing=True,
+            jobstore='redis',
+            executor='default',
+            coalesce=True,
+            max_instances=1,
+        )
+        logger.info('📎 内置监控任务已注册：离线检测（每30s）、心跳日志清理（每天3:00）、存量采集点履历清理（每天3:30）')
 
     @classmethod
     async def close_system_scheduler(cls) -> None:
