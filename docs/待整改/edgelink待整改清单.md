@@ -170,14 +170,15 @@
 | 97 | 边缘节点 | 🟡 P1 | Node-RED 无本地配置缓存，后端崩溃时重启无法继续采集 | `docs/V12/edgelink_v12_main_flow.json`（`sf-config-manager`） | 当前 Node-RED 配置完全依赖后端实时拉取，后端崩溃时如果 Node-RED 重启，无法获取配置导致采集停止。 | Node-RED 拉取配置成功后缓存到本地文件（如 `edge_config_cache.json`）；启动时先读缓存，后端不可用则用缓存配置继续采集；配置更新时同步刷新缓存。 | 已经修复待验证 | Claude | 2026-07-22 | | |
 | 98 | 配置下发 | 🟡 P1 | Bootstrap 自动注册 v2.0：Node-RED 零配置自动注册与两阶段配置下发 | `module_plc/controller/bootstrap_controller.py`<br>`module_plc/entity/do/bootstrap_key_do.py`<br>`docs/V12/edgelink_v12_main_flow.json`<br>`init_plc_db.py` | 当前 Node-RED 需手动配置 `edge_bootstrapKey`/`edge_bootstrapSecret`/`edge_hostPcIp`，新增 PC 时需逐台修改 `settings.js`；且 `/auto` 接口返回全部业务凭据，Node-RED 持有 admin 权限，IP 变更创建僵尸记录。 | 两阶段 Bootstrap：`/auto` 只返回 `node_key` + `secret_key`，`/bootstrap` 用 `secret_key` 获取业务配置；创建 `edge_collector` 专用角色（无 admin 权限）；`machine_fingerprint` 处理 IP 变更自动映射；Node-RED 自动检测 IP 和端口，零配置启动。数据库部分已完成（`machine_fingerprint` 字段、`edge_collector` 角色和权限），接口和 Node-RED 两阶段调用已完成。 | 已经修复待验证 | Claude | 2026-07-22 | | |
 | 99 | 工程化 | 🟢 P2 | 驱动管理页面缺失，无法 Web 端维护 `plc_driver` 和 `plc_protocol_compat` | `module_plc/controller/driver_admin_controller.py`<br>`module_plc/controller/protocol_compat_admin_controller.py`<br>`src/views/plc/driver/index.vue` | 当前 `plc_driver` 和 `plc_protocol_compat` 表已创建，但前端无页面管理，新增驱动或映射需直接操作数据库。 | 新增「驱动管理」页面：列表展示驱动编码/名称/节点类型/能力标识/状态；支持新增、编辑、删除、启用禁用；新增「协议兼容映射」维护接口和页面；JSON schema 校验、唯一性校验、设备引用检查。 | 已经修复待验证 | Claude | 2026-07-22 | | |
+| 100 | 存量采集点监控 | 🟡 P1 | `site_health_site` 表新增 `node_port` 列，登记/列表区分同 IP 多端口实例 | `module_site_health/entity/do/site_health_do.py`<br>`module_site_health/entity/vo/site_health_vo.py`<br>`module_site_health/service/site_health_service.py`<br>`src/views/plc/siteHealth/register/index.vue`<br>`src/views/plc/siteHealth/monitor/index.vue`<br>`docs/migration_site_health_node_port.sql` | 同一 IP 可部署多个 Node-RED 实例（如 8000/8001），登记页仅收集 IP 无法区分实例；已有库的 `site_health_site` 表缺 `node_port` 列。 | 后端实体/VO/服务层新增 `node_port`（登记手动填、心跳上报自动回填，`report_ip` 不再拼接 `:port`），前端登记页与监控列表增加「端口」字段；已有库执行 `docs/migration_site_health_node_port.sql` 补列。 | 已经修复待验证 | Claude | 2026-08-29 | | |
 
 ---
 
 ## 修复状态统计
 
-- 未修复：7 / 99
-- 已经修复待验证：91 / 99
-- 已验证：1 / 99
+- 未修复：7 / 100
+- 已经修复待验证：92 / 100
+- 已验证：1 / 100
 
 ---
 
