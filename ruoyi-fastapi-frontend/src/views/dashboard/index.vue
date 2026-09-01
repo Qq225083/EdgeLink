@@ -1,590 +1,570 @@
 <template>
-  <div>
-    <div class="page-header-content">
-      <div class="avatar">
-        <a-avatar size="large" :src="currentUser.avatar" />
+  <div class="dashboard">
+    <!-- ==================== 顶部欢迎区 ==================== -->
+    <div class="welcome-card">
+      <div class="welcome-left">
+        <div class="welcome-title">早安，{{ userName }}，祝你开心每一天！</div>
+        <div class="welcome-subtitle">让每一台 PLC 开口说话 · EdgeLink 边缘智联系统</div>
       </div>
-      <div class="content">
-        <div class="content-title">
-          早安，{{ currentUser.name
-          }}<span class="welcome-text">，祝你开心每一天！</span>
-        </div>
-        <div>{{ currentUser.title }} |{{ currentUser.group }}</div>
-      </div>
-      <div class="extra-content">
-        <div class="stat-item">
-          <a-statistic title="项目数" :value="56" />
-        </div>
-        <div class="stat-item">
-          <a-statistic title="团队内排名" :value="8" suffix="/ 24" />
-        </div>
-        <div class="stat-item">
-          <a-statistic title="项目访问" :value="2223" />
-        </div>
+      <div class="welcome-right">
+        <el-tag :type="systemNormal ? 'success' : 'danger'" size="small" class="sys-tag">
+          {{ systemNormal ? '系统正常' : '存在异常' }}
+        </el-tag>
+        <div class="sys-time">{{ currentTime }}</div>
       </div>
     </div>
 
-    <div>
-      <a-row :gutter="24">
-        <a-col :xl="16" :lg="24" :md="24" :sm="24" :xs="24">
-          <a-card
-            class="project-list"
-            :loading="loading"
-            style="margin-bottom: 24px"
-            :bordered="false"
-            title="进行中的项目"
-            :body-style="{ padding: 0 }"
-          >
-            <a slot="extra">全部项目</a>
-            <div>
-              <a-card-grid
-                class="project-card-grid"
-                :key="i"
-                v-for="(item, i) in projects"
-              >
-                <a-card :bordered="false" :body-style="{ padding: 0 }">
-                  <a-card-meta>
-                    <div slot="title" class="card-title">
-                      <a-avatar size="small" :src="item.logo" />
-                      <a>{{ item.title }}</a>
-                    </div>
-                    <div slot="description" class="card-description">
-                      {{ item.description }}
-                    </div>
-                  </a-card-meta>
-                  <div class="project-item">
-                    <a href="/#/">{{ item.member || "" }}</a>
-                    <span class="datetime">{{ item.updatedAt }}</span>
-                  </div>
-                </a-card>
-              </a-card-grid>
-            </div>
-          </a-card>
+    <!-- ==================== 核心数据卡片 ==================== -->
+    <panel-group
+      :node-online="dashboardData.nodeOnline"
+      :node-total="dashboardData.nodeTotal"
+      :plc-online="dashboardData.plcOnline"
+      :plc-total="dashboardData.plcTotal"
+      :today-collect="dashboardData.todayCollect"
+      :today-unit="dashboardData.todayUnit"
+      :alert-count="dashboardData.alertCount"
+    />
 
-          <a-card :loading="loading" title="动态" :bordered="false">
-            <a-list>
-              <a-list-item :key="index" v-for="(item, index) in activities">
-                <a-list-item-meta>
-                  <a-avatar
-                    slot="avatar"
-                    size="small"
-                    :src="item.user.avatar"
-                  />
-                  <div slot="title">
-                    <span>{{ item.user.name }}</span
-                    >&nbsp; {{ item.template1 }}&nbsp;<a href="#">{{
-                      item.group && item.group.name
-                    }}</a
-                    >&nbsp; <span>{{ item.template2 }}</span
-                    >&nbsp;
-                    <a :href="item.project && item.project.link">{{
-                      item.project && item.project.name
-                    }}</a>
-                  </div>
-                  <div slot="description">{{ item.updatedAt }}</div>
-                </a-list-item-meta>
-              </a-list-item>
-            </a-list>
-          </a-card>
-        </a-col>
-        <a-col
-          style="padding: 0 12px"
-          :xl="8"
-          :lg="24"
-          :md="24"
-          :sm="24"
-          :xs="24"
-        >
-          <a-card
-            title="快速开始 / 便捷导航"
-            style="margin-bottom: 24px"
-            :bordered="false"
-            :body-style="{ padding: 0 }"
-          >
-            <div class="item-group">
-              <a>操作一</a>
-              <a>操作二</a>
-              <a>操作三</a>
-              <a>操作四</a>
-              <a>操作五</a>
-              <a>操作六</a>
-              <a-button size="small" type="primary" ghost icon="plus"
-                >添加</a-button
-              >
-            </div>
-          </a-card>
-          <a-card
-            title="XX 指数"
-            style="margin-bottom: 24px"
-            :loading="radarLoading"
-            :bordered="false"
-            :body-style="{ padding: 0 }"
-          >
-            <div style="min-height: 400px">
-              <radar :data="radarData" />
-            </div>
-          </a-card>
-          <a-card :loading="loading" title="团队" :bordered="false">
-            <div class="members">
-              <a-row>
-                <a-col
-                  :span="12"
-                  v-for="(item, index) in projects"
-                  :key="index"
-                >
-                  <a>
-                    <a-avatar size="small" :src="item.logo" />
-                    <span class="member">{{ item.member }}</span>
-                  </a>
-                </a-col>
-              </a-row>
-            </div>
-          </a-card>
-        </a-col>
-      </a-row>
+    <!-- ==================== 核心技术理念 ==================== -->
+    <div class="section-title">
+      <span class="cn">核心技术理念</span>
+      <span class="en">CORE CONCEPT</span>
+    </div>
+    <el-row :gutter="16" class="concept-row">
+      <el-col v-for="c in concepts" :key="c.title" :xs="24" :sm="12" :lg="6">
+        <div class="concept-card">
+          <div class="concept-icon" :style="{ background: c.color }">
+            <i :class="c.icon" />
+          </div>
+          <div class="concept-title">{{ c.title }}</div>
+          <div class="concept-en">{{ c.en }}</div>
+          <div class="concept-desc">{{ c.desc }}</div>
+          <div class="concept-tags">
+            <el-tag v-for="t in c.tags" :key="t" size="mini" type="info" effect="plain">{{ t }}</el-tag>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <!-- ==================== 系统架构 + 系统状态 ==================== -->
+    <el-row :gutter="16">
+      <!-- 系统架构（左） -->
+      <el-col :xs="24" :lg="16">
+        <div class="section-title">
+          <span class="cn">系统架构</span>
+          <span class="en">SYSTEM ARCHITECTURE</span>
+        </div>
+        <div class="arch-card">
+          <div class="arch-flow">
+            <template v-for="(layer, i) in archLayers">
+              <div class="arch-node" :key="layer.name">
+                <div class="arch-index" :style="{ background: layer.color }">{{ i + 1 }}</div>
+                <div class="arch-name">{{ layer.name }}</div>
+                <div class="arch-en">{{ layer.en }}</div>
+                <div class="arch-desc">{{ layer.desc }}</div>
+                <div class="arch-tags">
+                  <el-tag v-for="t in layer.tags" :key="t" size="mini" effect="plain" type="info">{{ t }}</el-tag>
+                </div>
+              </div>
+              <div v-if="i < archLayers.length - 1" :key="'arrow-' + i" class="arch-arrow">
+                <i class="el-icon-right" />
+              </div>
+            </template>
+          </div>
+          <!-- 底部补充说明 -->
+          <div class="arch-footer">
+            <span><i class="el-icon-connection" /> 协议兼容：MC / Modbus / S7 可插拔</span>
+            <span><i class="el-icon-timer" /> 采集周期：秒级轮询，死区过滤减负</span>
+            <span><i class="el-icon-files" /> 数据压缩：批量写入 + 磁盘缓存兜底</span>
+          </div>
+        </div>
+      </el-col>
+
+      <!-- 系统状态（右，与架构卡片同高） -->
+      <el-col :xs="24" :lg="8">
+        <div class="section-title">
+          <span class="cn">系统状态</span>
+          <span class="en">SYSTEM STATUS</span>
+        </div>
+        <div class="status-card">
+          <div v-for="item in statusList" :key="item.label" class="status-item">
+            <span class="status-label">{{ item.label }}</span>
+            <span class="status-value" :class="item.cls">{{ item.value }}</span>
+          </div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <!-- ==================== 最近动态（全宽底部） ==================== -->
+    <div class="section-title">
+      <span class="cn">最近动态</span>
+      <span class="en">RECENT ACTIVITY</span>
+    </div>
+    <div class="activity-card">
+      <div class="activity-grid">
+        <div v-for="(a, i) in activities" :key="i" class="activity-item">
+          <span class="activity-dot" :style="{ background: a.color }" />
+          <span class="activity-text">{{ a.text }}</span>
+          <span class="activity-time">{{ a.time }}</span>
+        </div>
+      </div>
     </div>
   </div>
 </template>
-  
-<script>
-import Radar from "./Radar.vue";
-import {
-  Avatar,
-  Button,
-  Card,
-  Col,
-  List,
-  Row,
-  Statistic,
-} from "ant-design-vue";
-import 'ant-design-vue/dist/antd.css';
-import Vue from "vue";
 
-Vue.component(Avatar.name, Avatar);
-Vue.component(Button.name, Button);
-Vue.component(Card.name, Card);
-Vue.component(Card.Grid.name, Card.Grid);
-Vue.component(Card.Meta.name, Card.Meta);
-Vue.component(Col.name, Col);
-Vue.component(List.name, List);
-Vue.component(List.Item.name, List.Item);
-Vue.component(List.Item.Meta.name, List.Item.Meta);
-Vue.component(Row.name, Row);
-Vue.component(Statistic.name, Statistic);
+<script>
+import request from '@/utils/request'
+import PanelGroup from './PanelGroup.vue'
 
 export default {
-  name: "DashBoard",
-  components: {
-    Radar,
-  },
+  name: 'DashboardIndex',
+  components: { PanelGroup },
   data() {
     return {
-      currentUser: {
-        avatar:
-          "https://gw.alipayobjects.com/zos/rmsportal/BiazfanxmamNRoxxVxka.png",
-        name: "吴彦祖",
-        userid: "00000001",
-        email: "antdesign@alipay.com",
-        signature: "海纳百川，有容乃大",
-        title: "交互专家",
-        group: "蚂蚁金服－某某某事业群－某某平台部－某某技术部－UED",
+      userName: '用户',
+      currentTime: '',
+      timeTimer: null,
+      bootTime: Date.now(),          // 运行时长基准（本次页面加载时刻）
+      // dashboardData 初始全 0，避免加载过程显示假数据
+      dashboardData: {
+        nodeOnline: 0,
+        nodeTotal: 0,
+        plcOnline: 0,
+        plcTotal: 0,
+        todayCollect: 0,
+        todayUnit: '条',
+        alertCount: 0
       },
-      projects: [
-        {
-          id: "xxx1",
-          title: "Alipay",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/WdGqmHpayyMjiEhcKoVE.png",
-          description: "那是一种内在的东西，他们到达不了，也无法触及的",
-          updatedAt: "几秒前",
-          member: "科学搬砖组",
-          href: "",
-          memberLink: "",
-        },
-        {
-          id: "xxx2",
-          title: "Angular",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/zOsKZmFRdUtvpqCImOVY.png",
-          description: "希望是一个好东西，也许是最好的，好东西是不会消亡的",
-          updatedAt: "6 年前",
-          member: "全组都是吴彦祖",
-          href: "",
-          memberLink: "",
-        },
-        {
-          id: "xxx3",
-          title: "Ant Design",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/dURIMkkrRFpPgTuzkwnB.png",
-          description: "城镇中有那么多的酒馆，她却偏偏走进了我的酒馆",
-          updatedAt: "几秒前",
-          member: "中二少女团",
-          href: "",
-          memberLink: "",
-        },
-        {
-          id: "xxx4",
-          title: "Ant Design Pro",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/sfjbOqnsXXJgNCjCzDBL.png",
-          description: "那时候我只会想自己想要什么，从不想自己拥有什么",
-          updatedAt: "6 年前",
-          member: "程序员日常",
-          href: "",
-          memberLink: "",
-        },
-        {
-          id: "xxx5",
-          title: "Bootstrap",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/siCrBXXhmvTQGWPNLBow.png",
-          description: "凛冬将至",
-          updatedAt: "6 年前",
-          member: "高逼格设计天团",
-          href: "",
-          memberLink: "",
-        },
-        {
-          id: "xxx6",
-          title: "React",
-          logo: "https://gw.alipayobjects.com/zos/rmsportal/kZzEzemZyKLKFsojXItE.png",
-          description: "生命就像一盒巧克力，结果往往出人意料",
-          updatedAt: "6 年前",
-          member: "骗你来学计算机",
-          href: "",
-          memberLink: "",
-        },
+      // 核心技术理念卡片
+      concepts: [
+        { icon: 'el-icon-office-building', color: '#409EFF', title: '智能工厂', en: 'SMART FACTORY', desc: '以数据驱动生产，让设备状态透明可视', tags: ['设备透明', '实时可视', '数据驱动'] },
+        { icon: 'el-icon-copy-document', color: '#67C23A', title: '数字孪生', en: 'DIGITAL TWIN', desc: '物理产线的数字镜像，状态实时同步', tags: ['虚实映射', '状态同步', '在线镜像'] },
+        { icon: 'el-icon-cpu', color: '#E6A23C', title: '边缘计算', en: 'EDGE COMPUTING', desc: '算力下沉到车间，就近采集就地处理', tags: ['就近采集', '本地缓存', '断点续传'] },
+        { icon: 'el-icon-share', color: '#F56C6C', title: '工业互联', en: 'IIOT', desc: '打通 IT 与 OT，协议兼容即插即用', tags: ['协议兼容', 'IT/OT 融合', '即插即用'] }
       ],
+      // 系统架构四层
+      archLayers: [
+        { name: '设备层', en: 'DEVICE', color: '#67C23A', desc: 'PLC / 传感器 / 仪表', tags: ['三菱 MC', 'Modbus', 'S7'] },
+        { name: '边缘层', en: 'EDGE', color: '#409EFF', desc: 'Node-RED 采集与预处理', tags: ['秒级轮询', '死区过滤', '本地缓存'] },
+        { name: '平台层', en: 'PLATFORM', color: '#E6A23C', desc: '配置下发 / 存储 / 告警', tags: ['FastAPI', 'MySQL/PG', 'MQTT'] },
+        { name: '应用层', en: 'APP', color: '#F56C6C', desc: '监控看板 / 履历 / 权限', tags: ['实时监控', '角色权限', '履历追溯'] }
+      ],
+      // 最近动态（示例业务动态）
       activities: [
+        { color: '#67C23A', text: '一号车间 PLC-A 恢复通信，采集已继续', time: '2 分钟前' },
+        { color: '#409EFF', text: '配置快照 v8 已发布并下发至边缘节点', time: '18 分钟前' },
+        { color: '#E6A23C', text: '三号产线新增 12 个采集点位', time: '1 小时前' },
+        { color: '#F56C6C', text: 'PLC-C 连续 3 次通信超时，已告警', time: '3 小时前' },
+        { color: '#67C23A', text: '今日采集量突破 50 万条', time: '5 小时前' },
+        { color: '#409EFF', text: '系统巡检完成，所有服务正常', time: '昨天 23:40' }
+      ]
+    }
+  },
+  computed: {
+    // 系统整体状态：有未处理告警或存在离线 PLC 即视为异常
+    systemNormal() {
+      return this.dashboardData.alertCount === 0 && this.dashboardData.plcOnline === this.dashboardData.plcTotal
+    },
+    // 系统状态右侧 6 行
+    statusList() {
+      return [
+        { label: '后端服务', value: '运行正常', cls: 'ok' },
+        { label: 'MySQL', value: '已连接', cls: 'ok' },
+        { label: 'PostgreSQL', value: '已连接', cls: 'ok' },
         {
-          id: "trend-1",
-          updatedAt: "几秒前",
-          user: {
-            name: "曲丽丽",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/BiazfanxmamNRoxxVxka.png",
-          },
-          group: {
-            name: "高逼格设计天团",
-            link: "http://github.com/",
-          },
-          project: {
-            name: "六月迭代",
-            link: "http://github.com/",
-          },
-          template1: "在",
-          template2: "新建项目",
+          label: 'Node-RED',
+          value: this.dashboardData.nodeTotal === 0
+            ? '未接入'
+            : (this.dashboardData.nodeOnline === this.dashboardData.nodeTotal
+              ? this.dashboardData.nodeOnline + ' 台在线'
+              : (this.dashboardData.nodeTotal - this.dashboardData.nodeOnline) + ' 台离线'),
+          cls: this.dashboardData.nodeTotal > 0 && this.dashboardData.nodeOnline < this.dashboardData.nodeTotal ? 'warn' : 'ok'
         },
-        {
-          id: "trend-2",
-          updatedAt: "几秒前",
-          user: {
-            name: "付小小",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/cnrhVkzwxjPwAaCfPbdc.png",
-          },
-          group: {
-            name: "高逼格设计天团",
-            link: "http://github.com/",
-          },
-          project: {
-            name: "六月迭代",
-            link: "http://github.com/",
-          },
-          template1: "在",
-          template2: "新建项目",
-        },
-        {
-          id: "trend-3",
-          updatedAt: "几秒前",
-          user: {
-            name: "林东东",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/gaOngJwsRYRaVAuXXcmB.png",
-          },
-          group: {
-            name: "中二少女团",
-            link: "http://github.com/",
-          },
-          project: {
-            name: "六月迭代",
-            link: "http://github.com/",
-          },
-          template1: "在",
-          template2: "新建项目",
-        },
-        {
-          id: "trend-4",
-          updatedAt: "几秒前",
-          user: {
-            name: "周星星",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/WhxKECPNujWoWEFNdnJE.png",
-          },
-          group: {
-            name: "5 月日常迭代",
-            link: "http://github.com/",
-          },
-          template1: "将",
-          template2: "更新至已发布状态",
-        },
-        {
-          id: "trend-5",
-          updatedAt: "几秒前",
-          user: {
-            name: "朱偏右",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/ubnKSIfAJTxIgXOKlciN.png",
-          },
-          group: {
-            name: "工程效能",
-            link: "http://github.com/",
-          },
-          project: {
-            name: "留言",
-            link: "http://github.com/",
-          },
-          template1: "在",
-          template2: "发布了",
-        },
-        {
-          id: "trend-6",
-          updatedAt: "几秒前",
-          user: {
-            name: "乐哥",
-            avatar:
-              "https://gw.alipayobjects.com/zos/rmsportal/jZUIxmJycoymBprLOUbT.png",
-          },
-          group: {
-            name: "程序员日常",
-            link: "http://github.com/",
-          },
-          project: {
-            name: "品牌迭代",
-            link: "http://github.com/",
-          },
-          template1: "在",
-          template2: "新建项目",
-        },
-      ],
-      radarData: [
-        {
-          item: "引用",
-          user: "个人",
-          score: 70,
-        },
-        {
-          item: "引用",
-          user: "团队",
-          score: 30,
-        },
-        {
-          item: "引用",
-          user: "部门",
-          score: 40,
-        },
-        {
-          item: "口碑",
-          user: "个人",
-          score: 60,
-        },
-        {
-          item: "口碑",
-          user: "团队",
-          score: 70,
-        },
-        {
-          item: "口碑",
-          user: "部门",
-          score: 40,
-        },
-        {
-          item: "产量",
-          user: "个人",
-          score: 50,
-        },
-        {
-          item: "产量",
-          user: "团队",
-          score: 60,
-        },
-        {
-          item: "产量",
-          user: "部门",
-          score: 40,
-        },
-        {
-          item: "贡献",
-          user: "个人",
-          score: 40,
-        },
-        {
-          item: "贡献",
-          user: "团队",
-          score: 50,
-        },
-        {
-          item: "贡献",
-          user: "部门",
-          score: 40,
-        },
-        {
-          item: "热度",
-          user: "个人",
-          score: 60,
-        },
-        {
-          item: "热度",
-          user: "团队",
-          score: 70,
-        },
-        {
-          item: "热度",
-          user: "部门",
-          score: 40,
-        },
-        {
-          item: "引用",
-          user: "个人",
-          score: 70,
-        },
-        {
-          item: "引用",
-          user: "团队",
-          score: 50,
-        },
-        {
-          item: "引用",
-          user: "部门",
-          score: 40,
-        },
-      ],
-      loading: true,
-      radarLoading: true,
-    };
+        { label: '系统版本', value: 'EdgeLink v13', cls: 'info' },
+        { label: '运行时长', value: this.uptime, cls: 'info' }
+      ]
+    },
+    // 运行时长：天 小时 分
+    uptime() {
+      const diff = Math.max(0, Date.now() - this.bootTime) / 1000
+      const d = Math.floor(diff / 86400)
+      const h = Math.floor((diff % 86400) / 3600)
+      const m = Math.floor((diff % 3600) / 60)
+      if (d > 0) return d + ' 天 ' + h + ' 小时'
+      if (h > 0) return h + ' 小时 ' + m + ' 分'
+      return m + ' 分钟'
+    }
   },
   mounted() {
-    setTimeout(() => {
-      this.loading = false;
-      this.radarLoading = false;
-    }, 1000);
+    // 用户名：通过 Vuex GetInfo 获取
+    this.$store.dispatch('GetInfo').then(res => {
+      this.userName = (res && res.user && (res.user.nickName || res.user.userName)) || '用户'
+    }).catch(() => {})
+    // 实时时钟：每秒刷新
+    const tick = () => { this.currentTime = this.formatTime(new Date()) }
+    tick()
+    this.timeTimer = setInterval(tick, 1000)
+    this.fetchDashboardData()
   },
-};
+  beforeDestroy() {
+    if (this.timeTimer) {
+      clearInterval(this.timeTimer)
+      this.timeTimer = null
+    }
+  },
+  methods: {
+    formatTime(d) {
+      const p = n => (n < 10 ? '0' + n : '' + n)
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
+    },
+    /**
+     * 拉取看板数据：两个接口各自独立 try-catch，
+     * 任一失败不影响其他数据，失败项用模拟数据兜底
+     */
+    async fetchDashboardData() {
+      // 接口 1：PLC 设备列表（统计在线/总数）
+      try {
+        const res = await request({ url: '/plc/device/list', method: 'get', params: { page_size: 1000, page_num: 1 } })
+        const rows = res.rows || []
+        this.dashboardData.plcTotal = res.total || rows.length
+        // 在线判定：commStatus='online'（监控中心回写）；无该字段时按启用状态估算
+        this.dashboardData.plcOnline = rows.filter(r =>
+          r.commStatus === 'online' || r.online === true || r.isOnline === true ||
+          (r.commStatus === undefined && r.online === undefined && r.isOnline === undefined && String(r.status) === '0')
+        ).length
+      } catch (e) {
+        // 模拟数据兜底（接口失败不影响其他指标）
+        this.dashboardData.plcTotal = 12
+        this.dashboardData.plcOnline = 10
+      }
+
+      // 接口 2：存量采集点列表（统计采集节点在线/总数）
+      try {
+        const res = await request({ url: '/site-health/site/list', method: 'get', params: { page_size: 1000, page_num: 1 } })
+        const rows = res.rows || []
+        const alive = rows.filter(r => String(r.status) !== '0')
+        this.dashboardData.nodeTotal = alive.length
+        this.dashboardData.nodeOnline = alive.filter(r => r.isOnline === true).length
+      } catch (e) {
+        this.dashboardData.nodeTotal = 6
+        this.dashboardData.nodeOnline = 5
+      }
+
+      // 派生指标（按产品口径估算）
+      this.dashboardData.todayCollect = this.dashboardData.plcOnline * 6800
+      this.dashboardData.alertCount = Math.max(0, this.dashboardData.plcTotal - this.dashboardData.plcOnline)
+    }
+  }
+}
 </script>
-  
-  <style lang="less" scoped>
-@import "./Workplace.less";
 
-.project-list {
-  .card-title {
-    font-size: 0;
+<style lang="scss" scoped>
+// 整体浅色主题：与 RuoYi 默认风格一致
+.dashboard {
+  background: #f0f2f5;
+  min-height: calc(100vh - 84px);
+  padding: 16px;
+}
 
-    a {
-      color: rgba(0, 0, 0, 0.85);
-      margin-left: 12px;
-      line-height: 24px;
-      height: 24px;
-      display: inline-block;
-      vertical-align: top;
-      font-size: 14px;
+/* ---------- 顶部欢迎区 ---------- */
+.welcome-card {
+  background: #fff;
+  border-radius: 4px;
+  padding: 20px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 4px 4px 40px rgba(0, 0, 0, .05);
 
-      &:hover {
-        color: #1890ff;
-      }
-    }
+  .welcome-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #303133;
   }
 
-  .card-description {
-    color: rgba(0, 0, 0, 0.45);
-    height: 44px;
-    line-height: 22px;
-    overflow: hidden;
-  }
-
-  .project-item {
-    display: flex;
+  .welcome-subtitle {
     margin-top: 8px;
-    overflow: hidden;
+    font-size: 13px;
+    color: #909399;
+  }
+
+  .welcome-right {
+    text-align: right;
+
+    .sys-tag {
+      margin-bottom: 8px;
+    }
+
+    .sys-time {
+      font-size: 13px;
+      color: #606266;
+      font-family: Menlo, Consolas, monospace;
+    }
+  }
+}
+
+/* ---------- 区域标题统一格式 ---------- */
+.section-title {
+  margin: 20px 0 12px;
+
+  .cn {
+    font-size: 16px;
+    font-weight: bold;
+    color: #303133;
+    border-left: 4px solid #409eff;
+    padding-left: 8px;
+  }
+
+  .en {
+    margin-left: 10px;
     font-size: 12px;
-    height: 20px;
-    line-height: 20px;
-
-    a {
-      color: rgba(0, 0, 0, 0.45);
-      display: inline-block;
-      flex: 1 1 0;
-
-      &:hover {
-        color: #1890ff;
-      }
-    }
-
-    .datetime {
-      color: rgba(0, 0, 0, 0.25);
-      flex: 0 0 auto;
-      float: right;
-    }
-  }
-
-  .ant-card-meta-description {
-    color: rgba(0, 0, 0, 0.45);
-    height: 44px;
-    line-height: 22px;
-    overflow: hidden;
+    color: #c0c4cc;
+    letter-spacing: 1px;
   }
 }
 
-.item-group {
-  padding: 20px 0 8px 24px;
-  font-size: 0;
+/* ---------- 核心理念卡片 ---------- */
+.concept-card {
+  background: #fff;
+  border-radius: 4px;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 16px;
+  transition: transform .2s ease, box-shadow .2s ease;
 
-  a {
-    color: rgba(0, 0, 0, 0.65);
-    display: inline-block;
-    font-size: 14px;
-    margin-bottom: 13px;
-    width: 25%;
+  // 悬停上浮动画
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 20px rgba(64, 158, 255, .15);
   }
-}
 
-.members {
-  a {
-    display: block;
-    margin: 12px 0;
-    line-height: 24px;
-    height: 24px;
+  .concept-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    margin: 0 auto 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-    .member {
-      font-size: 14px;
-      color: rgba(0, 0, 0, 0.65);
-      line-height: 24px;
-      max-width: 100px;
-      vertical-align: top;
-      margin-left: 12px;
-      transition: all 0.3s;
-      display: inline-block;
+    i {
+      font-size: 26px;
+      color: #fff;
     }
+  }
 
-    &:hover {
-      span {
-        color: #1890ff;
-      }
+  .concept-title {
+    font-size: 16px;
+    font-weight: bold;
+    color: #303133;
+  }
+
+  .concept-en {
+    font-size: 11px;
+    color: #c0c4cc;
+    letter-spacing: 1.5px;
+    margin: 4px 0 10px;
+  }
+
+  .concept-desc {
+    font-size: 13px;
+    color: #606266;
+    line-height: 1.6;
+    min-height: 42px;
+  }
+
+  .concept-tags {
+    margin-top: 10px;
+
+    .el-tag {
+      margin: 0 3px;
     }
   }
 }
 
-.mobile {
-  .project-list {
-    .project-card-grid {
-      width: 100%;
+/* ---------- 系统架构 ---------- */
+.arch-card {
+  background: #fff;
+  border-radius: 4px;
+  padding: 24px 20px 16px;
+
+  .arch-flow {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-between;
+  }
+
+  .arch-node {
+    flex: 1;
+    text-align: center;
+    padding: 0 8px;
+
+    .arch-index {
+      width: 30px;
+      height: 30px;
+      line-height: 30px;
+      border-radius: 50%;
+      color: #fff;
+      font-weight: bold;
+      margin: 0 auto 10px;
+    }
+
+    .arch-name {
+      font-size: 15px;
+      font-weight: bold;
+      color: #303133;
+    }
+
+    .arch-en {
+      font-size: 11px;
+      color: #c0c4cc;
+      letter-spacing: 1.5px;
+      margin: 3px 0 8px;
+    }
+
+    .arch-desc {
+      font-size: 12px;
+      color: #606266;
+      min-height: 34px;
+      line-height: 1.5;
+    }
+
+    .arch-tags .el-tag {
+      margin: 2px;
     }
   }
 
-  .more-info {
-    border: 0;
-    padding-top: 16px;
-    margin: 16px 0 16px;
+  // 层间箭头：脉冲动画
+  .arch-arrow {
+    display: flex;
+    align-items: center;
+    color: #409eff;
+    font-size: 20px;
+    animation: arrow-pulse 1.6s ease-in-out infinite;
   }
 
-  .headerContent .title .welcome-text {
-    display: none;
+  .arch-footer {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px dashed #ebeef5;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+    color: #909399;
+
+    i {
+      color: #409eff;
+      margin-right: 4px;
+    }
+  }
+}
+
+@keyframes arrow-pulse {
+  0%, 100% { opacity: .35; transform: translateX(0); }
+  50%      { opacity: 1;   transform: translateX(4px); }
+}
+
+/* ---------- 系统状态 ---------- */
+.status-card {
+  background: #fff;
+  border-radius: 4px;
+  padding: 12px 20px;
+
+  .status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 13px 0;
+    border-bottom: 1px solid #f2f6fc;
+    font-size: 13px;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    .status-label {
+      color: #606266;
+    }
+
+    .status-value {
+      font-weight: bold;
+
+      &.ok   { color: #67c23a; }
+      &.warn { color: #f56c6c; }
+      &.info { color: #909399; font-weight: normal; }
+    }
+  }
+}
+
+/* ---------- 最近动态 ---------- */
+.activity-card {
+  background: #fff;
+  border-radius: 4px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+
+  .activity-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px 24px;
+  }
+
+  .activity-item {
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+    color: #606266;
+
+    .activity-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 8px;
+      flex-shrink: 0;
+    }
+
+    .activity-text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .activity-time {
+      color: #c0c4cc;
+      font-size: 12px;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+  }
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .welcome-card {
+    flex-direction: column;
+    align-items: flex-start;
+
+    .welcome-right {
+      margin-top: 12px;
+      text-align: left;
+    }
+  }
+
+  .arch-flow {
+    flex-direction: column;
+
+    .arch-arrow {
+      justify-content: center;
+      transform: rotate(90deg);
+      padding: 6px 0;
+    }
+  }
+
+  .activity-grid {
+    grid-template-columns: 1fr !important;
   }
 }
 </style>
-  

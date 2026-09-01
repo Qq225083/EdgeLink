@@ -57,6 +57,34 @@
       </el-form>
     </el-card>
 
+    <!-- 采集节点部署卡片：一键下载存量监控节点包 -->
+    <el-card shadow="never" class="deploy-card">
+      <div slot="header" class="deploy-header">
+        <i class="el-icon-download" /> 采集节点部署
+      </div>
+      <div class="deploy-body">
+        <div class="deploy-info">
+          <div class="deploy-title">存量监控节点包</div>
+          <div class="deploy-desc">下载后解压到 Node-RED 的 node_modules 目录下，重启 Node-RED 即可自动识别并加载。</div>
+          <div class="deploy-meta">版本：v1.0.6 | 格式：zip | 适用：Node-RED 3.x/4.x</div>
+        </div>
+        <div class="deploy-action">
+          <el-button type="primary" icon="el-icon-download" :loading="downloading" @click="downloadNodePackage">下载节点包</el-button>
+        </div>
+      </div>
+      <el-divider />
+      <div class="deploy-steps">
+        <div class="steps-title">安装步骤：</div>
+        <ol>
+          <li>点击上方按钮下载 node-red-contrib-edgelink-site-health.zip</li>
+          <li>解压 zip 文件，得到 node-red-contrib-edgelink-site-health 文件夹</li>
+          <li>将文件夹复制到 Node-RED 的 node_modules 目录下</li>
+          <li>重启 Node-RED 服务（node-red-restart 或手动重启）</li>
+          <li>在 Node-RED 编辑器左侧节点栏中即可看到"存量监控"节点</li>
+        </ol>
+      </div>
+    </el-card>
+
     <!-- 密钥一次性展示对话框 -->
     <el-dialog title="采集点登记成功" :visible.sync="keyOpen" width="560px" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false" append-to-body>
       <el-alert
@@ -87,6 +115,7 @@ export default {
   data() {
     return {
       submitting: false,
+      downloading: false,   // 节点包下载中状态（按钮 loading）
       keyOpen: false,
       newSiteId: null,
       newKey: '',
@@ -185,6 +214,15 @@ export default {
       this.newKey = '';
       this.newSiteId = null;
     },
+    /** 下载存量监控节点包（走 axios+blob 携带 JWT，避免裸 <a> 无鉴权头被 PreAuth 拦截） */
+    downloadNodePackage() {
+      this.downloading = true;
+      this.$download.zip('/common/download/site-health-node', 'node-red-contrib-edgelink-site-health.zip');
+      setTimeout(() => {
+        this.downloading = false;
+        this.$message.success('下载已开始，请检查浏览器下载栏');
+      }, 1000);
+    },
   }
 };
 </script>
@@ -237,5 +275,56 @@ export default {
 }
 .key-actions {
   text-align: center;
+}
+/* ===== 采集节点部署卡片 ===== */
+.deploy-card {
+  max-width: 960px;
+  margin-top: 16px;
+}
+.deploy-header {
+  font-weight: bold;
+  color: #303133;
+}
+.deploy-header i {
+  color: #409eff;
+  margin-right: 6px;
+}
+.deploy-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.deploy-title {
+  font-size: 15px;
+  font-weight: bold;
+  color: #303133;
+}
+.deploy-desc {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+.deploy-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
+.deploy-action {
+  flex-shrink: 0;
+}
+.deploy-steps .steps-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #303133;
+  margin-bottom: 6px;
+}
+.deploy-steps ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.9;
 }
 </style>

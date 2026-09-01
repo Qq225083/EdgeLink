@@ -1,7 +1,8 @@
+import os
 from typing import Annotated
 
 from fastapi import BackgroundTasks, File, Query, Request, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from common.aspect.pre_auth import PreAuthDependency
 from common.router import APIRouterPro
@@ -72,3 +73,28 @@ async def common_download_resource(request: Request, resource: Annotated[str, Qu
     logger.info(download_resource_result.message)
 
     return ResponseUtil.streaming(data=download_resource_result.result)
+
+
+# ===== 存量监控节点包下载（采集登记页「采集节点部署」卡片使用） =====
+
+@common_controller.get(
+    '/download/site-health-node',
+    summary='下载存量监控 Node-RED 节点包',
+    description='返回 downloads 目录下的 node-red-contrib-edgelink-site-health.zip，供现场解压安装到 Node-RED 的 node_modules',
+    response_class=FileResponse,
+)
+async def download_site_health_node(request: Request) -> Response:
+    # 从本文件向上退 3 级：controller → module_admin → ruoyi-fastapi-backend
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    file_path = os.path.join(backend_dir, 'downloads', 'packages', 'node-red-contrib-edgelink-site-health.zip')
+    if not os.path.exists(file_path):
+        return {'code': 404, 'msg': '节点包文件不存在，请联系管理员'}
+    return FileResponse(
+        path=file_path,
+        filename='node-red-contrib-edgelink-site-health.zip',
+        media_type='application/zip',
+    )
+
+
+# 部署中心（交付物清单/下载/上传/维护）已由 module_downloads 模块接管，
+# 此处的 manifest/package 临时接口已删除（避免与新模块路由冲突）。
