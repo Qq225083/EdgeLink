@@ -46,3 +46,24 @@ class DownloadUpdateModel(BaseModel):
     tags: Optional[str] = Field(default=None, max_length=200)
     status: Optional[int] = Field(default=1, ge=0, le=1)
     remark: Optional[str] = Field(default=None, max_length=200)
+
+
+class ChunkInitModel(BaseModel):
+    """分片上传会话初始化"""
+    model_config = ConfigDict(alias_generator=to_camel, from_attributes=True, populate_by_name=True)
+
+    file_name: str = Field(max_length=255)
+    size_bytes: int = Field(ge=1)
+    total_chunks: int = Field(ge=1, le=2000)
+    name: str = Field(max_length=100)
+    group_key: str = Field(max_length=30)
+    version: Optional[str] = Field(default=None, max_length=20)
+
+
+class ChunkMergeModel(BaseModel):
+    """分片合并请求"""
+    model_config = ConfigDict(alias_generator=to_camel, from_attributes=True, populate_by_name=True)
+
+    upload_id: str = Field(max_length=64)
+    description: Optional[str] = Field(default=None, max_length=500)
+    tags: Optional[str] = Field(default=None, max_length=200)

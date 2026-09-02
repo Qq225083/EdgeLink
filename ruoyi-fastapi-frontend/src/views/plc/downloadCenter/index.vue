@@ -40,6 +40,9 @@
       <el-table-column label="大小" width="90" align="center">
         <template slot-scope="scope">{{ formatSize(scope.row.sizeBytes) }}</template>
       </el-table-column>
+      <el-table-column label="上传人" width="90" align="center">
+        <template slot-scope="scope">{{ scope.row.createBy || '-' }}</template>
+      </el-table-column>
       <el-table-column label="更新时间" width="150" align="center">
         <template slot-scope="scope">{{ formatTime(scope.row.updateTime) }}</template>
       </el-table-column>
@@ -69,6 +72,7 @@ export default {
         { label: '完整部署包', value: 'nodered-full' },
         { label: '增量部署包', value: 'nodered-inc' },
         { label: '文档手册', value: 'docs' },
+        { label: '通用资料', value: 'common' },
       ],
       downloadGroup: '',
       downloadKeyword: '',

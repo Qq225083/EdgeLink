@@ -16,7 +16,7 @@ from common.context import RequestContext
 from common.enums import BusinessType
 from common.router import APIRouterPro
 from common.vo import CrudResponseModel, DataResponseModel
-from module_downloads.entity.vo.download_vo import DownloadQueryModel, DownloadUpdateModel
+from module_downloads.entity.vo.download_vo import ChunkInitModel, ChunkMergeModel, DownloadQueryModel, DownloadUpdateModel
 from module_downloads.service.download_service import DownloadService
 from utils.response_util import ResponseUtil
 
@@ -117,3 +117,69 @@ async def delete_download(
 ) -> Response:
     await DownloadService.delete_item(query_db, item_id)
     return ResponseUtil.success(msg='删除成功')
+
+
+# ==================== 分片上传（大文件，绕企业安全软件上传拦截） ====================
+# 流程：init 建会话 → chunk×N 逐片上传 → merge 校验合并入库。
+# 注意：@Log 注解的参数反射工具不接受名为 name 的参数，Form 字段用 alias 保持契约。
+
+@download_controller.post(
+    '/downloads/upload/init',
+    summary='分片上传：初始化会话',
+    response_model=DataResponseModel[dict],
+    dependencies=[UserInterfaceAuthDependency('deploy:center:edit')],
+)
+async def upload_chunk_init(
+    request: Request,
+    model: ChunkInitModel,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    upload_id = await DownloadService.init_chunk_session(
+        query_db,
+        file_name=model.file_name,
+        size_bytes=model.size_bytes,
+        total_chunks=model.total_chunks,
+        name=model.name,
+        group_key=model.group_key,
+        version=model.version,
+    )
+    return ResponseUtil.success(data={'uploadId': upload_id})
+
+
+@download_controller.post(
+    '/downloads/upload/chunk',
+    summary='分片上传：上传单片',
+    response_model=CrudResponseModel,
+    dependencies=[UserInterfaceAuthDependency('deploy:center:edit')],
+)
+async def upload_chunk(
+    request: Request,
+    file: Annotated[UploadFile, File(description='分片数据')],
+    uploadId: Annotated[str, Form(max_length=64)],
+    chunkIndex: Annotated[int, Form(ge=0)],
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    await DownloadService.save_chunk(uploadId, chunkIndex, file)
+    return ResponseUtil.success(msg='分片已接收')
+
+
+@download_controller.post(
+    '/downloads/upload/merge',
+    summary='分片上传：合并入库',
+    response_model=CrudResponseModel,
+    dependencies=[UserInterfaceAuthDependency('deploy:center:edit')],
+)
+@Log(title='部署中心', business_type=BusinessType.INSERT)
+async def upload_chunk_merge(
+    request: Request,
+    model: ChunkMergeModel,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    item_id = await DownloadService.merge_chunk_session(
+        query_db,
+        model.upload_id,
+        description=model.description,
+        tags=model.tags,
+        create_by=RequestContext.get_current_user().user.user_name,
+    )
+    return ResponseUtil.success(msg='上传成功', data={'id': item_id})
