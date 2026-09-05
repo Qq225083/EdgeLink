@@ -1,7 +1,7 @@
 """存量采集点健康监控 — 数据操作层"""
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, desc, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from module_site_health.entity.do.site_health_do import (
@@ -53,6 +53,29 @@ class SiteHealthDao:
             .offset(offset)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def get_memory_trend(db: AsyncSession, site_id: int, hours: int) -> list:
+        """内存趋势：按小时分桶（avg/max RSS），用于监控页趋势图。
+
+        注：用 MySQL 的 date_format 分桶（存量监控库是 MySQL）。
+        """
+        cutoff = datetime.now() - timedelta(hours=hours)
+        bucket = func.date_format(SiteHealthHeartbeatLog.report_time, '%Y-%m-%d %H:00')
+        result = await db.execute(
+            select(
+                bucket.label('bucket'),
+                func.avg(SiteHealthHeartbeatLog.memory_rss_mb).label('avg_mb'),
+                func.max(SiteHealthHeartbeatLog.memory_rss_mb).label('max_mb'),
+            )
+            .where(
+                SiteHealthHeartbeatLog.site_id == site_id,
+                SiteHealthHeartbeatLog.report_time >= cutoff,
+            )
+            .group_by(bucket)
+            .order_by(bucket)
+        )
+        return result.all()
 
     @staticmethod
     async def clean_old_heartbeat_logs(db: AsyncSession, retention_days: int = 7, batch_size: int = 5000) -> int:

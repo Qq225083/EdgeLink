@@ -50,6 +50,11 @@
     <el-table v-loading="loading" :data="siteList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="采集场所" align="center" prop="siteName" min-width="130" :show-overflow-tooltip="true" />
+      <el-table-column label="位置（栋/楼/工程）" align="center" width="150" :show-overflow-tooltip="true">
+        <template slot-scope="scope">
+          {{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}
+        </template>
+      </el-table-column>
       <el-table-column label="办公网IP" align="center" prop="officeIp" width="120" :show-overflow-tooltip="true" />
       <el-table-column label="工业网IP" align="center" prop="industIp" width="120" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ scope.row.industIp || '-' }}</template>
@@ -92,6 +97,7 @@
       <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="290">
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-view" @click="handleHistory(scope.row)" v-hasPermi="['site:health:list']">履历</el-button>
+          <el-button size="mini" type="text" icon="el-icon-data-line" @click="handleTrend(scope.row)" v-hasPermi="['site:health:list']">趋势</el-button>
           <el-button size="mini" type="text" icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['site:health:edit']">修改</el-button>
           <el-button size="mini" type="text" icon="el-icon-key" @click="handleRegenerate(scope.row)" v-hasPermi="['site:health:edit']">重置密钥</el-button>
           <el-button size="mini" type="text" :icon="scope.row.status === 0 ? 'el-icon-video-play' : 'el-icon-video-pause'" @click="handleToggleStatus(scope.row)" v-hasPermi="['site:health:edit']">{{ scope.row.status === 0 ? '启用' : '停用' }}</el-button>
@@ -177,6 +183,24 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <!-- 采集场所拆分：栋别/楼层/工程 -->
+        <el-row>
+          <el-col :span="8">
+            <el-form-item label="栋别" prop="building">
+              <el-input v-model="editForm.building" maxlength="50" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="楼层" prop="floor">
+              <el-input v-model="editForm.floor" maxlength="50" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="工程" prop="processStage">
+              <el-input v-model="editForm.processStage" maxlength="50" />
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-row>
           <el-col :span="12">
             <el-form-item label="联系人" prop="contact">
@@ -191,6 +215,15 @@
       <div slot="footer" class="dialog-footer">
         <el-button type="primary" :loading="editSubmitting" @click="submitEdit">确 定</el-button>
         <el-button @click="editOpen = false">取 消</el-button>
+      </div>
+    </el-dialog>
+
+    <!-- 内存趋势对话框（ECharts 折线，按小时分桶） -->
+    <el-dialog :title="trendTitle" :visible.sync="trendOpen" width="720px" append-to-body @closed="disposeTrendChart">
+      <div v-loading="trendLoading">
+        <div v-if="!trendLoading && trendEmpty" class="trend-empty">最近 7 天暂无心率数据（该采集点未上报过内存指标）</div>
+        <div v-show="!trendEmpty" ref="trendChart" class="trend-chart"></div>
+        <div v-if="!trendEmpty" class="trend-tip">按小时聚合：实线=平均内存，虚线=峰值内存（MB）</div>
       </div>
     </el-dialog>
 
@@ -215,7 +248,8 @@
 </template>
 
 <script>
-import { listSite, getSiteSummary, getSiteHistory, updateSite, regenerateSiteKey, toggleSiteStatus, delSite } from "@/api/plc/siteHealth";
+import { listSite, getSiteSummary, getSiteHistory, getSiteTrend, updateSite, regenerateSiteKey, toggleSiteStatus, delSite } from "@/api/plc/siteHealth";
+import * as echarts from "echarts";
 
 const IPV4_PATTERN = /^((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$/;
 
@@ -257,6 +291,9 @@ export default {
         industIp: null,
         nodePort: null,
         siteName: null,
+        building: null,
+        floor: null,
+        processStage: null,
         contact: null,
         remark: null,
       },
@@ -282,10 +319,22 @@ export default {
         siteName: [
           { required: true, message: "采集场所不能为空", trigger: "blur" }
         ],
+        building: [
+          { required: true, message: "栋别不能为空", trigger: "blur" }
+        ],
+        floor: [
+          { required: true, message: "楼层不能为空", trigger: "blur" }
+        ],
+        processStage: [
+          { required: true, message: "工程不能为空", trigger: "blur" }
+        ],
       },
-      // 密钥重置
-      keyOpen: false,
-      newKey: '',
+      // 趋势对话框
+      trendOpen: false,
+      trendTitle: '',
+      trendLoading: false,
+      trendEmpty: false,
+      trendChart: null,
       regenSiteName: '',
       // 30s 静默轮询（看板场景，不闪 loading）
       refreshTimer: null,
@@ -392,6 +441,9 @@ export default {
         industIp: row.industIp,
         nodePort: row.nodePort,
         siteName: row.siteName,
+        building: row.building,
+        floor: row.floor,
+        processStage: row.processStage,
         contact: row.contact,
         remark: row.remark,
       };
@@ -490,6 +542,73 @@ export default {
       this.regenSiteName = '';
     },
     /** 时间格式化：ISO 字符串 → YYYY-MM-DD HH:mm:ss */
+    /** 内存趋势：打开对话框并拉取最近 7 天（按小时分桶）渲染 ECharts 折线 */
+    handleTrend(row) {
+      this.currentSite = row;
+      this.trendTitle = '【' + row.siteName + '】内存趋势（近 7 天）';
+      this.trendOpen = true;
+      this.trendLoading = true;
+      this.trendEmpty = false;
+      getSiteTrend(row.id, { hours: 168 }).then(response => {
+        const rows = response.data || [];
+        this.trendLoading = false;
+        if (!rows.length) {
+          this.trendEmpty = true;
+          return;
+        }
+        this.$nextTick(() => this.renderTrend(rows));
+      }).catch(() => {
+        this.trendLoading = false;
+        this.trendEmpty = true;
+      });
+    },
+    /** 渲染趋势图（平均=实线，峰值=虚线） */
+    renderTrend(rows) {
+      const el = this.$refs.trendChart;
+      if (!el) return;
+      this.disposeTrendChart();
+      this.trendChart = echarts.init(el);
+      this.trendChart.setOption({
+        grid: { left: 50, right: 20, top: 30, bottom: 30 },
+        tooltip: { trigger: 'axis' },
+        xAxis: {
+          type: 'category',
+          data: rows.map(r => r.bucket.slice(5)),  // 'MM-DD HH:00'
+          axisLabel: { color: '#909399', fontSize: 11 }
+        },
+        yAxis: {
+          type: 'value',
+          name: 'MB',
+          axisLabel: { color: '#909399' },
+          splitLine: { lineStyle: { color: '#f0f2f5' } }
+        },
+        series: [
+          {
+            name: '平均内存',
+            type: 'line',
+            data: rows.map(r => r.avgMb),
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { color: '#409EFF', width: 2 },
+            areaStyle: { color: 'rgba(64,158,255,0.12)' }
+          },
+          {
+            name: '峰值内存',
+            type: 'line',
+            data: rows.map(r => r.maxMb),
+            smooth: true,
+            showSymbol: false,
+            lineStyle: { color: '#E6A23C', width: 1, type: 'dashed' }
+          }
+        ]
+      });
+    },
+    disposeTrendChart() {
+      if (this.trendChart) {
+        this.trendChart.dispose();
+        this.trendChart = null;
+      }
+    },
     formatTime(val) {
       if (!val) return '-';
       const str = String(val);
@@ -589,6 +708,23 @@ export default {
   padding: 0 3px;
   margin-left: 4px;
   vertical-align: 1px;
+}
+/* 趋势对话框 */
+.trend-chart {
+  width: 100%;
+  height: 320px;
+}
+.trend-empty {
+  text-align: center;
+  color: #c0c4cc;
+  font-size: 13px;
+  padding: 40px 0;
+}
+.trend-tip {
+  text-align: center;
+  color: #909399;
+  font-size: 12px;
+  margin-top: 4px;
 }
 .history-count {
   color: #909399;

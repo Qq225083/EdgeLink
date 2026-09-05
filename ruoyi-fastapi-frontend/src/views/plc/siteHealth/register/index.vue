@@ -11,49 +11,77 @@
 
     <!-- 登记表单 -->
     <el-card shadow="never" class="form-card">
-      <el-form ref="form" :model="form" :rules="rules" label-width="110px">
-        <el-row>
-          <el-col :span="12">
-            <el-form-item label="办公网IP" prop="officeIp">
-              <el-input v-model="form.officeIp" placeholder="如 192.168.1.10" maxlength="20" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="工业网IP" prop="industIp">
-              <el-input v-model="form.industIp" placeholder="选填，如 10.0.0.10" maxlength="20" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row>
-          <el-col :span="12">
-            <el-form-item label="采集场所" prop="siteName">
-              <el-input v-model="form.siteName" placeholder="如 一号车间东侧" maxlength="100" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="联系人" prop="contact">
-              <el-input v-model="form.contact" placeholder="选填，如 张三" maxlength="50" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row>
-          <el-col :span="12">
-            <el-form-item label="端口" prop="nodePort">
-              <el-input v-model="form.nodePort" placeholder="必填，Node-RED 监听端口，如 1880" maxlength="5" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row>
-          <el-col :span="24">
-            <el-form-item label="采集备注" prop="remark">
-              <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="选填，如采集点位范围、程序版本等" maxlength="200" show-word-limit />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item>
+      <el-form ref="form" :model="form" :rules="rules" label-width="90px">
+        <!-- 网络信息 -->
+        <div class="form-section">
+          <div class="section-caption"><i class="el-icon-link" /> 网络信息</div>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="办公网IP" prop="officeIp">
+                <el-input v-model="form.officeIp" placeholder="如 10.81.8.34" maxlength="20" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="工业网IP" prop="industIp">
+                <el-input v-model="form.industIp" placeholder="选填，如 192.168.1.10" maxlength="20" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="端口" prop="nodePort">
+                <el-input v-model="form.nodePort" placeholder="Node-RED 监听端口，如 1880" maxlength="5" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 位置信息（采集场所拆分，全部必填，支撑精确统计） -->
+        <div class="form-section">
+          <div class="section-caption"><i class="el-icon-location-outline" /> 位置信息</div>
+          <el-row :gutter="20">
+            <el-col :span="8">
+              <el-form-item label="栋别" prop="building">
+                <el-input v-model="form.building" placeholder="如 A栋" maxlength="50" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="楼层" prop="floor">
+                <el-input v-model="form.floor" placeholder="如 3F" maxlength="50" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="工程" prop="processStage">
+                <el-input v-model="form.processStage" placeholder="如 冲压工程" maxlength="50" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 其他信息 -->
+        <div class="form-section">
+          <div class="section-caption"><i class="el-icon-document" /> 其他信息</div>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="采集场所" prop="siteName">
+                <el-input v-model="form.siteName" placeholder="如 一号车间东侧" maxlength="100" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="联系人" prop="contact">
+                <el-input v-model="form.contact" placeholder="选填，如 张三" maxlength="50" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="采集备注" prop="remark">
+            <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="选填，如采集点位范围、程序版本等" maxlength="200" show-word-limit />
+          </el-form-item>
+        </div>
+
+        <div class="form-actions">
           <el-button type="primary" icon="el-icon-key" :loading="submitting" @click="handleSubmit">提交并生成密钥</el-button>
           <el-button icon="el-icon-refresh-left" @click="resetForm">重置</el-button>
-        </el-form-item>
+        </div>
       </el-form>
     </el-card>
 
@@ -123,6 +151,9 @@ export default {
         officeIp: null,
         industIp: null,
         siteName: null,
+        building: null,
+        floor: null,
+        processStage: null,
         contact: null,
         remark: null,
         nodePort: null,
@@ -137,6 +168,15 @@ export default {
         ],
         siteName: [
           { required: true, message: "采集场所不能为空", trigger: "blur" }
+        ],
+        building: [
+          { required: true, message: "栋别不能为空", trigger: "blur" }
+        ],
+        floor: [
+          { required: true, message: "楼层不能为空", trigger: "blur" }
+        ],
+        processStage: [
+          { required: true, message: "工程不能为空", trigger: "blur" }
         ],
         nodePort: [
           { required: true, message: "端口不能为空", trigger: "blur" },
@@ -175,6 +215,9 @@ export default {
         officeIp: null,
         industIp: null,
         siteName: null,
+        building: null,
+        floor: null,
+        processStage: null,
         contact: null,
         remark: null,
         nodePort: null,
@@ -249,6 +292,29 @@ export default {
 }
 .form-card {
   max-width: 960px;
+}
+/* 表单分区：左竖线小节标题 + 宽松留白，替代灰底框 */
+.form-section {
+  margin-bottom: 8px;
+}
+.section-caption {
+  font-size: 13px;
+  font-weight: bold;
+  color: #303133;
+  border-left: 3px solid #409eff;
+  padding-left: 8px;
+  margin-bottom: 16px;
+}
+.section-caption i {
+  color: #409eff;
+  margin-right: 4px;
+}
+.form-section .el-form-item {
+  margin-bottom: 16px;
+}
+.form-actions {
+  padding-top: 6px;
+  border-top: 1px solid #f2f6fc;
 }
 .key-box {
   margin: 16px 0;

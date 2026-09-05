@@ -44,6 +44,15 @@ export function getSiteHistory(siteId, params) {
   })
 }
 
+// 查询采集点内存趋势（按小时分桶，供趋势图）
+export function getSiteTrend(siteId, params) {
+  return request({
+    url: '/site-health/site/' + siteId + '/trend',
+    method: 'get',
+    params: params
+  })
+}
+
 // 重新生成密钥（旧密钥立即失效，返回新密钥明文仅一次）
 export function regenerateSiteKey(siteId) {
   return request({

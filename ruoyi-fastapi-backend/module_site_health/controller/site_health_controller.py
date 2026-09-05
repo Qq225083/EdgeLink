@@ -168,6 +168,22 @@ async def get_site_history(
     return ResponseUtil.success(data=rows)
 
 
+@site_health_controller.get(
+    '/site/{site_id}/trend',
+    summary='采集点内存趋势（按小时分桶，供趋势图）',
+    response_model=DataResponseModel[list],
+    dependencies=[UserInterfaceAuthDependency('site:health:list')],
+)
+async def get_site_trend(
+    request: Request,
+    site_id: Annotated[int, Path(description='采集点ID')],
+    hours: Annotated[int, Query(description='最近N小时', ge=1, le=720)] = 168,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    rows = await SiteHealthService.get_memory_trend(query_db, site_id, hours)
+    return ResponseUtil.success(data=rows)
+
+
 @site_health_controller.put(
     '/site/{site_id}/regenerate',
     summary='重新生成密钥',

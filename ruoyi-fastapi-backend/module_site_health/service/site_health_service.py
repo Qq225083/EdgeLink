@@ -65,6 +65,9 @@ class SiteHealthService:
             office_ip=office_ip,
             indust_ip=indust_ip,
             site_name=site_name,
+            building=model.building.strip(),
+            floor=model.floor.strip(),
+            process_stage=model.process_stage.strip(),
             contact=model.contact.strip() if model.contact else None,
             remark=model.remark.strip() if model.remark else None,
             node_port=model.node_port,
@@ -106,6 +109,9 @@ class SiteHealthService:
         site.office_ip = office_ip
         site.indust_ip = indust_ip
         site.site_name = site_name
+        site.building = model.building.strip()
+        site.floor = model.floor.strip()
+        site.process_stage = model.process_stage.strip()
         site.contact = model.contact.strip() if model.contact else None
         site.remark = model.remark.strip() if model.remark else None
         site.node_port = model.node_port
@@ -319,3 +325,16 @@ class SiteHealthService:
         """获取某采集点心跳履历（camelCase 字典列表，供前端直接渲染）。"""
         logs = await SiteHealthDao.get_history(db, site_id, limit, offset)
         return CamelCaseUtil.transform_result(list(logs))
+
+    @classmethod
+    async def get_memory_trend(cls, db: AsyncSession, site_id: int, hours: int) -> list[dict]:
+        """内存趋势（按小时分桶，avg/max RSS MB），供趋势图渲染。"""
+        rows = await SiteHealthDao.get_memory_trend(db, site_id, hours)
+        return [
+            {
+                'bucket': r.bucket,
+                'avgMb': round(float(r.avg_mb), 1) if r.avg_mb is not None else None,
+                'maxMb': int(r.max_mb) if r.max_mb is not None else None,
+            }
+            for r in rows
+        ]
