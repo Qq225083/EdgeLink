@@ -1,6 +1,7 @@
 """边缘节点密钥管理接口
 
 提供 edge_bootstrap_key 表的 CRUD 操作，用于管理各采集节点的初始接入密钥。
+v3.0：开放注册模式（注册窗口）已下线，只保留预分配模式——/auto 仅凭 secretKey 激活。
 """
 import secrets
 from typing import Annotated, Optional
@@ -8,7 +9,7 @@ from typing import Annotated, Optional
 from fastapi import Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.annotation.log_annotation import Log
@@ -28,53 +29,6 @@ from utils.response_util import ResponseUtil
 bootstrap_key_controller = APIRouterPro(
     prefix='/plc/bootstrap-key', order_num=207, tags=['边缘节点密钥管理'], dependencies=[PreAuthDependency()]
 )
-
-# 节点注册窗口的 Redis key（P0-2 整改：按压配对模式——仅窗口开启时 /auto 允许新节点注册）
-REGISTER_WINDOW_KEY = 'edgelink:bootstrap:register_open'
-
-
-@bootstrap_key_controller.post(
-    '/registration-window',
-    summary='开放新节点注册窗口（按压配对）',
-    description='开放后指定分钟内允许新边缘节点经 /plc/config/bootstrap/auto 注册；默认 10 分钟自动关闭。',
-    response_model=CrudResponseModel,
-    dependencies=[UserInterfaceAuthDependency('plc:bootstrap-key:edit')],
-)
-async def open_registration_window(
-    request: Request,
-    minutes: Annotated[int, Query(description='开放时长（分钟，1-60）')] = 10,
-) -> Response:
-    """开放注册窗口。（不加 @Log：该切面要求被装饰函数带 DB session 参数，本端点只用 Redis；已用 logger 留痕）"""
-    minutes = max(1, min(minutes, 60))
-    await request.app.state.redis.set(REGISTER_WINDOW_KEY, '1', ex=minutes * 60)
-    logger.info(f'[bootstrap] 新节点注册窗口已开放 {minutes} 分钟，操作人接口调用')
-    return ResponseUtil.success(msg=f'注册窗口已开放，{minutes} 分钟后自动关闭')
-
-
-@bootstrap_key_controller.get(
-    '/registration-window',
-    summary='查询注册窗口状态',
-    response_model=DataResponseModel[dict],
-    dependencies=[UserInterfaceAuthDependency('plc:bootstrap-key:list')],
-)
-async def get_registration_window(request: Request) -> Response:
-    """查询注册窗口状态与剩余秒数。"""
-    redis = request.app.state.redis
-    open_flag = await redis.get(REGISTER_WINDOW_KEY)
-    ttl = await redis.ttl(REGISTER_WINDOW_KEY) if open_flag else 0
-    return ResponseUtil.success(data={'open': open_flag == '1', 'remainSeconds': max(ttl, 0)})
-
-
-@bootstrap_key_controller.delete(
-    '/registration-window',
-    summary='立即关闭注册窗口',
-    response_model=CrudResponseModel,
-    dependencies=[UserInterfaceAuthDependency('plc:bootstrap-key:edit')],
-)
-async def close_registration_window(request: Request) -> Response:
-    """立即关闭注册窗口。（不加 @Log：同上，本端点只用 Redis）"""
-    await request.app.state.redis.delete(REGISTER_WINDOW_KEY)
-    return ResponseUtil.success(msg='注册窗口已关闭')
 
 
 class BootstrapKeyModel(BaseModel):
