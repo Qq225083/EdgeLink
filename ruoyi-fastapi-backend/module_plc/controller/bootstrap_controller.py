@@ -1,12 +1,16 @@
-"""边缘节点 Bootstrap 配置接口 v3.0（仅预分配模式）
+"""边缘节点 Bootstrap 配置接口 v2.0
 
-设计变更（v3.0）：
-  - 取消「开放注册模式」（注册窗口已下线），只保留预分配模式；
-  - /auto 必须携带 secretKey：按哈希查记录 → 启用校验 → 本机IP:端口严格比对登记值；
-  - 机器指纹仅记录（供后续换机告警），不作为拒绝条件。
+两阶段设计：
+  阶段 1（/auto）：Node-RED 首次启动时自动注册，只返回 node_key + secret_key，不返回业务凭据
+  阶段 2（/bootstrap）：Node-RED 用 node_key + secret_key 获取业务配置（API Key、MQTT 配置等）
+
+安全性：
+  - /auto 不返回业务凭据，攻击者拿到 secret_key 也无法直接获取配置
+  - edge_collector 专用角色，不给 admin 权限
+  - machine_fingerprint 处理 IP 变更，自动映射不创建僵尸记录
 """
+import secrets
 import time
-from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import Query, Request, Response
@@ -19,12 +23,14 @@ from common.vo import DataResponseModel
 from config.env import AppConfig
 from exceptions.exception import ServiceException
 from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey, hash_bootstrap_secret
-from utils.log_util import logger
 from utils.response_util import ResponseUtil
 
 bootstrap_controller = APIRouterPro(
     prefix='/plc/config', order_num=206, tags=['PLC配置发布']
 )
+
+# 与 bootstrap_key_controller 中 REGISTER_WINDOW_KEY 一致（按压配对窗口）
+REGISTER_WINDOW_KEY = 'edgelink:bootstrap:register_open'
 
 # 轻量 IP 限流（内存桶，无新依赖）：/auto 与 /bootstrap 各 20 次/分钟/IP
 _RATE_BUCKETS: dict[str, list[float]] = {}
@@ -41,58 +47,91 @@ def _check_rate_limit(request: Request, bucket: str, limit: int = 20, window_s: 
     _RATE_BUCKETS[key] = ts
 
 
+def _generate_node_key(host_pc_ip: str) -> str:
+    """根据 host_pc_ip 生成 node_key（如 pc-192168000179-1880）"""
+    parts = host_pc_ip.replace('.', '').replace(':', '-')
+    return f'pc-{parts}'
+
+
 @bootstrap_controller.get(
     '/bootstrap/auto',
-    summary='Node-RED 预分配激活（阶段 1）',
-    description='节点携带 secretKey + 本机IP:端口 激活：密钥查记录 → 启用校验 → IP:端口严格比对登记值。'
-                '不返回业务凭据（业务配置走 /bootstrap 阶段 2）。',
+    summary='Node-RED 自动注册（阶段 1）',
+    description='Node-RED 首次启动时自动注册，只返回 node_key + secret_key。'
+                '不返回业务凭据，攻击者拿到 secret_key 也无法直接获取配置。',
     response_model=DataResponseModel[dict],
 )
 async def bootstrap_auto(
     request: Request,
     host_pc_ip: Annotated[str, Query(description='当前节点标识（IP:端口）')],
-    secret_key: Annotated[str, Query(description='预分配密钥（管理端创建时下发）')],
     fingerprint: Annotated[Optional[str], Query(description='机器指纹 SHA256(hostname+MACs)')] = None,
     query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
 ) -> Response:
-    """Node-RED 预分配激活（仅预分配模式，开放注册已下线）。"""
+    """Node-RED 自动注册（阶段 1）。"""
     _check_rate_limit(request, 'auto')
+    # 1. 先按 fingerprint 查找（处理 IP 变更）
+    if fingerprint:
+        result = await query_db.execute(
+            select(EdgeBootstrapKey).where(
+                EdgeBootstrapKey.machine_fingerprint == fingerprint,
+                EdgeBootstrapKey.enabled == 1,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            # 🔧 密钥只存哈希无法回显，fingerprint 命中仅确认身份；
+            # 不再直接改写 host_pc_ip（指纹伪造可劫持节点映射），IP 变更改走管理端确认流程
+            return ResponseUtil.success(data={
+                'nodeKey': existing.node_key,
+                'nodeName': existing.node_name or existing.node_key,
+                'hostPcIp': existing.host_pc_ip,
+                'secretKey': None,
+                'isNew': False,
+            })
 
-    # 1. 按密钥（哈希）查记录——未预分配直接拒绝
+    # 2. 按 host_pc_ip 查找
     result = await query_db.execute(
-        select(EdgeBootstrapKey).where(EdgeBootstrapKey.secret_key == hash_bootstrap_secret(secret_key))
+        select(EdgeBootstrapKey).where(
+            EdgeBootstrapKey.host_pc_ip == host_pc_ip,
+            EdgeBootstrapKey.enabled == 1,
+        )
     )
-    record = result.scalar_one_or_none()
-    if not record:
-        raise ServiceException(message='密钥无效或未预分配，请先在管理端登记该采集节点')
+    existing = result.scalar_one_or_none()
+    if existing:
+        return ResponseUtil.success(data={
+            'nodeKey': existing.node_key,
+            'nodeName': existing.node_name or existing.node_key,
+            'hostPcIp': existing.host_pc_ip,
+            'secretKey': None,  # 🔧 只存哈希不再回显；请使用首次注册/重置时保存的密钥
+            'isNew': False,
+        })
 
-    # 2. 启用状态校验
-    if record.enabled == 0:
-        raise ServiceException(message='节点已停用，请在边缘节点管理中重新启用')
-
-    # 3. 严格校验：本机IP:端口 必须等于登记值
-    if host_pc_ip != record.host_pc_ip:
-        client_ip = request.client.host if request.client else 'unknown'
-        logger.warning(
-            f'[bootstrap] 密钥与机器不匹配：nodeKey={record.node_key} 登记={record.host_pc_ip} '
-            f'实际上报={host_pc_ip} 来源IP={client_ip}'
-        )
-        raise ServiceException(
-            message=f'密钥与机器不匹配，预期：{record.host_pc_ip}，实际：{host_pc_ip}'
-        )
-
-    # 4. 校验通过：激活（记录最后心跳时间；指纹仅记录，不作为拒绝条件）
-    record.last_heartbeat = datetime.now()
-    if fingerprint and not record.machine_fingerprint:
-        record.machine_fingerprint = fingerprint
+    # 3. 全新注册 —— 🔧 P0-2 整改：仅注册窗口开启时允许（按压配对），否则任何人可注册新节点并领取全套凭据
+    redis = request.app.state.redis
+    try:
+        open_flag = await redis.get(REGISTER_WINDOW_KEY)
+    except Exception:
+        open_flag = None  # Redis 故障时 fail-closed（拒绝新注册）
+    if open_flag != '1':
+        raise ServiceException(message='节点注册窗口未开启，请先在管理端"边缘节点密钥"页开放注册')
+    node_key = _generate_node_key(host_pc_ip)
+    secret_key = secrets.token_hex(32)
+    entity = EdgeBootstrapKey(
+        node_key=node_key,
+        node_name=f'采集节点-{host_pc_ip}',
+        host_pc_ip=host_pc_ip,
+        secret_key=hash_bootstrap_secret(secret_key),
+        machine_fingerprint=fingerprint,
+        enabled=1,
+    )
+    query_db.add(entity)
     await query_db.commit()
 
     return ResponseUtil.success(data={
-        'nodeKey': record.node_key,
-        'nodeName': record.node_name or record.node_key,
-        'hostPcIp': record.host_pc_ip,
-        'secretKey': None,  # 只存哈希不再回显
-        'isNew': False,
+        'nodeKey': node_key,
+        'nodeName': f'采集节点-{host_pc_ip}',
+        'hostPcIp': host_pc_ip,
+        'secretKey': secret_key,  # 明文仅此一次返回
+        'isNew': True,
     })
 
 

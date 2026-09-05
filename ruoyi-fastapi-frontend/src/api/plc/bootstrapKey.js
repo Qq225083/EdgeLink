@@ -51,3 +51,28 @@ export function delBootstrapKey(keyIds) {
     method: 'delete'
   })
 }
+
+// 开放新节点注册窗口（按压配对）
+export function openRegistrationWindow(minutes) {
+  return request({
+    url: '/plc/bootstrap-key/registration-window',
+    method: 'post',
+    params: { minutes: minutes || 10 }
+  })
+}
+
+// 查询注册窗口状态
+export function getRegistrationWindow() {
+  return request({
+    url: '/plc/bootstrap-key/registration-window',
+    method: 'get'
+  })
+}
+
+// 立即关闭注册窗口
+export function closeRegistrationWindow() {
+  return request({
+    url: '/plc/bootstrap-key/registration-window',
+    method: 'delete'
+  })
+}

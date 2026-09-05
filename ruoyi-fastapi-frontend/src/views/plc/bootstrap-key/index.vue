@@ -31,6 +31,12 @@
       <el-col :span="1.5">
         <el-button type="danger" icon="el-icon-delete" size="mini" :disabled="multiple" @click="handleDelete" v-hasPermi="['plc:bootstrap-key:remove']">删除</el-button>
       </el-col>
+      <el-col :span="1.5">
+        <el-button type="warning" icon="el-icon-key" size="mini" @click="handleRegWindow" v-hasPermi="['plc:bootstrap-key:edit']">
+          {{ regWindow.open ? '关闭注册(' + Math.ceil(regWindow.remainSeconds / 60) + '分钟)' : '开放注册' }}
+        </el-button>
+        <el-tag v-if="regWindow.open" type="warning" size="mini" style="margin-left:6px">新节点注册窗口开放中</el-tag>
+      </el-col>
       <right-toolbar :showSearch.sync="showSearch" @queryTable="getList"></right-toolbar>
     </el-row>
 
@@ -115,7 +121,7 @@
 </template>
 
 <script>
-import { listBootstrapKey, addBootstrapKey, updateBootstrapKey, delBootstrapKey, toggleBootstrapKeyStatus, regenerateBootstrapKey } from "@/api/plc/bootstrapKey";
+import { listBootstrapKey, addBootstrapKey, updateBootstrapKey, delBootstrapKey, toggleBootstrapKeyStatus, regenerateBootstrapKey, openRegistrationWindow, getRegistrationWindow, closeRegistrationWindow } from "@/api/plc/bootstrapKey";
 
 export default {
   name: "BootstrapKey",
@@ -140,6 +146,8 @@ export default {
         enabled: null,
       },
       form: {},
+      regWindow: { open: false, remainSeconds: 0 },
+      regWindowTimer: null,
       rules: {
         nodeKey: [
           { required: true, message: "节点标识不能为空", trigger: "blur" },
@@ -153,8 +161,38 @@ export default {
   },
   created() {
     this.getList();
+    this.refreshRegWindow();
+    // 窗口状态每 30s 刷新（页面销毁时清理）
+    this.regWindowTimer = setInterval(this.refreshRegWindow, 30000);
+  },
+  beforeDestroy() {
+    if (this.regWindowTimer) { clearInterval(this.regWindowTimer); this.regWindowTimer = null; }
   },
   methods: {
+    /** 注册窗口：开放/关闭切换 */
+    handleRegWindow() {
+      if (this.regWindow.open) {
+        closeRegistrationWindow().then(() => {
+          this.$modal.msgSuccess('注册窗口已关闭');
+          this.refreshRegWindow();
+        }).catch(err => {
+          this.$modal.msgError(err.msg || '操作失败');
+        });
+      } else {
+        this.$modal.confirm('开放后 10 分钟内允许新节点自动注册接入，确认开放？').then(() => {
+          return openRegistrationWindow(10);
+        }).then(response => {
+          this.$modal.msgSuccess(response.msg || '注册窗口已开放');
+          this.refreshRegWindow();
+        }).catch(() => {});
+      }
+    },
+    /** 刷新注册窗口状态 */
+    refreshRegWindow() {
+      getRegistrationWindow().then(response => {
+        this.regWindow = response.data || { open: false, remainSeconds: 0 };
+      }).catch(() => {});
+    },
     /** 查询列表 */
     getList() {
       this.loading = true;

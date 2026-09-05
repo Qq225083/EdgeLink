@@ -20,7 +20,6 @@ class EdgeBootstrapKey(Base):
     machine_fingerprint = Column(String(64), nullable=True, comment='机器指纹 SHA256(hostname+MACs)')
     secret_key = Column(String(64), nullable=False, comment='初始接入密钥（存 SHA-256 哈希，明文仅创建/重置时返回一次）')
     enabled = Column(SmallInteger, default=1, comment='是否启用（0停用 1启用）')
-    last_heartbeat = Column(DateTime, nullable=True, comment='最后激活/心跳时间（/auto 校验通过时更新）')
     created_at = Column(DateTime, default=datetime.now, comment='创建时间')
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment='更新时间')
 
