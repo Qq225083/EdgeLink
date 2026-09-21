@@ -1,0 +1,52 @@
+[
+    {
+        "id": "e9d0a1b2c3d4e5f6",
+        "type": "tab",
+        "label": "Error演练（监控测试）",
+        "disabled": false,
+        "info": "监控演练流：每 10 秒故意制造 error 级日志，用于验证「存量监控 → 最近报错」链路。\n\n三类错误：\n1. 固定消息 —— 验证监控页去重计数（次数列持续增长）\n2. 每分钟变化的消息 —— 验证多种错误并存\n3. 每 5 次触发抛一次真实异常 —— 验证带堆栈的 error\n\n⚠️ 本流故意不放 Catch 节点：Node-RED 原生行为是「被 Catch 处理的 error 不再写入日志」，\n   日志里没有，监控采集器就看不到。真实现场的老流程大多没有 catch，错误都会进日志，不受影响。\n⚠️ 演练完请禁用或删除本流，避免刷错误历史。"
+    },
+    {
+        "id": "1a2b3c4d5e6f7001",
+        "type": "inject",
+        "z": "e9d0a1b2c3d4e5f6",
+        "name": "每10秒触发",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "10",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 3,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 150,
+        "y": 120,
+        "wires": [
+            [
+                "1a2b3c4d5e6f7002"
+            ]
+        ]
+    },
+    {
+        "id": "1a2b3c4d5e6f7002",
+        "type": "function",
+        "z": "e9d0a1b2c3d4e5f6",
+        "name": "故意抛错",
+        "func": "// ===== Error 演练 =====\n// 注意：本流没有 Catch 节点——被 Catch 处理的 error 不会写入日志，监控也就采集不到。\n\n// 1) 固定消息：验证监控页「次数」去重计数\nnode.error(\"【演练】PLC-99 采集超时（固定消息，验证去重计数）\", msg);\n\n// 2) 每分钟变化的消息：验证多种错误并存\nvar minute = new Date().getMinutes();\nnode.error(\"【演练】数据库写入失败 batch-\" + minute + \"（变化消息，验证多条并存）\", msg);\n\n// 3) 每 5 次触发抛一次真实异常（带堆栈）\nvar n = context.get('count') || 0;\nn++;\ncontext.set('count', n);\nif (n % 5 === 0) {\n    throw new Error(\"【演练】第 \" + n + \" 次触发：模拟未捕获异常（带堆栈）\");\n}\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 340,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    }
+]

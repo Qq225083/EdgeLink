@@ -60,6 +60,7 @@ class SiteHealthSiteModel(BaseModel):
     running_flows: Optional[int] = Field(default=None)
     node_red_version: Optional[str] = Field(default=None)
     uptime_sec: Optional[int] = Field(default=None)
+    last_errors: Optional[str] = Field(default=None, description='最近错误快照（JSON字符串，存储层原样）')
     created_at: Optional[datetime] = Field(default=None)
     updated_at: Optional[datetime] = Field(default=None)
     # 运行时计算字段
@@ -95,3 +96,35 @@ class SiteHeartbeatLogModel(BaseModel):
     running_flows: Optional[int] = Field(default=None)
     node_red_version: Optional[str] = Field(default=None)
     uptime_sec: Optional[int] = Field(default=None)
+
+
+class SiteHeartbeatBodyModel(BaseModel):
+    """心跳上报 JSON body（可选，query 参数全保留兼容旧节点）。
+
+    errors：上次上报以来新产生的 Node-RED error 级日志（新节点才携带）。
+    """
+    model_config = ConfigDict(alias_generator=to_camel, from_attributes=True, populate_by_name=True)
+
+    errors: Optional[list] = Field(default=None, description='error 日志列表 [{ts,msg}]（服务端截断：最多10条×500字）')
+
+
+class SiteFlowsUploadBodyModel(BaseModel):
+    """flows.json 上传请求体（节点侧按钮触发）"""
+    model_config = ConfigDict(alias_generator=to_camel, from_attributes=True, populate_by_name=True)
+
+    reason: str = Field(description='上传原因（必填）', min_length=1, max_length=200)
+    content: str = Field(description='flows.json 全文', min_length=1)
+    sha256: Optional[str] = Field(default=None, description='内容 SHA-256', max_length=64)
+    node_port: Optional[int] = Field(default=0, description='Node-RED监听端口（用于身份绑定校验）', ge=0, le=65535)
+
+
+class SiteFlowsUploadModel(BaseModel):
+    """flows.json 上传记录（列表项，不含 content 全文）"""
+    model_config = ConfigDict(alias_generator=to_camel, from_attributes=True, populate_by_name=True)
+
+    id: Optional[int] = Field(default=None)
+    site_id: Optional[int] = Field(default=None)
+    reason: Optional[str] = Field(default=None)
+    size_bytes: Optional[int] = Field(default=None)
+    sha256: Optional[str] = Field(default=None)
+    created_at: Optional[datetime] = Field(default=None)

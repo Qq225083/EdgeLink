@@ -1,0 +1,60 @@
+<script type="text/html" data-template-name="site-health-server">
+    <div class="form-row">
+        <label for="node-config-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-config-input-name" placeholder="例如：生产后端">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-server"><i class="fa fa-server"></i> 服务器 IP</label>
+        <input type="text" id="node-config-input-server" placeholder="例如 192.168.1.10">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-port"><i class="fa fa-plug"></i> 端口</label>
+        <input type="number" id="node-config-input-port" placeholder="80">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-basePath"><i class="fa fa-link"></i> 接口路径前缀</label>
+        <input type="text" id="node-config-input-basePath" placeholder="/prod-api">
+        <span class="form-tips" style="margin-left:8px;color:#888;">系统在子目录/反代下填前缀；直连后端留空</span>
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-https"><i class="fa fa-lock"></i> 使用 HTTPS</label>
+        <input type="checkbox" id="node-config-input-https" style="display:inline-block;width:auto;">
+    </div>
+    <div class="form-row">
+        <label for="node-config-input-key"><i class="fa fa-key"></i> 密钥 Key</label>
+        <input type="password" id="node-config-input-key" placeholder="登记时生成的 Key">
+    </div>
+</script>
+
+<script type="text/html" data-help-name="site-health-server">
+    <h3>存量监控服务器配置</h3>
+    <p>「存量监控」系列节点（采集点健康度、flows.json 上传）共享的后端连接配置。
+       在这里维护一次服务器地址与密钥 Key，多个功能节点共同引用；
+       重置密钥后只需修改本配置节点。</p>
+    <ul>
+        <li><b>服务器 IP / 端口</b>：EdgeLink 后端地址（或反向代理地址）。</li>
+        <li><b>接口路径前缀</b>：系统部署在子目录/反向代理下时填前缀（如 <code>/prod-api</code>），直连后端则留空。</li>
+        <li><b>使用 HTTPS</b>：后端启用 TLS 时勾选。仅支持受信任 CA 签发的证书；自签名证书会握手失败。</li>
+        <li><b>密钥 Key</b>：管理端「存量采集点监控 → 采集点登记」生成，仅显示一次。存于 <code>flows_cred.json</code>，不写入 <code>flows.json</code>。</li>
+    </ul>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('site-health-server', {
+        category: 'config',
+        color: '#7bc2e3',
+        defaults: {
+            name: { value: '' },
+            server: { value: '', required: true },
+            port: { value: 80, required: true, validate: RED.validators.number() },
+            basePath: { value: '' },
+            https: { value: false }
+        },
+        credentials: {
+            key: { type: 'password' }
+        },
+        label: function () {
+            return this.name || (this.server ? this.server + ':' + this.port : '存量监控服务器');
+        }
+    });
+</script>

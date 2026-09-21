@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from module_site_health.entity.do.site_health_do import (
     SiteHealthSite,
     SiteHealthHeartbeatLog,
+    SiteHealthFlowsUpload,
     hash_site_key,
 )
 
@@ -103,3 +104,49 @@ class SiteHealthDao:
             if len(ids) < batch_size:
                 break
         return total
+
+    # ==================== flows.json 上传档案 ====================
+
+    @staticmethod
+    async def get_uploads(db: AsyncSession, site_id: int) -> list[SiteHealthFlowsUpload]:
+        """某采集点的上传档案列表（倒序，content 全文一并取出也无妨：最多 5 份）。"""
+        result = await db.execute(
+            select(SiteHealthFlowsUpload)
+            .where(SiteHealthFlowsUpload.site_id == site_id)
+            .order_by(desc(SiteHealthFlowsUpload.id))
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def get_upload_by_id(
+        db: AsyncSession, site_id: int, upload_id: int
+    ) -> SiteHealthFlowsUpload | None:
+        """按 ID 取档案（强制带 site_id 条件，防越权下载别的采集点的档案）。"""
+        result = await db.execute(
+            select(SiteHealthFlowsUpload).where(
+                SiteHealthFlowsUpload.id == upload_id,
+                SiteHealthFlowsUpload.site_id == site_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def trim_uploads(db: AsyncSession, site_id: int, keep: int = 5) -> int:
+        """每站点仅保留最近 keep 份档案，返回删除份数。随写入同事务调用。"""
+        keep_ids = (
+            await db.execute(
+                select(SiteHealthFlowsUpload.id)
+                .where(SiteHealthFlowsUpload.site_id == site_id)
+                .order_by(desc(SiteHealthFlowsUpload.id))
+                .limit(keep)
+            )
+        ).scalars().all()
+        if not keep_ids:
+            return 0
+        result = await db.execute(
+            delete(SiteHealthFlowsUpload).where(
+                SiteHealthFlowsUpload.site_id == site_id,
+                SiteHealthFlowsUpload.id.not_in(keep_ids),
+            )
+        )
+        return result.rowcount or 0

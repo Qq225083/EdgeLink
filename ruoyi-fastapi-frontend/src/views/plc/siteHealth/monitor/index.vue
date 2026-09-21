@@ -49,7 +49,7 @@
     <!-- 采集点列表表格 -->
     <el-table v-loading="loading" :data="siteList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
-      <el-table-column label="采集场所" align="center" prop="siteName" min-width="130" :show-overflow-tooltip="true" />
+      <el-table-column label="采集场所" align="center" prop="siteName" width="120" :show-overflow-tooltip="true" />
       <el-table-column label="位置（栋/楼/工程）" align="center" width="150" :show-overflow-tooltip="true">
         <template slot-scope="scope">
           {{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}
@@ -73,6 +73,14 @@
           <el-tag v-else type="danger" size="mini">离线</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="最近报错" align="center" width="90">
+        <template slot-scope="scope">
+          <el-tag v-if="scope.row.lastErrors && scope.row.lastErrors.length" type="warning" size="mini" class="error-tag" @click="handleErrors(scope.row)">
+            报错 {{ scope.row.lastErrors.length }} 条
+          </el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="最近心跳" align="center" width="160" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ formatTime(scope.row.lastHeartbeat) }}</template>
       </el-table-column>
@@ -94,10 +102,11 @@
       <el-table-column label="上报IP" align="center" prop="reportIp" width="120" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ scope.row.reportIp || '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width" width="290">
+      <el-table-column label="操作" align="center" class-name="small-padding fixed-width op-cell" width="480" fixed="right">
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-view" @click="handleHistory(scope.row)" v-hasPermi="['site:health:list']">履历</el-button>
           <el-button size="mini" type="text" icon="el-icon-data-line" @click="handleTrend(scope.row)" v-hasPermi="['site:health:list']">趋势</el-button>
+          <el-button size="mini" type="text" icon="el-icon-folder-opened" @click="handleUploads(scope.row)" v-hasPermi="['site:health:list']">上传记录</el-button>
           <el-button size="mini" type="text" icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['site:health:edit']">修改</el-button>
           <el-button size="mini" type="text" icon="el-icon-key" @click="handleRegenerate(scope.row)" v-hasPermi="['site:health:edit']">重置密钥</el-button>
           <el-button size="mini" type="text" :icon="scope.row.status === 0 ? 'el-icon-video-play' : 'el-icon-video-pause'" @click="handleToggleStatus(scope.row)" v-hasPermi="['site:health:edit']">{{ scope.row.status === 0 ? '启用' : '停用' }}</el-button>
@@ -244,12 +253,70 @@
         <el-button type="warning" plain @click="closeKeyDialog">我已保存，关闭</el-button>
       </div>
     </el-dialog>
+
+    <!-- 最近报错对话框（节点心跳捎带上报的 error 级日志快照） -->
+    <el-dialog :title="errorsTitle" :visible.sync="errorsOpen" width="640px" append-to-body>
+      <el-alert
+        title="以下为节点最近一次心跳上报的 error 级日志（最多 10 条，单条截断 500 字）；完整日志以现场 Node-RED 日志为准"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
+      <el-table :data="errorsList" size="small" border max-height="420">
+        <el-table-column label="时间" align="center" prop="ts" width="160" :show-overflow-tooltip="true" />
+        <el-table-column label="次数" align="center" width="70">
+          <template slot-scope="scope">
+            <el-tag v-if="(scope.row.count || 1) > 1" type="danger" size="mini">×{{ scope.row.count }}</el-tag>
+            <span v-else>1</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="错误信息" prop="msg" :show-overflow-tooltip="false">
+          <template slot-scope="scope">
+            <span class="error-msg">{{ scope.row.msg }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- flows.json 上传记录抽屉 -->
+    <el-drawer :title="uploadsTitle" :visible.sync="uploadsOpen" size="50%" :append-to-body="true">
+      <div class="history-toolbar">
+        <el-button size="mini" icon="el-icon-refresh" @click="loadUploads">刷新</el-button>
+        <span class="history-count">每站点仅保留最近 5 份</span>
+      </div>
+      <el-table v-loading="uploadsLoading" :data="uploadsList" size="small" border>
+        <el-table-column label="上传时间" align="center" width="160" :show-overflow-tooltip="true">
+          <template slot-scope="scope">{{ formatTime(scope.row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="上传原因" prop="reason" min-width="140" :show-overflow-tooltip="true" />
+        <el-table-column label="大小" align="center" width="90">
+          <template slot-scope="scope">{{ formatBytes(scope.row.sizeBytes) }}</template>
+        </el-table-column>
+        <el-table-column label="SHA-256" align="center" width="110">
+          <template slot-scope="scope">
+            <el-tooltip v-if="scope.row.sha256" :content="scope.row.sha256" placement="top">
+              <span class="sha-short">{{ scope.row.sha256.slice(0, 10) }}…</span>
+            </el-tooltip>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" align="center" width="80">
+          <template slot-scope="scope">
+            <el-button size="mini" type="text" icon="el-icon-download" :loading="scope.row._downloading" @click="handleDownloadUpload(scope.row)">下载</el-button>
+          </template>
+        </el-table-column>
+        <template slot="empty">该采集点还没有上传记录（在 Node-RED 编辑器里点击「flows.json 上传」节点按钮触发）</template>
+      </el-table>
+    </el-drawer>
   </div>
 </template>
 
 <script>
-import { listSite, getSiteSummary, getSiteHistory, getSiteTrend, updateSite, regenerateSiteKey, toggleSiteStatus, delSite } from "@/api/plc/siteHealth";
+import { listSite, getSiteSummary, getSiteHistory, getSiteTrend, updateSite, regenerateSiteKey, toggleSiteStatus, delSite, getSiteUploads, downloadSiteUpload } from "@/api/plc/siteHealth";
 import * as echarts from "echarts";
+import { saveAs } from "file-saver";
+import { blobValidate } from "@/utils/ruoyi";
 
 const IPV4_PATTERN = /^((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$/;
 
@@ -336,6 +403,16 @@ export default {
       trendEmpty: false,
       trendChart: null,
       regenSiteName: '',
+      // 最近报错对话框
+      errorsOpen: false,
+      errorsTitle: '',
+      errorsList: [],
+      // flows.json 上传记录抽屉
+      uploadsOpen: false,
+      uploadsTitle: '',
+      uploadsLoading: false,
+      uploadsList: [],
+      uploadsSiteId: null,
       // 30s 静默轮询（看板场景，不闪 loading）
       refreshTimer: null,
     };
@@ -540,6 +617,55 @@ export default {
       this.keyOpen = false;
       this.newKey = '';
       this.regenSiteName = '';
+    },
+    /** 查看最近报错（心跳捎带的 error 级日志快照） */
+    handleErrors(row) {
+      this.errorsTitle = '【' + row.siteName + '】最近报错';
+      this.errorsList = row.lastErrors || [];
+      this.errorsOpen = true;
+    },
+    /** 打开上传记录抽屉 */
+    handleUploads(row) {
+      this.uploadsSiteId = row.id;
+      this.uploadsTitle = '【' + row.siteName + '】flows.json 上传记录';
+      this.uploadsOpen = true;
+      this.loadUploads();
+    },
+    /** 加载上传记录 */
+    loadUploads() {
+      if (!this.uploadsSiteId) return;
+      this.uploadsLoading = true;
+      getSiteUploads(this.uploadsSiteId).then(response => {
+        this.uploadsList = (response.data || []).map(item => ({ ...item, _downloading: false }));
+        this.uploadsLoading = false;
+      }).catch(() => {
+        this.uploadsLoading = false;
+      });
+    },
+    /** 下载某次上传的 flows.json（blob → saveAs） */
+    handleDownloadUpload(row) {
+      row._downloading = true;
+      downloadSiteUpload(this.uploadsSiteId, row.id).then(res => {
+        row._downloading = false;
+        if (blobValidate(res.data)) {
+          const filename = decodeURIComponent(res.headers['download-filename'] || ('flows-' + row.id + '.json'));
+          saveAs(new Blob([res.data]), filename);
+        } else {
+          this.$modal.msgError("下载失败：服务端返回了错误信息");
+        }
+      }).catch(() => {
+        row._downloading = false;
+        this.$modal.msgError("下载失败");
+      });
+    },
+    /** 字节数 → 人类可读 */
+    formatBytes(n) {
+      if (n == null || n === '') return '-';
+      const num = Number(n);
+      if (isNaN(num)) return '-';
+      if (num >= 1024 * 1024) return (num / 1024 / 1024).toFixed(1) + 'MB';
+      if (num >= 1024) return (num / 1024).toFixed(1) + 'KB';
+      return num + 'B';
     },
     /** 时间格式化：ISO 字符串 → YYYY-MM-DD HH:mm:ss */
     /** 内存趋势：打开对话框并拉取最近 7 天（按小时分桶）渲染 ECharts 折线 */
@@ -751,5 +877,31 @@ export default {
 }
 .key-actions {
   text-align: center;
+}
+/* 最近报错标记（可点击） */
+.error-tag {
+  cursor: pointer;
+}
+.error-msg {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #f56c6c;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.sha-short {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #909399;
+}
+/* 操作列：全部按钮平铺单行，紧凑间距 */
+.el-table >>> .op-cell .cell {
+  white-space: nowrap;
+}
+.el-table >>> .op-cell .el-button + .el-button {
+  margin-left: 6px;
+}
+.text-danger {
+  color: #f56c6c;
 }
 </style>

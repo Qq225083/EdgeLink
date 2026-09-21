@@ -1,0 +1,84 @@
+<script type="text/html" data-template-name="site-flows-upload">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-input-name" placeholder="flows.json 上传">
+    </div>
+    <div class="form-row">
+        <label for="node-input-serverRef"><i class="fa fa-share-alt"></i> 服务器配置</label>
+        <input type="text" id="node-input-serverRef">
+        <span class="form-tips" style="margin-left:8px;color:#888;">共享配置（与心跳节点同一个）</span>
+    </div>
+    <div class="form-row">
+        <label for="node-input-flowsPath"><i class="fa fa-file-code-o"></i> flows 文件路径</label>
+        <input type="text" id="node-input-flowsPath" placeholder="留空自动推断">
+        <span class="form-tips" style="margin-left:8px;color:#888;">默认取 Node-RED 实际加载的 flows 文件，一般无需填写</span>
+    </div>
+</script>
+
+<script type="text/html" data-help-name="site-flows-upload">
+    <h3>flows.json 上传</h3>
+    <p>人工触发：点击节点按钮 → 输入<b>上传原因</b>（必填，记录到后端）→ 读取本机 flows.json
+       上传到后端「存量采集点监控」，每站点保留最近 5 份，监控页可查看上传记录并下载。</p>
+    <p>典型用途：现场改动流程前留档；现场出问题（采集异常/节点报错）时把现场流程快照传回后端对照分析。</p>
+    <h4>配置项</h4>
+    <ul>
+        <li><b>服务器配置</b>：引用「存量监控服务器」共享配置节点（与采集点健康度节点用同一个）。</li>
+        <li><b>flows 文件路径</b>：默认自动推断 Node-RED 实际加载的 flows 文件
+            （<code>settings.flowsFile</code> → <code>userDir/flows.json</code>），现场路径特殊时再手填。</li>
+    </ul>
+    <h4>状态灯</h4>
+    <ul>
+        <li><span style="color:#888;">○ 灰</span>：待命，等待点击。</li>
+        <li><span style="color:#5bc0de;">● 蓝</span>：上传中。</li>
+        <li><span style="color:#5cb85c;">● 绿</span>：上传成功（含时间）。</li>
+        <li><span style="color:#d9534f;">● 红</span>：失败原因（未配置/文件读取失败/后端拒绝/网络不可达）。</li>
+    </ul>
+    <p>后端校验与心跳一致：Key + 启停 + 上报 IP/端口绑定；另加 10MB 上限、SHA-256 完整性校验、
+       每 key 每小时 5 次限流。身份校验被拒（IP/端口不符、Key 无效）时不会重试，请先修正配置。</p>
+</script>
+
+<script type="text/javascript">
+    RED.nodes.registerType('site-flows-upload', {
+        category: '存量监控',
+        color: '#7bc2e3',
+        defaults: {
+            name: { value: 'flows.json 上传' },
+            serverRef: { value: '', type: 'site-health-server', required: true },
+            flowsPath: { value: '' }
+        },
+        inputs: 0,
+        outputs: 0,
+        icon: 'font-awesome/fa-upload',
+        label: function () {
+            return this.name || 'flows.json 上传';
+        },
+        button: {
+            onclick: function () {
+                var nodeId = this.id;
+                var reason = window.prompt('请输入本次上传原因（必填，将记录到后端）：\n例如：改动前留档 / 现场采集异常排查');
+                if (reason === null) return; // 取消
+                reason = reason.trim();
+                if (!reason) {
+                    RED.notify('上传原因不能为空', { type: 'warning', timeout: 3000 });
+                    return;
+                }
+                $.ajax({
+                    url: 'site-flows-upload/' + nodeId + '/upload',
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ reason: reason }),
+                    timeout: 60000
+                }).done(function (resp) {
+                    RED.notify((resp && resp.message) || '上传成功', { type: 'success', timeout: 4000 });
+                }).fail(function (xhr) {
+                    var msg = '上传失败（HTTP ' + xhr.status + '）';
+                    try {
+                        var j = JSON.parse(xhr.responseText);
+                        if (j && j.message) msg = j.message;
+                    } catch (e) { /* ignore */ }
+                    RED.notify(msg, { type: 'error', timeout: 6000 });
+                });
+            }
+        }
+    });
+</script>

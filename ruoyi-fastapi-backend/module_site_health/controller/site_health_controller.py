@@ -7,7 +7,7 @@
 import time
 from typing import Annotated, Optional
 
-from fastapi import Path, Query, Request, Response
+from fastapi import Body, Path, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.annotation.log_annotation import Log
@@ -23,6 +23,9 @@ from module_site_health.entity.vo.site_health_vo import (
     SiteUpdateModel,
     SiteHealthPageQueryModel,
     SiteHeartbeatLogModel,
+    SiteHeartbeatBodyModel,
+    SiteFlowsUploadBodyModel,
+    SiteFlowsUploadModel,
 )
 from module_site_health.service.site_health_service import SiteHealthService
 from utils.response_util import ResponseUtil
@@ -47,6 +50,9 @@ _RATE_MAX_BUCKETS = 10000
 _REPORT_IP_LIMIT = 600
 _REPORT_KEY_LIMIT = 20
 _REPORT_WINDOW_S = 60
+# flows.json 上传是低频人工操作：每 key 5 次/小时足够（防误触连点/脚本刷库）
+_UPLOAD_KEY_LIMIT = 5
+_UPLOAD_WINDOW_S = 3600
 
 
 def _extract_bearer_key(request: Request) -> Optional[str]:
@@ -184,6 +190,48 @@ async def get_site_trend(
     return ResponseUtil.success(data=rows)
 
 
+@site_health_controller.get(
+    '/site/{site_id}/uploads',
+    summary='采集点 flows.json 上传记录',
+    response_model=DataResponseModel[list[SiteFlowsUploadModel]],
+    dependencies=[UserInterfaceAuthDependency('site:health:list')],
+)
+async def get_site_uploads(
+    request: Request,
+    site_id: Annotated[int, Path(description='采集点ID')],
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    rows = await SiteHealthService.get_uploads(query_db, site_id)
+    return ResponseUtil.success(data=rows)
+
+
+@site_health_controller.get(
+    '/site/{site_id}/uploads/{upload_id}/download',
+    summary='下载某次上传的 flows.json',
+    dependencies=[UserInterfaceAuthDependency('site:health:list')],
+)
+async def download_site_upload(
+    request: Request,
+    site_id: Annotated[int, Path(description='采集点ID')],
+    upload_id: Annotated[int, Path(description='上传记录ID')],
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    """下载 flows.json 全文。
+
+    注意 media_type 必须是 octet-stream：前端 blobValidate 会把 application/json
+    的响应当错误信封解析，导致正常文件被误判为失败。
+    """
+    content, filename = await SiteHealthService.get_upload_file(query_db, site_id, upload_id)
+    return Response(
+        content=content,
+        media_type='application/octet-stream',
+        headers={
+            'download-filename': filename,
+            'Content-Disposition': f'attachment; filename={filename}',
+        },
+    )
+
+
 @site_health_controller.put(
     '/site/{site_id}/regenerate',
     summary='重新生成密钥',
@@ -240,11 +288,13 @@ async def delete_sites(
 @site_health_report_controller.post(
     '/report',
     summary='采集点心跳上报',
-    description='旧版 Node-RED 健康监视节点定期上报（仅凭 key，无 JWT）。',
+    description='旧版 Node-RED 健康监视节点定期上报（仅凭 key，无 JWT）。'
+    '指标走 query 参数；v1.1.0+ 节点可在 JSON body 中携带 errors（上次上报以来的 error 日志）。',
     response_model=DataResponseModel[dict],
 )
 async def report_heartbeat(
     request: Request,
+    payload: Annotated[Optional[SiteHeartbeatBodyModel], Body()] = None,
     key: Annotated[Optional[str], Query(description='登记时生成的密钥（兼容保留，优先用 Authorization 头）')] = None,
     interval: Annotated[int, Query(description='心跳间隔秒（10-180）')] = 30,
     memory_rss_mb: Annotated[int, Query(description='Node进程内存MB', ge=0)] = 0,
@@ -279,5 +329,41 @@ async def report_heartbeat(
         running_flows=running_flows,
         node_red_version=node_red_version,
         uptime_sec=uptime_sec,
+        errors=payload.errors if payload else None,
     )
     return ResponseUtil.success(msg=result.get('message', '上报成功'), data=result)
+
+
+@site_health_report_controller.post(
+    '/flows/upload',
+    summary='flows.json 上传（节点按钮触发）',
+    description='Node-RED flows.json 上传节点人工触发上报（仅凭 key，无 JWT）。',
+    response_model=DataResponseModel[dict],
+)
+async def upload_flows(
+    request: Request,
+    model: SiteFlowsUploadBodyModel,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    """flows.json 上传：key 只走 Authorization 头（content 体积大，必须 body 传输）。
+
+    限流双层：先按 IP 粗防泛洪（与心跳同桶），再按 key 5 次/小时（人工操作频率上限）。
+    """
+    key = _extract_bearer_key(request)
+    _check_report_rate_limit(request, (key or '').strip())
+    if not key or not key.strip():
+        return ResponseUtil.success(
+            msg='密钥无效', data={'ok': False, 'disabled': False, 'reason': 'invalid_key', 'message': '密钥不能为空'}
+        )
+    _rate_limit(f'upload:{key.strip()}', _UPLOAD_KEY_LIMIT, _UPLOAD_WINDOW_S)
+    report_ip = request.client.host if request.client else ''
+    result = await SiteHealthService.upload_flows(
+        query_db,
+        key=key.strip(),
+        reason=model.reason,
+        content=model.content,
+        sha256=model.sha256,
+        node_port=model.node_port or 0,
+        report_ip=report_ip,
+    )
+    return ResponseUtil.success(msg=result.get('message', '上传成功'), data=result)

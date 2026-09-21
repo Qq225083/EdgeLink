@@ -1,4 +1,6 @@
 import request from '@/utils/request'
+import axios from 'axios'
+import { getToken } from '@/utils/auth'
 
 // 登记采集点（生成唯一密钥，明文仅返回一次）
 export function addSite(data) {
@@ -75,5 +77,23 @@ export function delSite(siteIds) {
   return request({
     url: '/site-health/site/' + siteIds,
     method: 'delete'
+  })
+}
+
+// 查询采集点 flows.json 上传记录
+export function getSiteUploads(siteId) {
+  return request({
+    url: '/site-health/site/' + siteId + '/uploads',
+    method: 'get'
+  })
+}
+
+// 下载某次上传的 flows.json（blob，组件内 saveAs 落盘）
+export function downloadSiteUpload(siteId, uploadId) {
+  return axios({
+    method: 'get',
+    url: process.env.VUE_APP_BASE_API + '/site-health/site/' + siteId + '/uploads/' + uploadId + '/download',
+    responseType: 'blob',
+    headers: { 'Authorization': 'Bearer ' + getToken() }
   })
 }
