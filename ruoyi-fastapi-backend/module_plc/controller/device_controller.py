@@ -50,6 +50,21 @@ async def get_plc_device_list(
 
 
 @device_controller.get(
+    '/count-by-node',
+    summary='按采集节点统计 PLC 数量',
+    description='PLC 设备管理页左侧采集点面板的数量徽标数据源',
+    response_model=DataResponseModel[list],
+    dependencies=[UserInterfaceAuthDependency('plc:device:list')],
+)
+async def count_devices_by_node(
+    request: Request,
+    query_db: Annotated[AsyncSession, DBSessionDependency()],
+) -> Response:
+    rows = await DeviceService.count_by_node_services(query_db)
+    return ResponseUtil.success(data=rows)
+
+
+@device_controller.get(
     '/{device_id}',
     summary='获取PLC设备详情',
     description='获取指定PLC设备的详细信息，包含该设备下所有未删除的采集点位',

@@ -1,0 +1,47 @@
+[
+    {
+        "id": "cf_wed_comment",
+        "type": "comment",
+        "z": "wed_scn1_flow",
+        "name": "替代 function 5（变化检测+拼SQL）\n链路：[原PLC读取节点] → 变化过滤 → 展开写库SQL → [原pg执行节点]\n对应原逻辑：col编号→tag_id = idArray[num-3]（col3→1 … col42→40）\n设备标识：直接取记录里的 equipment_id 字段（原 macArray[i] 硬编码废除）\ncolumn 过滤：col1/col2 在 change-filter 排除字段里，不参与比较（原 num>2 判断）",
+        "x": 320,
+        "y": 280,
+        "wires": []
+    },
+    {
+        "id": "cf_wed_filter",
+        "type": "change-filter",
+        "z": "wed_scn1_flow",
+        "name": "变化过滤",
+        "keyField": "equipment_id",
+        "excludeFields": "timestamp,insert_time,col1,col2",
+        "outputMode": "changed_only",
+        "firstPass": "pass_through",
+        "threshold": 0,
+        "timeoutSec": 0,
+        "x": 330,
+        "y": 340,
+        "wires": [
+            [
+                "cf_wed_sql"
+            ]
+        ]
+    },
+    {
+        "id": "cf_wed_sql",
+        "type": "change-to-sql",
+        "z": "wed_scn1_flow",
+        "name": "展开写库SQL",
+        "table": "wedh.wed_scn1",
+        "timeColumn": "insert_time",
+        "tagColumn": "tag_id",
+        "valueColumn": "number_value",
+        "keyField": "equipment_id",
+        "fieldMapping": "{\"*\":{\"col3\":1,\"col4\":2,\"col5\":3,\"col6\":4,\"col7\":5,\"col8\":6,\"col9\":7,\"col10\":8,\"col11\":9,\"col12\":10,\"col13\":11,\"col14\":12,\"col15\":13,\"col16\":14,\"col17\":15,\"col18\":16,\"col19\":17,\"col20\":18,\"col21\":19,\"col22\":20,\"col23\":21,\"col24\":22,\"col25\":23,\"col26\":24,\"col27\":25,\"col28\":26,\"col29\":27,\"col30\":28,\"col31\":29,\"col32\":30,\"col33\":31,\"col34\":32,\"col35\":33,\"col36\":34,\"col37\":35,\"col38\":36,\"col39\":37,\"col40\":38,\"col41\":39,\"col42\":40}}",
+        "x": 560,
+        "y": 340,
+        "wires": [
+            []
+        ]
+    }
+]

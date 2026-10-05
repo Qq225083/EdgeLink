@@ -20,12 +20,12 @@ class PlcTag(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True, nullable=False, comment='点位ID')
     device_id = Column(BigInteger, ForeignKey('plc_device.id'), nullable=False, comment='所属设备ID')
-    tag_name = Column(String(100), nullable=False, comment='点位名称')
+    tag_name = Column(String(100), nullable=False, comment='点位ID（业务标识，写入 plc_data_log.tag_id）')
     register_type = Column(String(10), nullable=False, comment='寄存器类型（协议相关：MC=D/W/X/Y/M, Modbus=Coil/Discrete/Holding/Input, S7=DB/I/Q/M）')
     register_address = Column(String(50), nullable=False, comment='寄存器地址')
     data_type = Column(String(20), nullable=False, comment='数据类型（INT16/INT32/FLOAT/BIT/UINT16/UINT32/BOOL/DOUBLE）')
     unit = Column(String(20), nullable=True, comment='单位（寄存器原始单位）')
-    description = Column(Text, nullable=True, comment='点位描述')
+    description = Column(Text, nullable=True, comment='备注（点位名称/描述）')
     status = Column(CHAR(1), default='0', nullable=False, comment='状态（0启用 1停用）')
     sort_order = Column(Integer, default=0, nullable=False, comment='排序号')
     # ======== 换算参数 ========

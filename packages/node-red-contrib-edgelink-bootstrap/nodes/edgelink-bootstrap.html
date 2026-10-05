@@ -27,14 +27,27 @@
 
 <script type="text/html" data-help-name="edgelink-bootstrap">
     <h3>EdgeLink 接入配置</h3>
-    <p>配置边缘采集节点的接入信息：后端地址 + 预分配密钥。<b>部署即生效</b>，无需改 settings.js、无需重启 Node-RED。</p>
-    <p><b>预分配密钥</b> 在管理端「边缘节点管理」创建节点时生成，<b>仅显示一次</b>，请立即复制保存。</p>
+    <p>配置边缘采集节点的接入信息：后端地址 + 预分配密钥。<b>部署即激活</b>：节点自动调用后端
+    <code>/plc/config/bootstrap/auto</code> 完成「密钥 + 本机IP:端口」双绑定校验，结果直接显示在节点状态灯上。</p>
+    <p><b>预分配密钥</b> 在管理端「采集配置 → 采集点登记」生成，<b>仅显示一次</b>，请立即复制保存。</p>
     <h4>配置项</h4>
     <ul>
         <li><b>后端地址 / 端口</b>：EdgeLink 后端服务地址。</li>
         <li><b>节点标识</b>：选填，与管理端登记的 nodeKey 对应。</li>
         <li><b>本机IP:端口</b>：选填，留空则自动检测本机 IP 与监听端口。</li>
         <li><b>预分配密钥</b>：敏感信息，存于 <code>flows_cred.json</code>，不写入 <code>flows.json</code>。</li>
+    </ul>
+    <h4>状态灯</h4>
+    <ul>
+        <li>绿点：已绑定（显示采集点名称与绑定地址）；</li>
+        <li>黄圈：正在校验；</li>
+        <li>红圈：未配置 / 绑定被拒（显示后端返回的原因）/ 后端不可达。</li>
+    </ul>
+    <h4>重试与兜底</h4>
+    <ul>
+        <li>网络不可达：每 60s 自动重试；绑定被拒：每 300s 自动重探（管理端修正配置后自愈）。</li>
+        <li>激活成功后落盘 <code>userDir/edgelink-bootstrap.json</code>（0600），重启自动恢复。</li>
+        <li>校验失败只阻断采集（configReady 门），不影响 Node-RED 运行。</li>
     </ul>
     <h4>注意</h4>
     <ul>
@@ -45,7 +58,7 @@
 
 <script type="text/javascript">
     RED.nodes.registerType('edgelink-bootstrap', {
-        category: 'config',
+        category: 'function',
         color: '#a6d8a8',
         defaults: {
             name: { value: 'EdgeLink 接入配置' },

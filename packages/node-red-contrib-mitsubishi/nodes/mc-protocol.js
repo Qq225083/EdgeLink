@@ -1,5 +1,7 @@
 /**
- * mc-protocol — 三菱 MC Protocol 3E/4E 协议工具函数（v1.7.3）
+ * mc-protocol — 三菱 MC Protocol 3E/4E 协议工具函数（v1.7.4）
+ * v1.7.4: parseDeviceAddress 严格校验（review P1：拒绝非法/歧义地址，不再删字符清洗后继续使用，
+ *         防 'D100.1'→1001、'W100,AA'→0x100AA 这类静默篡改进入真实写请求）
  * v1.7.3: C059 错误码去重并更正为官方含义“命令/子命令指定错误”（删除错误的 Points out of range）
  * 与运行时解耦，便于单元测试
  * v1.5.1: 写帧 dataLen=12+2n 修正、原生位写（0x1401/0x0001：encodeBitWriteData/buildBitWriteFrame）、
@@ -69,21 +71,22 @@ function wordSpanOf(dt) {
 }
 
 function parseDeviceAddress(regType, rawAddr, plcSeries) {
-  // 🔧 W/B 及非 FX 系列的 X/Y 为 16 进制地址（保留 A-F 字符再解析）
+  // 🔧 W/B 及非 FX 系列的 X/Y 为 16 进制地址
   // 🔧 修复：rawAddr 可能是数字 0（D0/M0/X0 是合法地址），不能用 || '' 兜底（0 是 falsy）
-  var addrStr = (rawAddr === undefined || rawAddr === null) ? '' : String(rawAddr);
+  // 🔧 v1.7.4 review P1：严格校验，拒绝而非"清洗"——此前 replace(/\D/g,'') 会把
+  //    '100.1' 静默篡改为 1001、'10O1' 篡改为 101，写入侧等于把 typo 变成真实误写。
+  var addrStr = (rawAddr === undefined || rawAddr === null) ? '' : String(rawAddr).trim();
+  if (!addrStr) return -1;
   var addr;
   if (isHexAddrDevice(regType, plcSeries)) {
-    var hs = addrStr.replace(/[^0-9A-Fa-f]/g, '');
-    if (!hs) return -1;
-    addr = parseInt(hs, 16);
+    if (!/^[0-9A-Fa-f]+$/.test(addrStr)) return -1;   // 十六进制元件：全串必须合法
+    addr = parseInt(addrStr, 16);
+  } else if (regType === 'X' || regType === 'Y') {
+    if (!/^[0-7]+$/.test(addrStr)) return -1;          // FX X/Y：八进制，含 8/9 即非法
+    addr = parseInt(addrStr, 8);
   } else {
-    var s = addrStr.replace(/\D/g, '');
-    if (!s) return -1;
-    var radix = (regType === 'X' || regType === 'Y') ? 8 : 10;
-    // 🔧 review#1: 八进制地址含 8/9 属非法（parseInt('18',8) 会静默截断为 1），直接拒绝
-    if (radix === 8 && /[89]/.test(s)) return -1;
-    addr = parseInt(s, radix);
+    if (!/^\d+$/.test(addrStr)) return -1;            // 十进制元件：纯数字（位偏移用 bitOffset 字段表达）
+    addr = parseInt(addrStr, 10);
   }
   // 🔧 v1.4.4: 3 字节软元件地址字段上限（0xFFFFFF），超限拒绝而非静默截断
   if (isNaN(addr) || addr < 0 || addr > 0xFFFFFF) return -1;
@@ -403,35 +406,14 @@ function deasciify(buf) {
 // ===== v1.5.2 修正: SLMP ASCII Code 按字段正确编解码 =====
 
 /** 二进制帧 → SLMP ASCII Code（按字段正确编码，UInt16 转大端 hex 字符串） */
+// @deprecated v1.7.5：伪 SLMP ASCII（hex 转写），规范不符，禁止使用；三菱 ASCII 用 build3EAsciiQ* 系列
 function toAsciiHex(buf) {
   if (!buf || buf.length < 11) return Buffer.alloc(0);
   var is4E = (buf[0] === 0x54 || buf[0] === 0xD4);
-  var isResp = (buf[0] === 0xD0 || buf[0] === 0xD4);  // 🔧 响应帧（无地址/点数段，写响应仅 11/15 字节）
   var hex = '';
   
   function b2h(b) { return ('0' + b.toString(16)).slice(-2).toUpperCase(); }
   function u16le2h(off) { return buf.readUInt16LE(off).toString(16).padStart(4, '0').toUpperCase(); }
-  
-  // 响应帧：子头 + 序列号(4E) + 固定值(4E) + 路由 + 数据长度 + 结束码 + 数据区
-  if (isResp) {
-    hex += b2h(buf[0]);      // 子头低（D0/D4）
-    hex += b2h(buf[1]);      // 子头高
-    if (is4E) {
-      if (buf.length < 15) return Buffer.alloc(0);
-      hex += u16le2h(2);     // 序列号回显
-      hex += u16le2h(4);     // 固定值
-    }
-    var r = is4E ? 6 : 2;    // 路由起点（4E 多 4 字节）
-    hex += b2h(buf[r]);      // 网络号
-    hex += b2h(buf[r + 1]);  // PC号
-    hex += u16le2h(r + 2);   // IO编号
-    hex += b2h(buf[r + 4]);  // 站号
-    hex += u16le2h(is4E ? 11 : 7);   // 数据长度
-    hex += u16le2h(is4E ? 13 : 9);   // 结束码
-    var dataStart = is4E ? 15 : 11;
-    for (var ri = dataStart; ri < buf.length; ri++) hex += b2h(buf[ri]); // 数据区（读响应）
-    return Buffer.from(hex, 'ascii');
-  }
   
   if (is4E) {
     if (buf.length < 15) return Buffer.alloc(0);
@@ -472,6 +454,7 @@ function toAsciiHex(buf) {
 }
 
 /** SLMP ASCII Code → 二进制帧（按字段正确解码，UInt16 大端字符串转回 UInt16LE） */
+// @deprecated v1.7.5：同上，且按请求帧布局解析应答（写成功应答必失败）
 function fromAsciiHex(asciiBuf) {
   if (!asciiBuf || asciiBuf.length === 0 || asciiBuf.length % 2 !== 0) return null;
   var hexStr = asciiBuf.toString('ascii');
@@ -481,8 +464,7 @@ function fromAsciiHex(asciiBuf) {
   var is4E = (subheader === 0x54 || subheader === 0xD4);
   var is3E = (subheader === 0x50 || subheader === 0xD0);
   if (!is3E && !is4E) return null;
-  var isResponse = (subheader === 0xD0 || subheader === 0xD4);
-
+  
   function h2b(off) { return parseInt(hexStr.substr(off, 2), 16); }
   function h2u16le(hexOff, buf, bufOff) {
     var val = parseInt(hexStr.substr(hexOff, 4), 16);
@@ -491,45 +473,36 @@ function fromAsciiHex(asciiBuf) {
   
   var result;
   if (is4E) {
-    if (hexStr.length < (isResponse ? 30 : 50)) return null;
+    if (hexStr.length < 50) return null;
     result = Buffer.alloc(hexStr.length / 2);
     result[0] = h2b(0);  result[1] = h2b(2);
     h2u16le(4, result, 2);   h2u16le(8, result, 4);
     result[6] = h2b(12);     result[7] = h2b(14);
     h2u16le(16, result, 8);  result[10] = h2b(20);
     h2u16le(22, result, 11); h2u16le(26, result, 13);
-    if (isResponse) {
-      // 响应帧：字节 15 起每个数据字 = 4 hex 字符（大端值）→ LE 2 字节
-      for (var i = 30; i < hexStr.length; i += 4) h2u16le(i, result, 15 + (i - 30) / 2);
-    } else {
-      h2u16le(30, result, 15); h2u16le(34, result, 17);
-      result[19] = h2b(38);    result[20] = h2b(40);
-      result[21] = h2b(42);    result[22] = h2b(44);
-      h2u16le(46, result, 23);
-      for (var i = 50; i < hexStr.length; i += 2) result[25 + (i - 50) / 2] = h2b(i);
-    }
+    h2u16le(30, result, 15); h2u16le(34, result, 17);
+    result[19] = h2b(38);    result[20] = h2b(40);
+    result[21] = h2b(42);    result[22] = h2b(44);
+    h2u16le(46, result, 23);
+    for (var i = 50; i < hexStr.length; i += 2) result[25 + (i - 50) / 2] = h2b(i);
   } else {
-    if (hexStr.length < (isResponse ? 22 : 42)) return null;
+    if (hexStr.length < 42) return null;
     result = Buffer.alloc(hexStr.length / 2);
     result[0] = h2b(0);  result[1] = h2b(2);
     result[2] = h2b(4);  result[3] = h2b(6);
     h2u16le(8, result, 4);   result[6] = h2b(12);
     h2u16le(14, result, 7);  h2u16le(18, result, 9);
-    if (isResponse) {
-      // 响应帧：字节 11 起每个数据字 = 4 hex 字符（大端值）→ LE 2 字节
-      for (var i = 22; i < hexStr.length; i += 4) h2u16le(i, result, 11 + (i - 22) / 2);
-    } else {
-      h2u16le(22, result, 11); h2u16le(26, result, 13);
-      result[15] = h2b(30);    result[16] = h2b(32);
-      result[17] = h2b(34);    result[18] = h2b(36);
-      h2u16le(38, result, 19);
-      for (var i = 42; i < hexStr.length; i += 2) result[21 + (i - 42) / 2] = h2b(i);
-    }
+    h2u16le(22, result, 11); h2u16le(26, result, 13);
+    result[15] = h2b(30);    result[16] = h2b(32);
+    result[17] = h2b(34);    result[18] = h2b(36);
+    h2u16le(38, result, 19);
+    for (var i = 42; i < hexStr.length; i += 2) result[21 + (i - 42) / 2] = h2b(i);
   }
   return result;
 }
 
 /** 从 TCP 累加缓冲区中提取完整 ASCII 帧并解码为二进制 */
+// @deprecated v1.7.5：同上
 function dehexifyFrame(buf, hdrLen, dataLenOff) {
   var asciiHdrLen = hdrLen * 2;
   if (buf.length < asciiHdrLen) return { consumed: 0 };
@@ -751,11 +724,7 @@ function decodeTag(raw, regType, addr, dataType, byteOrder, wordOrder, bitOffset
   }
   if (dtTag === 'BOOL') {
     // 字内取位（如 D100.3）：bitOffset 调用方已钳制 0-15
-    // 🔧 修复#5：必须按 byteOrder 换序后再取位（此前用未换序的 originRv，BIG_ENDIAN 下位偏移整体错 8 位）
-    var bitsWord = (byteOrder === 'BIG_ENDIAN')
-      ? (((originRv & 0xFF) << 8) | ((originRv >> 8) & 0xFF))
-      : (originRv & 0xFFFF);
-    return { value: (bitsWord >> (bitOffset || 0)) & 1, quality: 0, rawWord: originRv };
+    return { value: (originRv >> (bitOffset || 0)) & 1, quality: 0, rawWord: originRv };
   }
   if (dtTag === 'UINT16') return { value: (wordVal < 0) ? wordVal + 65536 : wordVal, quality: 0, rawWord: originRv };
   if (dtTag === 'INT16') return { value: wordVal, quality: 0, rawWord: originRv };
@@ -925,12 +894,12 @@ module.exports = {
   buildBitWriteFrame: buildBitWriteFrame,
   asciify: asciify,
   deasciify: deasciify,
-  toAsciiHex: toAsciiHex,
+  // 🔧 v1.7.5 复审 P2：toAsciiHex/fromAsciiHex/dehexifyFrame 不再导出——
+  // 它们把二进制帧逐字节转 hex 冒充 SLMP ASCII（设备码/长度语义均错），已被证伪；
+  // 保留函数体仅为历史参考，调用方（读写节点的 ascii_slmp 分支）已不可达。
   build3EAsciiQReadFrame: build3EAsciiQReadFrame,
   build3EAsciiQWriteFrame: build3EAsciiQWriteFrame,
   extractAsciiQResponse: extractAsciiQResponse,
-  fromAsciiHex: fromAsciiHex,
-  dehexifyFrame: dehexifyFrame,
   parseMCResponse: parseMCResponse,
   parseMCWriteResponse: parseMCWriteResponse,
   buildRMWWriteGroup: buildRMWWriteGroup,

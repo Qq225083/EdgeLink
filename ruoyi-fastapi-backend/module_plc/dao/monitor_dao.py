@@ -195,10 +195,12 @@ class MonitorDao:
         running_flows: int = 0, memory_usage_mb: int = 0,
         pg_success_count: int = 0, pg_fail_count: int = 0, spool_bytes: int = 0,
         config_version: int | None = None,
+        update_metrics: bool = True,
     ) -> tuple[int | None, bool]:
         """接收心跳：更新 last_heartbeat + 健康指标 + 写日志。若节点不存在则自动注册。
 
         :param config_version: 边缘已应用的配置快照版本；None=旧边缘未上报（不覆盖既有值）
+        :param update_metrics: False=只更新心跳时间/在线状态（生成版），指标字段由 pg-stat-edge 增量维护
         :return: (node_id, is_new) — node_id 为 None 时注册失败
         """
         now = datetime.now()
@@ -231,11 +233,13 @@ class MonitorDao:
         node.last_heartbeat = now
         node.updated_at = now
         # #88: 同步节点健康指标到节点行（当前值，供节点列表/KPI 直读）
-        node.running_flows = running_flows
-        node.memory_usage_mb = memory_usage_mb
-        node.pg_success_count = pg_success_count
-        node.pg_fail_count = pg_fail_count
-        node.spool_bytes = spool_bytes
+        # update_metrics=False（生成版心跳）：指标由 pg-stat-edge 增量累加维护，心跳不得覆盖
+        if update_metrics:
+            node.running_flows = running_flows
+            node.memory_usage_mb = memory_usage_mb
+            node.pg_success_count = pg_success_count
+            node.pg_fail_count = pg_fail_count
+            node.spool_bytes = spool_bytes
         # 边缘已应用的快照版本（None=旧边缘未上报，保留既有值不覆盖）
         if config_version is not None:
             node.config_version = config_version
@@ -250,6 +254,72 @@ class MonitorDao:
         await db.flush()
 
         return node.id, is_new
+
+    @classmethod
+    async def add_pg_stats(cls, db: AsyncSession, node_id: int, ok: int, fail: int) -> bool:
+        """PG 写入计数增量累加（生成版边缘按事件上报，服务端累加；心跳不得覆盖）。
+
+        :return: 节点是否存在
+        """
+        result = await db.execute(
+            update(NoderedNode)
+            .where(NoderedNode.id == node_id)
+            .values(
+                pg_success_count=func.coalesce(NoderedNode.pg_success_count, 0) + ok,
+                pg_fail_count=func.coalesce(NoderedNode.pg_fail_count, 0) + fail,
+                updated_at=datetime.now(),
+            )
+        )
+        return result.rowcount > 0
+
+    @classmethod
+    async def upsert_device_comm_edge(cls, db: AsyncSession, node_id: int, device_id: int, success: bool) -> None:
+        """生成版逐台通信状态：PG 计数上报顺手维护（有写入=采集活着）。
+
+        成功：online=1 + last_success_time + 连续失败清零；失败：online=0 + consecutive_fails+1。
+        """
+        now = datetime.now()
+        result = await db.execute(
+            select(DeviceCommStatus).where(
+                DeviceCommStatus.node_id == node_id, DeviceCommStatus.device_id == device_id
+            )
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            row = DeviceCommStatus(node_id=node_id, device_id=device_id)
+            db.add(row)
+        if success:
+            row.online = 1
+            row.last_success_time = now
+            row.consecutive_fails = 0
+            row.error_msg = ''
+        else:
+            row.online = 0
+            row.last_error_time = now
+            row.consecutive_fails = (row.consecutive_fails or 0) + 1
+            row.error_msg = '通信失败'
+        row.updated_at = now
+        await db.flush()
+
+    @classmethod
+    async def get_site_health_map(cls, db: AsyncSession) -> dict:
+        """site-health 站点指标索引（生成版节点桥接用）：key=officeIp 与 officeIp:port 双形态。"""
+        from module_site_health.entity.do.site_health_do import SiteHealthSite
+
+        result = await db.execute(
+            select(
+                SiteHealthSite.office_ip, SiteHealthSite.node_port,
+                SiteHealthSite.memory_rss_mb, SiteHealthSite.running_flows,
+                SiteHealthSite.node_red_version, SiteHealthSite.last_heartbeat,
+            ).where(SiteHealthSite.status == 1)
+        )
+        site_map: dict = {}
+        for r in result.all():
+            if r.office_ip:
+                site_map.setdefault(r.office_ip, r)
+                if r.node_port:
+                    site_map[f'{r.office_ip}:{r.node_port}'] = r
+        return site_map
 
     @classmethod
     async def get_node_heartbeat_logs(

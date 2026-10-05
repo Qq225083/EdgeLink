@@ -75,8 +75,8 @@
           <!-- 展开行：该节点下的 PLC 状态 -->
           <el-table :data="props.row.plcList || []" size="small" style="margin: 10px 30px">
             <el-table-column label="PLC 名称" prop="deviceName" width="160" :show-overflow-tooltip="true" />
-            <el-table-column label="IP:端口" width="160">
-              <template slot-scope="s">{{ s.row.plcIp }}:{{ s.row.plcPort }}</template>
+            <el-table-column label="IP:端口" width="170">
+              <template slot-scope="s"><span style="white-space: nowrap">{{ s.row.plcIp }}:{{ s.row.plcPort }}</span></template>
             </el-table-column>
             <el-table-column label="通信状态" width="90">
               <template slot-scope="s">
@@ -97,44 +97,37 @@
         </template>
       </el-table-column>
       <el-table-column label="节点名称" prop="nodeName" width="160" :show-overflow-tooltip="true" />
-      <el-table-column label="办公网 IP" prop="officeNetIp" width="130" />
-      <el-table-column label="工业网 IP" prop="industNetIp" width="130" />
-      <el-table-column label="状态" width="80">
+      <el-table-column label="办公网 IP" prop="officeNetIp" width="150" />
+      <el-table-column label="工业网 IP" prop="industNetIp" width="150" />
+      <el-table-column label="状态" width="90">
         <template slot-scope="scope">
           <el-tag :type="scope.row.isOnline ? 'success' : 'danger'" size="small">
             {{ scope.row.isOnline ? '在线' : '离线' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="运行流数" width="80">
+      <el-table-column label="运行流数" width="100">
         <template slot-scope="scope">{{ scope.row.runningFlows || '-' }}</template>
       </el-table-column>
-      <el-table-column label="内存(MB)" width="80">
+      <el-table-column label="内存(MB)" width="100">
         <template slot-scope="scope">{{ scope.row.memoryUsageMb || '-' }}</template>
       </el-table-column>
-      <el-table-column label="PG写入(成功/失败)" width="135">
+      <el-table-column label="PG写入(成功/失败)" width="150">
         <template slot-scope="scope">
           <span :style="scope.row.pgFailCount > 0 ? 'color:#F56C6C' : ''">
             {{ scope.row.pgSuccessCount || 0 }} / {{ scope.row.pgFailCount || 0 }}
           </span>
         </template>
       </el-table-column>
-      <el-table-column label="Spool积压" width="100">
-        <template slot-scope="scope">
-          <span :style="scope.row.spoolBytes > 0 ? 'color:#F56C6C;font-weight:bold' : ''">
-            {{ formatSpoolSize(scope.row.spoolBytes) }}
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="负责设备" width="110">
+      <el-table-column label="负责设备" width="120">
         <template slot-scope="scope">
           {{ scope.row.onlineDeviceCount }} / {{ scope.row.deviceCount }}
         </template>
       </el-table-column>
-      <el-table-column label="最后心跳" width="170">
+      <el-table-column label="最后心跳" width="190">
         <template slot-scope="scope">{{ scope.row.lastHeartbeat || '-' }}</template>
       </el-table-column>
-      <el-table-column label="备注" prop="remark" :show-overflow-tooltip="true" width="120" />
+      <el-table-column label="备注" prop="remark" :show-overflow-tooltip="true" min-width="100" />
     </el-table>
 
     <!-- 告警区域 -->
@@ -604,6 +597,9 @@ export default {
                 node.isOnline = node.lastHeartbeat && (now - new Date(node.lastHeartbeat).getTime()) < 90000
                 node.deviceCount = fresh.deviceCount
                 node.onlineDeviceCount = fresh.onlineDeviceCount
+                // PG 写入成功/失败计数也要跟着刷新（原实现漏了这两列，页面看起来像不更新）
+                node.pgSuccessCount = fresh.pgSuccessCount
+                node.pgFailCount = fresh.pgFailCount
                 // PLC在线 = 90秒内有通信成功记录
                 node.plcList = (fresh.plcList || []).map(p => {
                   if (p.lastSuccessTime && typeof p.lastSuccessTime === 'string' && p.lastSuccessTime.indexOf('T') > -1) {
@@ -668,13 +664,6 @@ export default {
     // ==================== 工具方法 ====================
 
     formatNumber(n) { return (n || 0).toLocaleString() },
-    /** Spool 字节数格式化（B/KB/MB） */
-    formatSpoolSize(bytes) {
-      if (!bytes || bytes <= 0) return '0'
-      if (bytes < 1024) return bytes + 'B'
-      if (bytes < 1048576) return (bytes / 1024).toFixed(1) + 'KB'
-      return (bytes / 1048576).toFixed(1) + 'MB'
-    },
     alertTypeLabel(t) { return { NODE_OFFLINE: '节点离线', PLC_OFFLINE: 'PLC离线', PG_WRITE_LAG: 'PG写入异常' }[t] || t },
     alertTypeTag(t) { return { NODE_OFFLINE: 'danger', PLC_OFFLINE: 'warning', PG_WRITE_LAG: 'info' }[t] || 'info' },
     severityLabel(s) { return { 1: '严重', 2: '一般', 3: '提示' }[s] || '-' },

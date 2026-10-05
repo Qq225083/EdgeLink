@@ -40,6 +40,11 @@
       <el-table-column label="节点标识" align="center" prop="nodeKey" width="120" :show-overflow-tooltip="true" />
       <el-table-column label="节点名称" align="center" prop="nodeName" width="150" :show-overflow-tooltip="true" />
       <el-table-column label="节点地址" align="center" prop="hostPcIp" width="160" :show-overflow-tooltip="true" />
+      <el-table-column label="工业网IP" align="center" prop="industIp" width="120" :show-overflow-tooltip="true">
+        <template slot-scope="scope">
+          <span>{{ scope.row.industIp || '--' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="密钥" align="center" prop="secretKey" width="180">
         <template slot-scope="scope">
           <span>{{ maskSecret(scope.row.secretKey) }}</span>
@@ -79,6 +84,9 @@
         </el-form-item>
         <el-form-item label="节点地址" prop="hostPcIp">
           <el-input v-model="form.hostPcIp" placeholder="如：192.168.1.3:1880（同一 IP:端口 只能绑定一个节点）" />
+        </el-form-item>
+        <el-form-item label="工业网IP" prop="industIp">
+          <el-input v-model="form.industIp" placeholder="采集点工业网卡IP，如：192.168.1.10" />
         </el-form-item>
         <el-form-item label="状态" prop="enabled">
           <el-radio-group v-model="form.enabled">
@@ -147,6 +155,9 @@ export default {
         ],
         hostPcIp: [
           { pattern: /^(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?$/, message: "请输入正确的IP地址格式（支持 IP:端口）", trigger: "blur" }
+        ],
+        industIp: [
+          { pattern: /^((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$/, message: "IP地址格式不正确", trigger: "blur" }
         ]
       }
     };
@@ -189,6 +200,7 @@ export default {
         nodeKey: null,
         nodeName: null,
         hostPcIp: null,
+        industIp: null,
         enabled: 1
       };
       this.title = "新增边缘节点";

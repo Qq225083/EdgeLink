@@ -34,6 +34,7 @@ class SiteHealthSite(Base):
     remark = Column(String(200), comment='采集备注')
     heartbeat_interval = Column(Integer, default=30, comment='心跳间隔秒（节点上报，10-180）')
     status = Column(SmallInteger, default=1, comment='0停用 1启用')
+    source = Column(String(20), default='register', comment='来源：register=存量监控单独登记（纯监控点） config=采集配置联动登记（采集点）')
     # ===== 节点健康指标（最近一次心跳上报）=====
     last_heartbeat = Column(DateTime, comment='最后心跳时间')
     report_ip = Column(String(50), comment='最近上报来源IP')

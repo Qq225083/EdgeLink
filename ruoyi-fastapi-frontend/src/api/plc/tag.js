@@ -1,4 +1,6 @@
 import request from '@/utils/request'
+import axios from 'axios'
+import { getToken } from '@/utils/auth'
 
 // 查询指定设备的点位列表
 export function listTag(deviceId, query) {
@@ -71,12 +73,15 @@ export function downloadTagTemplate() {
 
 // 批量导入点位
 export function importTags(deviceId, formData) {
-  return request({
-    url: '/plc/tag/import/' + deviceId,
+  // 显式 multipart 头（覆盖 request.js 的全局 JSON 默认；axios 0.27+ 会自动补 boundary）。
+  // 不设会继承 axios.defaults 的 application/json，导致后端解析不到 file 字段（422）。
+  // .then(res => res.data)：与封装 request 的返回形态对齐（业务体 {code,msg,data}）
+  return axios({
     method: 'post',
-    data: formData
-    // 注意：不手动设置 Content-Type，让 axios 自动处理 boundary
-  })
+    url: process.env.VUE_APP_BASE_API + '/plc/tag/import/' + deviceId,
+    data: formData,
+    headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'multipart/form-data' }
+  }).then(res => res.data)
 }
 
 // 跨设备全局点位查询

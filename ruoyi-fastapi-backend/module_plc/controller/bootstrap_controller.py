@@ -82,15 +82,19 @@ async def bootstrap_auto(
         )
 
     # 4. 校验通过：激活（记录最后心跳时间；指纹仅记录，不作为拒绝条件）
+    # 🔧 commit 会 expire ORM 对象：先取出响应要用的字段，避免 commit 后访问属性触发懒加载 MissingGreenlet
+    resp_node_key = record.node_key
+    resp_node_name = record.node_name or record.node_key
+    resp_host_pc_ip = record.host_pc_ip
     record.last_heartbeat = datetime.now()
     if fingerprint and not record.machine_fingerprint:
         record.machine_fingerprint = fingerprint
     await query_db.commit()
 
     return ResponseUtil.success(data={
-        'nodeKey': record.node_key,
-        'nodeName': record.node_name or record.node_key,
-        'hostPcIp': record.host_pc_ip,
+        'nodeKey': resp_node_key,
+        'nodeName': resp_node_name,
+        'hostPcIp': resp_host_pc_ip,
         'secretKey': None,  # 只存哈希不再回显
         'isNew': False,
     })

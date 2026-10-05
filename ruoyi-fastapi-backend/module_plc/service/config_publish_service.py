@@ -39,7 +39,7 @@ class ConfigPublishService:
 
     # 快照行内嵌的设备级字段（JOIN 拍平；用于变更摘要。protocolParams1=设备级协议参数，SQL 同名列去重后的既有键名）
     _DEVICE_LEVEL_KEYS = (
-        'deviceName', 'hostPcIp', 'backupPcIp', 'plcIp', 'plcPort', 'comType', 'mcFrame',
+        'deviceName', 'hostPcIp', 'backupPcIp', 'plcIp', 'plcPort', 'localPort', 'comType', 'mcFrame',
         'plcSeries', 'stationNo', 'networkNo', 'scanIntervalMs', 'commTimeoutMs',
         'retryCount', 'retryIntervalMs', 'triggerKind', 'status', 'protocolParams1',
     )
@@ -500,7 +500,7 @@ class ConfigPublishService:
         config_snapshot = [
             {
                 'deviceId': d.id, 'deviceName': d.device_name, 'hostPcIp': d.host_pc_ip,
-                'plcIp': d.plc_ip, 'plcPort': d.plc_port, 'comType': d.com_type,
+                'plcIp': d.plc_ip, 'plcPort': d.plc_port, 'localPort': d.local_port, 'comType': d.com_type,
                 'driverCode': d.driver_code, 'mcFrame': d.mc_frame,
                 'stationNo': d.station_no, 'networkNo': d.network_no,
                 'scanIntervalMs': d.scan_interval_ms,

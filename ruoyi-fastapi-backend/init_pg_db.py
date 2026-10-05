@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS plc_data_log (
     node_id         BIGINT,
     raw_value       DOUBLE PRECISION,
     eng_value       DOUBLE PRECISION,
-    quality         SMALLINT    NOT NULL DEFAULT 0,      -- 0=GOOD 1=BAD 2=UNCERTAIN (v10: 改为整数，与Node-RED一致)
+    quality         VARCHAR(10) NOT NULL DEFAULT 'GOOD', -- GOOD/BAD/UNCERTAIN（字符串，与 Node-RED 契约/技术规范一致）
     transform_type  VARCHAR(20) DEFAULT 'none',
     ts              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -55,7 +55,7 @@ print("[2/4] 创建索引...")
 indexes = [
     ("idx_log_tag_ts",    "plc_data_log", "tag_id, ts DESC"),
     ("idx_log_device_ts", "plc_data_log", "device_id, ts DESC"),
-    ("idx_log_quality",   "plc_data_log", "quality, ts DESC", "quality != 0"),
+    ("idx_log_quality",   "plc_data_log", "quality, ts DESC", "quality != 'GOOD'"),
     ("idx_log_host_pc",   "plc_data_log", "host_pc_ip, ts DESC"),
 ]
 for idx_name, table, cols, *rest in indexes:
@@ -132,26 +132,26 @@ ALTER TABLE plc_data_log ADD COLUMN IF NOT EXISTS tag_name    VARCHAR(100);
 ALTER TABLE plc_data_log ADD COLUMN IF NOT EXISTS unit        VARCHAR(20);
 ALTER TABLE plc_data_log ADD COLUMN IF NOT EXISTS host_pc_ip  VARCHAR(20);
 
--- 2. quality 列类型迁移 (VARCHAR→SMALLINT, 已有数据需转换)
+-- 2. quality 列类型回退 (SMALLINT→VARCHAR, 与 Node-RED 字符串契约一致)
 --    注意: 此操作会锁表，建议在维护窗口执行
 ALTER TABLE plc_data_log
-  ALTER COLUMN quality TYPE SMALLINT
+  ALTER COLUMN quality TYPE VARCHAR(10)
   USING CASE quality
-    WHEN 'GOOD'      THEN 0
-    WHEN 'BAD'       THEN 1
-    WHEN 'UNCERTAIN' THEN 2
-    ELSE 0
+    WHEN 0 THEN 'GOOD'
+    WHEN 1 THEN 'BAD'
+    WHEN 2 THEN 'UNCERTAIN'
+    ELSE 'GOOD'
   END;
 
 -- 3. 设置 quality 默认值
-ALTER TABLE plc_data_log ALTER COLUMN quality SET DEFAULT 0;
+ALTER TABLE plc_data_log ALTER COLUMN quality SET DEFAULT 'GOOD';
 
 -- 4. 新增索引
 CREATE INDEX IF NOT EXISTS idx_log_host_pc ON plc_data_log (host_pc_ip, ts DESC);
 
--- 5. 重建 quality 部分索引 (适配整数)
+-- 5. 重建 quality 部分索引 (适配字符串)
 DROP INDEX IF EXISTS idx_log_quality;
-CREATE INDEX IF NOT EXISTS idx_log_quality ON plc_data_log (quality, ts DESC) WHERE quality != 0;
+CREATE INDEX IF NOT EXISTS idx_log_quality ON plc_data_log (quality, ts DESC) WHERE quality != 'GOOD';
 """)
 
 cur.close()

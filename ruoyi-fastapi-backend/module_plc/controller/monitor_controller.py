@@ -1,7 +1,9 @@
 """监控中心 — Controller"""
+from datetime import datetime
 from typing import Annotated, Optional
 
 from fastapi import Header, Path, Query, Request, Response
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.aspect.db_seesion import DBSessionDependency
@@ -11,6 +13,7 @@ from common.router import APIRouterPro
 from common.vo import DataResponseModel, ResponseBaseModel
 from config.env import AppConfig
 from exceptions.exception import AuthException, ServiceException
+from module_plc.entity.do.monitor_do import NoderedNode
 from module_plc.entity.vo.monitor_vo import (
     NoderedNodeModel, MonitorAlertModel, KpiDashboardModel
 )
@@ -22,6 +25,11 @@ from utils.response_util import ResponseUtil
 
 monitor_controller = APIRouterPro(
     prefix='/monitor', order_num=300, tags=['采集节点监控'], dependencies=[PreAuthDependency()]
+)
+
+# 生成版边缘心跳专用路由：仅 X-API-Key，无 PreAuth（生成版无 JWT 登录流水线）
+monitor_edge_controller = APIRouterPro(
+    prefix='/monitor', order_num=301, tags=['采集节点监控']
 )
 
 
@@ -88,6 +96,100 @@ async def heartbeat_report(
     # 关键：提交事务，否则 last_heartbeat 不会持久化
     await query_db.commit()
     return ResponseUtil.success(data={'node_id': node_id, 'disabled': node_disabled})
+
+
+@monitor_edge_controller.post(
+    '/heartbeat-edge',
+    summary='生成版边缘心跳（仅 X-API-Key）',
+    description='过渡版生成流程的心跳上报：无 JWT 流水线，仅凭 X-API-Key；指标字段不接收（由 site-health 覆盖内存类指标）',
+    response_model=ResponseBaseModel,
+)
+async def heartbeat_edge(
+    request: Request,
+    host_pc_ip: Annotated[str, Query(description='本机节点标识（IP 或 IP:端口）')],
+    flow_version: Annotated[Optional[int], Query(description='边缘当前运行的流程版本（部署回执，生成版上报）', ge=0)] = None,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    """生成版心跳：只维护在线状态（last_heartbeat），指标类字段置零（site-health 已覆盖）。
+
+    与 /heartbeat（V12）并存不动：同一现场只跑一套体系，不会双报。
+    flow_version：部署回执——写入 nodered_node.config_version 供监控中心比对（OPT-08）。
+    disabled：kill switch——复用 V12 的 EdgeBootstrapKey.enabled 查询下发（OPT-07）。
+    """
+    await _verify_monitor_api_key(request)
+    if not host_pc_ip or not host_pc_ip.strip():
+        raise ServiceException(message='host_pc_ip 不能为空')
+    DeviceService._validate_ip(host_pc_ip.strip(), allow_port=True)
+    node_id, is_new = await MonitorDao.upsert_heartbeat(
+        query_db, host_pc_ip=host_pc_ip.strip(), node_ip='',
+        running_flows=0, memory_usage_mb=0,
+        pg_success_count=0, pg_fail_count=0, spool_bytes=0,
+        config_version=None,
+        update_metrics=False,  # 生成版：指标由 pg-stat-edge 增量累加维护，心跳只更新在线状态
+    )
+    if is_new:
+        logger.info(f'新采集节点自动注册（生成版心跳）: {host_pc_ip} → node_id={node_id}')
+    if node_id:
+        await MonitorDao.resolve_alert(query_db, 'NODE_OFFLINE', node_id=node_id, device_id=0)
+        # 部署回执：边缘上报实际运行版本
+        if flow_version is not None:
+            await query_db.execute(
+                update(NoderedNode)
+                .where(NoderedNode.id == node_id)
+                .values(config_version=flow_version, updated_at=datetime.now())
+            )
+
+    # kill switch（与 V12 /heartbeat 同语义：查 EdgeBootstrapKey.enabled）
+    from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey
+
+    key_result = await query_db.execute(
+        select(EdgeBootstrapKey.enabled).where(EdgeBootstrapKey.host_pc_ip == host_pc_ip.strip())
+    )
+    node_disabled = (key_result.scalar_one_or_none() == 0)
+
+    await query_db.commit()
+    return ResponseUtil.success(data={'node_id': node_id, 'disabled': node_disabled})
+
+
+@monitor_edge_controller.post(
+    '/pg-stat-edge',
+    summary='生成版 PG 写入计数上报（仅 X-API-Key）',
+    description='生成版流程的 PG 支路按事件上报写入成功/失败条数，服务端增量累加（无状态边缘）',
+    response_model=ResponseBaseModel,
+)
+async def pg_stat_edge(
+    request: Request,
+    node_id: Annotated[int, Query(description='节点ID')],
+    ok: Annotated[int, Query(description='本次写入成功条数', ge=0)] = 0,
+    fail: Annotated[int, Query(description='本次写入失败条数', ge=0)] = 0,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    """纯计数端点（PG 写失败不代表 PLC 离线，逐台状态由 /device-comm-edge 读取支路直报维护）。"""
+    await _verify_monitor_api_key(request)
+    exists = await MonitorDao.add_pg_stats(query_db, node_id, ok, fail)
+    if not exists:
+        raise ServiceException(message=f'节点不存在：node_id={node_id}')
+    await query_db.commit()
+    return ResponseUtil.success()
+
+
+@monitor_edge_controller.post(
+    '/device-comm-edge',
+    summary='生成版逐台通信状态上报（仅 X-API-Key）',
+    description='生成版流程的 MC 读取支路按结果直报：读成功=在线，读失败=离线（与 PG 写入解耦）',
+    response_model=ResponseBaseModel,
+)
+async def device_comm_edge(
+    request: Request,
+    node_id: Annotated[int, Query(description='节点ID')],
+    device_id: Annotated[int, Query(description='设备ID')],
+    success: Annotated[bool, Query(description='本次读取是否成功')] = True,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    await _verify_monitor_api_key(request)
+    await MonitorDao.upsert_device_comm_edge(query_db, node_id, device_id, success=success)
+    await query_db.commit()
+    return ResponseUtil.success()
 
 
 @monitor_controller.post(

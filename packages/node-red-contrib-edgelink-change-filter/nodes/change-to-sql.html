@@ -1,0 +1,100 @@
+<script type="text/javascript">
+    RED.nodes.registerType('change-to-sql', {
+        category: 'function',
+        color: '#E2D96E',
+        defaults: {
+            name: { value: '' },
+            table: { value: '', required: true },
+            timeColumn: { value: 'insert_time', required: true },
+            tagColumn: { value: 'tag_id', required: true },
+            valueColumn: { value: 'value', required: true },
+            keyField: { value: 'equipment_id' },
+            outputFormat: { value: 'sql' },
+            fieldMapping: {
+                value: '',
+                validate: function (v) {
+                    if (!v) return true;
+                    try { JSON.parse(v); return true; } catch (e) { return false; }
+                }
+            }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: 'db.png',
+        paletteLabel: 'change to sql',
+        label: function () {
+            return this.name || 'change-to-sql';
+        }
+    });
+</script>
+
+<script type="text/x-red" data-template-name="change-to-sql">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-input-name" placeholder="名称">
+    </div>
+    <div class="form-row">
+        <label for="node-input-table">目标表</label>
+        <input type="text" id="node-input-table" placeholder="wedh.wed_scn1">
+    </div>
+    <div class="form-row">
+        <label for="node-input-timeColumn">时间列</label>
+        <input type="text" id="node-input-timeColumn" placeholder="insert_time">
+    </div>
+    <div class="form-row">
+        <label for="node-input-tagColumn">点位列</label>
+        <input type="text" id="node-input-tagColumn" placeholder="tag_id">
+    </div>
+    <div class="form-row">
+        <label for="node-input-valueColumn">数值列</label>
+        <input type="text" id="node-input-valueColumn" placeholder="value">
+    </div>
+    <div class="form-row">
+        <label for="node-input-keyField">唯一键字段</label>
+        <input type="text" id="node-input-keyField" placeholder="equipment_id">
+    </div>
+    <div class="form-row">
+        <label for="node-input-outputFormat">输出格式</label>
+        <select id="node-input-outputFormat">
+            <option value="sql">SQL（msg.query，通用 pg 执行节点）</option>
+            <option value="rows">rows（msg.payload.rows，edgelink-pg-store）</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-fieldMapping" style="vertical-align: top;">字段映射</label>
+        <textarea id="node-input-fieldMapping" rows="7" style="width: 70%; font-family: monospace;" placeholder='{ "*": { "col3": 1, "col4": 2 } }'></textarea>
+    </div>
+</script>
+
+<script type="text/x-red" data-help-name="change-to-sql">
+    <p>接收 <b>change-filter</b> 输出的 diff 记录，把 <code>_changed_fields</code> 中的字段按映射表展开为逐点位 INSERT SQL，挂到 <code>msg.query</code> 输出给数据库节点。</p>
+
+    <h3>字段映射（JSON）</h3>
+    <pre>{
+  "*":    { "col3": 1, "col4": 2 },       // 公共默认映射
+  "b040": { "col3": 101, "col4": 102 }    // 设备专属映射（覆盖公共默认）
+}</pre>
+    <p>查找顺序：先按「唯一键字段」的值查设备专属映射，未命中回落 <code>"*"</code> 公共默认。查不到映射的字段跳过并 warn。</p>
+
+    <h3>输出（两种格式可选）</h3>
+    <p><b>sql</b>（默认）：<code>msg.query</code> 挂拼好的 INSERT，对接通用"执行 msg.query"的 pg 节点：</p>
+    <pre>msg.query = INSERT INTO wedh.wed_scn1(insert_time, tag_id, value) VALUES
+('2024-09-18T10:00:00.000Z', 1, 105),
+('2024-09-18T10:00:00.000Z', 2, 250);</pre>
+    <p><b>rows</b>：<code>msg.payload.rows</code> + <code>msg.tableName</code>，对接 <b>edgelink-pg-store</b>，
+    自动获得断库内存重试 → 磁盘 spool → 恢复自动重放、ON CONFLICT 幂等去重；值走参数化绑定：</p>
+    <pre>msg.tableName = "wedh.wed_scn1"
+msg.payload = { rows: [
+  { insert_time: "...", tag_id: 1, value: 105 },
+  { insert_time: "...", tag_id: 2, value: 250 }
+]}</pre>
+
+    <h3>行为说明</h3>
+    <ul>
+        <li>仅写入数值型字段（typeof number 且有限），非数值跳过并 warn</li>
+        <li>没有任何可写入行时不发送消息（不会下发空 SQL / 空 rows）</li>
+        <li>时间戳统一使用 <code>new Date().toISOString()</code>（UTC，timestamptz 可直接接收）</li>
+        <li>表名/列名校验为合法标识符后才允许拼接，防止注入</li>
+        <li>本节点无状态，可安全用于任何输出 <code>_changed_fields</code> 契约的上游</li>
+    </ul>
+</script>

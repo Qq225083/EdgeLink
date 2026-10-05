@@ -1,4 +1,6 @@
 import request from '@/utils/request'
+import axios from 'axios'
+import { getToken } from '@/utils/auth'
 import { parseStrEmpty } from "@/utils/ruoyi";
 
 // 查询用户列表
@@ -102,12 +104,13 @@ export function updateUserPwd(oldPassword, newPassword) {
 
 // 用户头像上传
 export function uploadAvatar(data) {
-  return request({
-    url: '/system/user/profile/avatar',
+  // 显式 multipart 头（覆盖全局 JSON 默认；axios 0.27+ 自动补 boundary）
+  return axios({
     method: 'post',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    data: data
-  })
+    url: process.env.VUE_APP_BASE_API + '/system/user/profile/avatar',
+    data: data,
+    headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'multipart/form-data' }
+  }).then(res => res.data)
 }
 
 // 查询授权角色

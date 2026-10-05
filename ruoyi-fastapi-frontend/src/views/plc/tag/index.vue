@@ -2,7 +2,7 @@
   <div class="app-container">
     <!-- 查询条件：跨设备 -->
     <el-form :model="queryParams" ref="queryForm" size="small" :inline="true" v-show="showSearch" label-width="100px">
-      <el-form-item label="点位名称" prop="tagName">
+      <el-form-item label="点位ID" prop="tagName">
         <el-input v-model="queryParams.tagName" placeholder="模糊" clearable @keyup.enter.native="handleQuery" />
       </el-form-item>
       <el-form-item label="寄存器类型" prop="registerType">
@@ -48,7 +48,7 @@
     <el-table v-loading="loading" :data="tagList" @selection-change="handleSelectionChange" ref="tagTable">
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="设备名称" align="center" prop="deviceName" width="140" :show-overflow-tooltip="true" />
-      <el-table-column label="点位名称" align="center" prop="tagName" width="140" :show-overflow-tooltip="true" />
+      <el-table-column label="点位ID" align="center" prop="tagName" width="140" :show-overflow-tooltip="true" />
       <el-table-column label="寄存器类型" align="center" prop="registerType" width="90">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.registerType === 'CALC'" type="warning" size="small">计算·{{ scope.row.calcOp }}</el-tag>
@@ -58,7 +58,7 @@
       <el-table-column label="地址" align="center" prop="registerAddress" width="100" />
       <el-table-column label="数据类型" align="center" prop="dataType" width="90" />
       <el-table-column label="单位" align="center" prop="unit" width="70" />
-      <el-table-column label="描述" align="center" prop="description" :show-overflow-tooltip="true" width="150" />
+      <el-table-column label="备注" align="center" prop="description" :show-overflow-tooltip="true" min-width="150" />
       <el-table-column label="状态" align="center" prop="tagStatus" width="65">
         <template slot-scope="scope">
           <!-- 注意：全局接口 status=设备状态、tagStatus=点位自身状态，开关必须绑 tagStatus -->
@@ -122,12 +122,14 @@
         <el-form-item label="工程单位">
           <el-input v-model="batchForm.engUnit" placeholder="不修改则留空" clearable />
         </el-form-item>
+        <!-- 死区/强制上报间隔：过渡版生成版 flow 不支持，批量编辑入口隐藏（V14 恢复时放出）
         <el-form-item label="死区(数值)">
           <el-input-number v-model="batchForm.reportDeadbandMs" placeholder="不修改则留空" :min="0" style="width: 100%" />
         </el-form-item>
         <el-form-item label="强制上报间隔(ms)">
           <el-input-number v-model="batchForm.reportForceIntervalMs" placeholder="不修改则留空" :min="0" style="width: 100%" />
         </el-form-item>
+        -->
       </el-form>
       <template #footer>
         <el-button type="primary" @click="submitBatchUpdate">确 定</el-button>
@@ -202,7 +204,7 @@ export default {
       const hasValue = Object.values(this.batchForm).some(v => v !== null && v !== '');
       if (!hasValue) { this.$modal.msgWarning("至少选择一个要修改的字段"); return; }
       batchUpdateTags({ ids: this.ids.join(','), ...this.batchForm }).then(response => {
-        this.$modal.msgSuccess((response.msg || '批量修改成功') + '，请前往【配置发布中心】下发到采集节点');
+        this.$modal.msgSuccess((response.msg || '批量修改成功') + '，请到【流程发布-流程版本】重新生成并部署到采集节点');
         this.batchOpen = false;
         this.getList();
       });

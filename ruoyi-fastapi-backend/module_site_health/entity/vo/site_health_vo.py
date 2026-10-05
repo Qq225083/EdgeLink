@@ -51,6 +51,7 @@ class SiteHealthSiteModel(BaseModel):
     remark: Optional[str] = Field(default=None)
     heartbeat_interval: Optional[int] = Field(default=30)
     status: Optional[int] = Field(default=1)
+    source: Optional[str] = Field(default='register', description='来源：register=存量监控单独登记 config=采集配置联动登记')
     last_heartbeat: Optional[datetime] = Field(default=None)
     report_ip: Optional[str] = Field(default=None)
     node_port: Optional[int] = Field(default=None)

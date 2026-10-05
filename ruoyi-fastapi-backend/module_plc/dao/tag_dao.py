@@ -1,5 +1,7 @@
 from typing import Any, Union
 
+import json
+
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +10,18 @@ from module_plc.entity.do.device_do import PlcDevice
 from module_plc.entity.do.tag_do import PlcTag
 from module_plc.entity.vo.tag_vo import TagModel, TagPageQueryModel
 from utils.page_util import PageUtil
+
+
+def _norm_calc_source_ids(value: Any) -> Any:
+    """calc_source_ids 落库前规整：DB 列是 VARCHAR，前端/VO 可能传 list（普通点位常带空数组），
+    直接绑进 SQL 字符串占位会触发 asyncmy「expected tuple, got list」。
+    list/dict → JSON 文本；空 list → None（非计算点位该字段无意义）；其余原样。
+    """
+    if isinstance(value, (list, dict)):
+        if not value:
+            return None
+        return json.dumps(value, ensure_ascii=False)
+    return value
 
 
 class TagDao:
@@ -78,7 +92,9 @@ class TagDao:
         :param flush: 是否立即flush（批量导入时可设为False，循环外统一flush）
         :return: 新增后的PLC点位ORM对象
         """
-        db_tag = PlcTag(**tag.model_dump(exclude={'device_name', 'id'}))  # 🔧 Day9/P1-17：主键不接受客户端传值
+        tag_data = tag.model_dump(exclude={'device_name', 'id'})  # 🔧 Day9/P1-17：主键不接受客户端传值
+        tag_data['calc_source_ids'] = _norm_calc_source_ids(tag_data.get('calc_source_ids'))
+        db_tag = PlcTag(**tag_data)
         db.add(db_tag)
         if flush:
             await db.flush()
@@ -99,6 +115,9 @@ class TagDao:
             tag.model_dump(exclude={'id', 'device_name'}, exclude_none=True)
             for tag in tag_list
         ]
+        for v in values:
+            if 'calc_source_ids' in v:
+                v['calc_source_ids'] = _norm_calc_source_ids(v['calc_source_ids'])
         await db.execute(insert(PlcTag).values(values))
         await db.flush()
         return len(values)
@@ -119,6 +138,8 @@ class TagDao:
         if tag_info:
             for key, value in tag.items():
                 if key != 'id' and hasattr(tag_info, key):
+                    if key == 'calc_source_ids':
+                        value = _norm_calc_source_ids(value)
                     setattr(tag_info, key, value)
             await db.flush()
 

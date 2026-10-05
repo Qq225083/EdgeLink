@@ -194,3 +194,21 @@ async def clean_heartbeat_logs_task() -> None:
         except Exception:
             await db.rollback()
             logger.exception('心跳日志清理任务出现未预期异常')
+
+
+async def reset_pg_counters_task() -> None:
+    """每天凌晨重置 PG 写入计数（生成版 pg-stat 计数是服务端累加，按日清零供日维度观察）。"""
+    from sqlalchemy import update as sa_update
+    from module_plc.entity.do.monitor_do import NoderedNode
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                sa_update(NoderedNode).values(pg_success_count=0, pg_fail_count=0)
+            )
+            await db.commit()
+            if result.rowcount:
+                logger.info(f'PG 写入计数每日重置完成：{result.rowcount} 个节点已清零')
+        except Exception:
+            await db.rollback()
+            logger.exception('PG 计数每日重置任务出现未预期异常')

@@ -75,6 +75,7 @@
         <el-form-item label="文件" prop="file">
           <el-upload
             ref="uploader"
+            action="#"
             :auto-upload="false"
             :limit="1"
             :on-change="onFileChange"

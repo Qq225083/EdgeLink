@@ -1,5 +1,6 @@
 """PLC 采集点位服务层"""
 import json
+import re
 from datetime import datetime
 from typing import Any, Union
 
@@ -42,6 +43,14 @@ def _validate_data_type(data_type: str) -> None:
         raise ServiceException(
             message=f'无效的数据类型：{data_type}，有效值为：{", ".join(sorted(VALID_DATA_TYPES))}'
         )
+
+
+def _is_numeric_tag_id(tag_name) -> bool:
+    """点位ID（业务标识）必须为纯数字：该值写入 plc_data_log.tag_id（BIGINT），非数字会插库失败。"""
+    if tag_name is None:
+        return False
+    s = str(tag_name).strip()
+    return s != '' and re.fullmatch(r'\d+', s) is not None
 
 
 def _validate_address_format(register_type: str, register_address: str, plc_series: str = '', driver_code: str = '') -> None:
@@ -259,6 +268,10 @@ class TagService:
                 (device_info.driver_code if device_info else '') or '',
             )
 
+        # 点位ID（业务标识）必须为纯数字：写入 plc_data_log.tag_id（BIGINT）时非数字会插库失败
+        if not is_calc and not _is_numeric_tag_id(page_object.tag_name):
+            raise ServiceException(message=f'点位ID必须为纯数字：{page_object.tag_name}（该值写入 plc_data_log.tag_id）')
+
         # 🔧 Day9/P1-16：同设备下点位名/寄存器地址查重（DB 无唯一约束，应用层兜底，导入路径已有判重）
         dup_name = (await query_db.execute(
             sa_select(PlcTag.id).where(
@@ -268,7 +281,7 @@ class TagService:
             )
         )).first()
         if dup_name:
-            raise ServiceException(message=f'点位名称在该设备下已存在：{page_object.tag_name}')
+            raise ServiceException(message=f'点位ID在该设备下已存在：{page_object.tag_name}')
         # 计算点位不查地址重复（多个计算点位占位地址同为 CALC/CALC，本就不参与读取）
         if not is_calc:
             dup_addr = (await query_db.execute(
@@ -346,6 +359,8 @@ class TagService:
         # 🔧 2026-08-22：查重范围只看「启用中」的兄弟点位——停用点位不参与采集，
         #    不应阻塞在役点位的编辑（此前停用同名点位会导致编辑报"名称已存在"）
         if page_object.tag_name is not None:
+            if not is_calc and not _is_numeric_tag_id(page_object.tag_name):
+                raise ServiceException(message=f'点位ID必须为纯数字：{page_object.tag_name}（该值写入 plc_data_log.tag_id）')
             dup_name = (await query_db.execute(
                 sa_select(PlcTag.id).where(
                     PlcTag.device_id == (page_object.device_id or tag_info.device_id),
@@ -356,7 +371,7 @@ class TagService:
                 )
             )).first()
             if dup_name:
-                raise ServiceException(message=f'点位名称在该设备下已存在：{page_object.tag_name}')
+                raise ServiceException(message=f'点位ID在该设备下已存在：{page_object.tag_name}')
         if not is_calc and page_object.register_type is not None and page_object.register_address is not None:
             dup_addr = (await query_db.execute(
                 sa_select(PlcTag.id).where(
@@ -634,8 +649,8 @@ class TagService:
                 raise ServiceException(message='文件中未解析到任何数据')
             headers = [str(h).strip() if h else '' for h in rows[0]]
             header_map = {
-                '点位名称': 'tagName', '寄存器类型': 'registerType', '寄存器地址': 'registerAddress',
-                '数据类型': 'dataType', '单位': 'unit', '描述': 'description', '排序号': 'sortOrder',
+                '点位ID': 'tagName', '点位名称': 'tagName', '寄存器类型': 'registerType', '寄存器地址': 'registerAddress',
+                '数据类型': 'dataType', '单位': 'unit', '备注': 'description', '描述': 'description', '排序号': 'sortOrder',
                 '换算类型': 'transformType', '斜率/乘数a': 'transformSlopeA', '偏移量b': 'transformOffsetB',
                 '工程单位': 'engUnit', '死区(数值)': 'reportDeadbandMs',
                 '强制间隔(ms)': 'reportForceIntervalMs',
@@ -647,15 +662,24 @@ class TagService:
                 'report_deadband_ms': 'reportDeadbandMs', 'report_force_interval_ms': 'reportForceIntervalMs',
                 'bit_offset': 'bitOffset', 'byte_order': 'byteOrder', 'word_order': 'wordOrder',
             }
+            # 数据列数 = 最后一个可识别表头的位置（右侧说明区列不参与解析）
+            data_col_count = max((i + 1 for i, h in enumerate(headers) if h in header_map), default=0)
             tag_list = []
             for row_data in rows[1:]:
+                # 只取数据列范围（右侧说明区/超出表头的列不参与解析，防说明文字被当数据行）
+                row_data = row_data[:data_col_count]
                 if not any(row_data):
                     continue
                 item = {}
                 for idx, h in enumerate(headers):
-                    key = header_map.get(h, h)
+                    key = header_map.get(h)
+                    if key is None:
+                        continue  # 未识别表头列（说明区等）不入数据
                     val = row_data[idx] if idx < len(row_data) else None
                     item[key] = str(val).strip() if val is not None else ''
+                # 跳过模板的示例行（点位ID以"示例"开头）
+                if item.get('tagName', '').startswith('示例'):
+                    continue
                 tag_list.append(item)
             return tag_list
         finally:
@@ -670,7 +694,7 @@ class TagService:
         if not device_info:
             raise ServiceException(message=f'所属PLC设备不存在：ID={device_id}')
 
-        # 查询设备下已存在的点位名称（用于同设备内重名校验，防止脏数据或批量 INSERT 整体失败）
+        # 查询设备下已存在的点位ID（用于同设备内重名校验，防止脏数据或批量 INSERT 整体失败）
         existing_result = await query_db.execute(
             sa_select(PlcTag.tag_name).where(
                 PlcTag.device_id == device_id,
@@ -687,26 +711,31 @@ class TagService:
         for i, item in enumerate(tag_list):
             row_num = i + 2
             try:
-                tag_name = str(item.get('tagName', item.get('tag_name', item.get('点位名称', '')))).strip()
+                tag_name = str(item.get('tagName', item.get('tag_name', item.get('点位ID', '')))).strip()
                 register_type = str(item.get('registerType', item.get('register_type', item.get('寄存器类型', '')))).strip()
                 register_address = str(item.get('registerAddress', item.get('register_address', item.get('寄存器地址', '')))).strip()
                 data_type = str(item.get('dataType', item.get('data_type', item.get('数据类型', '')))).strip()
 
                 if not tag_name or not register_type or not register_address or not data_type:
                     missing = []
-                    if not tag_name: missing.append('点位名称')
+                    if not tag_name: missing.append('点位ID')
                     if not register_type: missing.append('寄存器类型')
                     if not register_address: missing.append('寄存器地址')
                     if not data_type: missing.append('数据类型')
                     errors.append(TagImportError(row=row_num, reason=f'必填字段缺失：{", ".join(missing)}'))
                     continue
 
+                # 点位ID（业务标识）必须为纯数字：写入 plc_data_log.tag_id（BIGINT）时非数字会插库失败
+                if not _is_numeric_tag_id(tag_name):
+                    errors.append(TagImportError(row=row_num, reason=f'点位ID必须为纯数字：{tag_name}（该值写入 plc_data_log.tag_id）'))
+                    continue
+
                 # 同设备内重名校验：先查 DB 已存在，再查文件内重复
                 if tag_name in existing_names:
-                    errors.append(TagImportError(row=row_num, reason=f'点位名称 "{tag_name}" 在该设备中已存在'))
+                    errors.append(TagImportError(row=row_num, reason=f'点位ID "{tag_name}" 在该设备中已存在'))
                     continue
                 if tag_name in seen_names:
-                    errors.append(TagImportError(row=row_num, reason=f'点位名称 "{tag_name}" 在文件内重复'))
+                    errors.append(TagImportError(row=row_num, reason=f'点位ID "{tag_name}" 在文件内重复'))
                     continue
                 seen_names.add(tag_name)
 
@@ -718,7 +747,7 @@ class TagService:
                     continue
 
                 unit = str(item.get('unit', '') or item.get('单位', '')).strip()
-                description = str(item.get('description', '') or item.get('描述', '')).strip()
+                description = str(item.get('description', '') or item.get('备注', '') or item.get('描述', '')).strip()
                 sort_str = str(item.get('sortOrder', item.get('sort_order', item.get('排序号', 0)))).strip()
                 # 支持 '1.5' 这类浮点字符串先转 float 再取整，避免 isdigit 失败时静默归零
                 sort_order = int(float(sort_str)) if sort_str else 0
@@ -728,7 +757,8 @@ class TagService:
                 transform_slope_a = _safe_float(item.get('transformSlopeA'), 1.0)
                 transform_offset_b = _safe_float(item.get('transformOffsetB'), 0.0)
                 eng_unit = str(item.get('engUnit', '')).strip() or None
-                report_deadband_ms = _safe_int(item.get('reportDeadbandMs'), 1000)
+                # 死区/强制间隔缺省取 0：过渡版不消费这两个字段，默认 1000/5000 会污染数据并触发误导性告警
+                report_deadband_ms = _safe_int(item.get('reportDeadbandMs'), 0)
                 report_force_interval_ms = _safe_int(item.get('reportForceIntervalMs'), 5000)
                 bit_offset = _safe_int(item.get('bitOffset'), None)
                 byte_order = str(item.get('byteOrder', '')).strip() or None
@@ -787,45 +817,92 @@ class TagService:
         wb = Workbook()
         ws = wb.active
         ws.title = '点位导入模板'
+        # 过渡版模板：剔除死区/强制间隔（生成版 flow 不消费）与字节序/字序（社区节点未消费），
+        # 保留位偏移（MC BIT 点位需要）。解析器 header_map 兼容老模板（多出的列仍被识别）。
+        # 必填列红头：点位ID/寄存器类型/寄存器地址/数据类型
+        REQUIRED = {'点位ID', '寄存器类型', '寄存器地址', '数据类型'}
         headers = [
-            '点位名称', '寄存器类型', '寄存器地址', '数据类型', '单位', '描述', '排序号',
-            '换算类型', '斜率/乘数a', '偏移量b', '工程单位', '死区(数值)', '强制间隔(ms)',
-            '位偏移', '字节序', '字序',
+            '点位ID', '寄存器类型', '寄存器地址', '数据类型', '单位', '备注', '排序号',
+            '换算类型', '斜率/乘数a', '偏移量b', '工程单位', '位偏移',
         ]
         header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         header_font = Font(color='FFFFFF', bold=True)
+        required_fill = PatternFill(start_color='C00000', end_color='C00000', fill_type='solid')
 
         for col, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=h)
-            cell.fill = header_fill
+            cell.fill = required_fill if h in REQUIRED else header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal='center')
-            ws.column_dimensions[get_column_letter(col)].width = 16
+        # 列宽按内容调（名称/描述/工程单位放宽）
+        widths = [20, 14, 14, 14, 10, 24, 10, 14, 12, 12, 14, 10]
+        for col, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(col)].width = w
+
+        # 第二行示例（解析器会跳过"示例"开头的点位ID，防止误导入）
+        # 列序：点位ID(纯数字) | 寄存器类型 | 地址 | 数据类型 | 单位(原始) | 备注(点位名称) | 排序 | 换算类型 | a | b | 工程单位 | 位偏移
+        example = ['示例：1001', 'D', '100', 'INT16', '', '示例：1号炉温度', '1',
+                   'linear', '0.1', '0', '℃', '']
+        example_fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+        example_font = Font(color='808080', italic=True)
+        for col, v in enumerate(example, 1):
+            cell = ws.cell(row=2, column=col, value=v)
+            cell.fill = example_fill
+            cell.font = example_font
 
         dv_reg = DataValidation(type='list', formula1='"D,W,X,Y,M"', allow_blank=True)
         dv_reg.error = '请选择有效的寄存器类型'
         ws.add_data_validation(dv_reg)
-        dv_reg.add('B2:B1048576')
+        dv_reg.add('B3:B1048576')
 
         dv_dt = DataValidation(type='list', formula1='"INT16,INT32,FLOAT,BIT,UINT16,UINT32,BOOL,DOUBLE"', allow_blank=True)
         dv_dt.error = '请选择有效的数据类型'
         ws.add_data_validation(dv_dt)
-        dv_dt.add('D2:D1048576')
-
-        dv_bo = DataValidation(type='list', formula1='"LITTLE_ENDIAN,BIG_ENDIAN"', allow_blank=True)
-        dv_bo.error = '请选择有效的字节序'
-        ws.add_data_validation(dv_bo)
-        dv_bo.add('N2:N1048576')
-
-        dv_wo = DataValidation(type='list', formula1='"LOW_FIRST,HIGH_FIRST"', allow_blank=True)
-        dv_wo.error = '请选择有效的字序'
-        ws.add_data_validation(dv_wo)
-        dv_wo.add('O2:O1048576')
+        dv_dt.add('D3:D1048576')
 
         dv_trans = DataValidation(type='list', formula1='"none,linear,slope_offset"', allow_blank=True)
         dv_trans.error = '请选择有效的换算类型'
         ws.add_data_validation(dv_trans)
-        dv_trans.add('H2:H1048576')
+        dv_trans.add('H3:H1048576')
+
+        # 填写说明放主 sheet 右侧（N 列起，与表头同屏对照，不分 sheet）
+        guide = [
+            ('填写说明', ''),
+            ('红色表头为必填项：点位ID、寄存器类型、寄存器地址、数据类型', ''),
+            ('第 2 行是示例（灰底斜体），导入时自动跳过，不用删除', ''),
+            ('下拉选项是协议代码，按下表对照：', ''),
+            ('', ''),
+            ('寄存器类型代码', '含义'),
+            ('D', '数据寄存器（三菱 MC / 基恩士 DM）'),
+            ('W', '链接寄存器'),
+            ('X', '输入'),
+            ('Y', '输出'),
+            ('M', '内部继电器'),
+            ('HR / IR', 'Modbus 保持寄存器 / 输入寄存器'),
+            ('CR / DISCRETE', 'Modbus 线圈 / 离散输入'),
+            ('', ''),
+            ('数据类型代码', '含义'),
+            ('INT16 / UINT16', '16 位整数（有符号 / 无符号）'),
+            ('INT32 / UINT32', '32 位整数（跨 2 寄存器）'),
+            ('FLOAT / DOUBLE', '浮点数（跨 2 / 4 寄存器）'),
+            ('BIT / BOOL', '位 / 布尔（填位偏移列，0-15）'),
+            ('', ''),
+            ('换算类型代码', '含义'),
+            ('none', '不换算（默认）'),
+            ('linear', '线性换算：工程值 = 原始值 × a + b'),
+        ]
+        guide_col = len(headers) + 2  # 数据列之后空一列，N 列起
+        guide_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+        for r, (a, b) in enumerate(guide, 1):
+            ca = ws.cell(row=r, column=guide_col, value=a)
+            cb = ws.cell(row=r, column=guide_col + 1, value=b)
+            ca.fill = guide_fill
+            cb.fill = guide_fill
+            if r == 1 or b == '含义':
+                ca.font = Font(bold=True)
+                cb.font = Font(bold=True)
+        ws.column_dimensions[get_column_letter(guide_col)].width = 42
+        ws.column_dimensions[get_column_letter(guide_col + 1)].width = 44
 
         binary_data = io.BytesIO()
         wb.save(binary_data)
@@ -965,8 +1042,8 @@ class TagService:
         ws = wb.create_sheet('PLC点位清单')
 
         tag_headers = [
-            '设备名称', '点位名称', '寄存器类型', '寄存器地址',
-            '数据类型', '单位', '描述', '状态', '排序号',
+            '设备名称', '点位ID', '寄存器类型', '寄存器地址',
+            '数据类型', '单位', '备注', '状态', '排序号',
             '位偏移', '字节序', '字序',
         ]
         tag_keys = [

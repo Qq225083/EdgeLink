@@ -9,6 +9,14 @@ export function listDevice(query) {
   })
 }
 
+// 按采集节点统计 PLC 数量（左侧采集点面板徽标）
+export function countDeviceByNode() {
+  return request({
+    url: '/plc/device/count-by-node',
+    method: 'get'
+  })
+}
+
 // 查询PLC设备详细（含点位列表）
 export function getDevice(deviceId) {
   return request({

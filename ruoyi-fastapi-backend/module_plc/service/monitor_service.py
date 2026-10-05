@@ -97,6 +97,7 @@ class MonitorService:
         valid_node_ids = [node_by_ip[ip].id for ip in valid_ips]
         pg_status_map = await MonitorDao.get_pg_write_status_batch(db, valid_node_ids)
         heartbeat_map = await MonitorDao.get_latest_heartbeat_batch(db, valid_node_ids)
+        site_health_map = await MonitorDao.get_site_health_map(db)
         # 一次批量 JOIN 查询所有 IP 的设备，避免 N+1
         devices_by_ip = await MonitorDao.get_devices_grouped_by_host_ip(db, valid_ips)
 
@@ -125,6 +126,12 @@ class MonitorService:
             latest_hb = heartbeat_map.get(n.id)
             running_flows = latest_hb.running_flows if latest_hb else 0
             memory_usage_mb = latest_hb.memory_usage_mb if latest_hb else 0
+
+            # site-health 桥接：生成版节点心跳不带指标（恒0），用 site-health 的内存/流数补齐
+            site = site_health_map.get(ip)
+            if site and not running_flows and not memory_usage_mb:
+                running_flows = site.running_flows or 0
+                memory_usage_mb = site.memory_rss_mb or 0
 
             # 时间戳格式化
             for p in plc_list:

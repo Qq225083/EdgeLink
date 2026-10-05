@@ -39,6 +39,10 @@ class BootstrapKeyModel(BaseModel):
     node_key: str = Field(description='节点标识（如 pc-001）')
     node_name: Optional[str] = Field(default=None, description='节点名称')
     host_pc_ip: Optional[str] = Field(default=None, description='节点标识（IP:端口）')
+    indust_ip: Optional[str] = Field(default=None, description='工业网IP（采集点固定工业网卡地址）')
+    building: Optional[str] = Field(default=None, description='栋别')
+    floor: Optional[str] = Field(default=None, description='楼层')
+    process_stage: Optional[str] = Field(default=None, description='工程')
     enabled: Optional[int] = Field(default=1, description='是否启用（0停用 1启用）')
 
 
@@ -118,12 +122,53 @@ async def add_bootstrap_key(
         node_key=model.node_key,
         node_name=model.node_name,
         host_pc_ip=model.host_pc_ip,
+        indust_ip=model.indust_ip,
+        building=model.building,
+        floor=model.floor,
+        process_stage=model.process_stage,
         secret_key=hash_bootstrap_secret(secret_key),
         enabled=model.enabled or 1,
     )
     query_db.add(entity)
+
+    # ===== 联动登记健康监控（一次登记、两边落库；已登记的不重复建行）=====
+    # host_pc_ip 形态为 IP 或 IP:端口，拆出 office_ip / node_port
+    health_key = None
+    health_existed = False
+    raw_host = (model.host_pc_ip or '').strip()
+    office_ip = raw_host.split(':')[0]
+    node_port = int(raw_host.split(':')[1]) if ':' in raw_host and raw_host.split(':')[1].isdigit() else None
+    if office_ip:
+        from module_site_health.entity.do.site_health_do import SiteHealthSite, hash_site_key
+
+        sh_query = select(SiteHealthSite).where(SiteHealthSite.office_ip == office_ip)
+        if node_port is None:
+            sh_query = sh_query.where(SiteHealthSite.node_port.is_(None))
+        else:
+            sh_query = sh_query.where(SiteHealthSite.node_port == node_port)
+        sh_result = await query_db.execute(sh_query.order_by(SiteHealthSite.id))
+        if sh_result.scalars().first():
+            health_existed = True
+        else:
+            health_key = secrets.token_hex(16)
+            query_db.add(SiteHealthSite(
+                site_key_hash=hash_site_key(health_key),
+                office_ip=office_ip,
+                indust_ip=model.indust_ip,
+                site_name=model.node_name or model.node_key,
+                building=model.building,
+                floor=model.floor,
+                process_stage=model.process_stage,
+                node_port=node_port,
+                status=1,
+                source='config',  # 采集配置联动登记（区别于存量监控单独登记的 register）
+            ))
+
     await query_db.commit()
-    return ResponseUtil.success(msg='新增成功，密钥仅此一次显示，请立即保存', data={'secretKey': secret_key})
+    msg = '新增成功，密钥仅此一次显示，请立即保存'
+    if health_existed:
+        msg += '（健康监控此前已登记，未重复创建；更换监控密钥请到「采集监控」页重置）'
+    return ResponseUtil.success(msg=msg, data={'secretKey': secret_key, 'healthKey': health_key, 'healthExisted': health_existed})
 
 
 @bootstrap_key_controller.put(
@@ -170,6 +215,10 @@ async def update_bootstrap_key(
     entity.node_key = model.node_key
     entity.node_name = model.node_name
     entity.host_pc_ip = model.host_pc_ip
+    entity.indust_ip = model.indust_ip
+    entity.building = model.building
+    entity.floor = model.floor
+    entity.process_stage = model.process_stage
     entity.enabled = model.enabled
     await query_db.commit()
     return ResponseUtil.success(msg='编辑成功')

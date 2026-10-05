@@ -16,6 +16,9 @@ class PlcDriver(Base):
     driver_code = Column(String(50), nullable=False, unique=True, comment='驱动编码（如 mitsubishi_mc / modbus_tcp）')
     driver_name = Column(String(100), nullable=False, comment='驱动显示名称')
     node_red_node_type = Column(String(100), nullable=False, comment='Node-RED 节点类型名')
+    # 过渡版流程生成器映射（9-28 迁移）：V12/V13 自研节点用 node_red_node_type，生成器用 gen_* 两列
+    gen_node_type = Column(String(100), nullable=True, comment='生成版读取节点类型名（社区/核心节点注册名）')
+    gen_conn_type = Column(String(100), nullable=True, comment='生成版连接配置节点类型名')
     config_schema = Column(JSON, nullable=False, comment='设备级协议参数 schema')
     register_types = Column(JSON, nullable=False, comment='支持的寄存器类型')
     data_types = Column(JSON, nullable=False, comment='支持的数据类型')

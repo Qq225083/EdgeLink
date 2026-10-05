@@ -13,12 +13,12 @@ class TagModel(BaseModel):
 
     id: Optional[int] = Field(default=None, description='点位ID')
     device_id: Optional[int] = Field(default=None, description='所属设备ID')
-    tag_name: Optional[str] = Field(default=None, description='点位名称')
+    tag_name: Optional[str] = Field(default=None, description='点位ID（业务标识，写入 plc_data_log.tag_id）')
     register_type: Optional[str] = Field(default=None, description='寄存器类型（D/W/X/Y/M）')
     register_address: Optional[str] = Field(default=None, description='寄存器地址')
     data_type: Optional[str] = Field(default=None, description='数据类型（INT16/INT32/FLOAT/BIT/UINT16/UINT32/BOOL/DOUBLE）')
     unit: Optional[str] = Field(default=None, description='单位（寄存器原始单位）')
-    description: Optional[str] = Field(default=None, description='点位描述')
+    description: Optional[str] = Field(default=None, description='备注（点位名称/描述）')
     status: Optional[str] = Field(default='0', description='状态（0启用 1停用）')
     sort_order: Optional[int] = Field(default=0, description='排序号')
     # ======== 换算参数 ========

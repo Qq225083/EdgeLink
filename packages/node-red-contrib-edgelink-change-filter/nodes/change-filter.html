@@ -1,0 +1,112 @@
+<script type="text/javascript">
+    RED.nodes.registerType('change-filter', {
+        category: 'function',
+        color: '#E2D96E',
+        defaults: {
+            name: { value: '' },
+            keyField: { value: 'id', required: true },
+            excludeFields: { value: 'timestamp,insert_time' },
+            outputMode: { value: 'changed_only' },
+            firstPass: { value: 'pass_through' },
+            threshold: { value: 0, validate: function (v) { return v === '' || !isNaN(Number(v)); } },
+            timeoutSec: { value: 0, validate: function (v) { return v === '' || !isNaN(Number(v)); } }
+        },
+        inputs: 1,
+        outputs: 1,
+        icon: 'fa-filter',
+        paletteLabel: 'change filter',
+        label: function () {
+            return this.name || 'change-filter';
+        }
+    });
+</script>
+
+<script type="text/x-red" data-template-name="change-filter">
+    <div class="form-row">
+        <label for="node-input-name"><i class="fa fa-tag"></i> 名称</label>
+        <input type="text" id="node-input-name" placeholder="名称">
+    </div>
+    <div class="form-row">
+        <label for="node-input-keyField">唯一键字段</label>
+        <input type="text" id="node-input-keyField" placeholder="id">
+    </div>
+    <div class="form-row">
+        <label for="node-input-excludeFields">排除字段</label>
+        <input type="text" id="node-input-excludeFields" placeholder="timestamp,insert_time">
+    </div>
+    <div class="form-row">
+        <label for="node-input-outputMode">输出模式</label>
+        <select id="node-input-outputMode">
+            <option value="changed_only">仅变化项</option>
+            <option value="all_with_flag">全量+标记</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-firstPass">首次执行</label>
+        <select id="node-input-firstPass">
+            <option value="pass_through">全量通过</option>
+            <option value="drop">丢弃等待</option>
+        </select>
+    </div>
+    <div class="form-row">
+        <label for="node-input-threshold">变化阈值</label>
+        <input type="text" id="node-input-threshold" placeholder="0">
+    </div>
+    <div class="form-row">
+        <label for="node-input-timeoutSec">超时清理(秒)</label>
+        <input type="text" id="node-input-timeoutSec" placeholder="0">
+    </div>
+</script>
+
+<script type="text/x-red" data-help-name="change-filter">
+    <p>接收对象数组，按「唯一键字段」与上一次输入逐字段对比，只输出发生变化的记录，用于减少写库量与传输量。</p>
+
+    <h3>输入</h3>
+    <pre>msg.payload = [
+  { "equipment_id": "b040", "col3": 100, "col4": 200, "timestamp": "..." },
+  { "equipment_id": "b041", "col3": 150, "col4": 250, "timestamp": "..." }
+]</pre>
+
+    <h3>输出（仅变化项模式）</h3>
+    <pre>msg.payload = [
+  { "equipment_id": "b040", "col3": 105, "col4": 200,
+    "_changed_fields": ["col3"],
+    "_old_values": { "col3": 100 },
+    "_is_new": false }
+]</pre>
+    <p>无任何变化时输出空数组 <code>[]</code>。「全量+标记」模式下输出全部记录并附加 <code>_changed: true/false</code>。</p>
+
+    <h3>元数据字段</h3>
+    <ul>
+        <li><code>_changed_fields</code>：发生变化的字段名列表；新记录为全部参与比较的字段</li>
+        <li><code>_old_values</code>：变化字段的旧值（新增字段无旧值不附）</li>
+        <li><code>_changes</code>：变化字段的新值（对象，键为字段名）<code>{字段: 新值}</code>，字段被删除时值为 <code>null</code>；旧值见 <code>_old_values</code></li>
+        <li><code>_is_new</code>：是否首次出现的记录（新设备上线）</li>
+        <li><code>_changed</code>：仅「全量+标记」模式附加</li>
+    </ul>
+
+    <h3>配置</h3>
+    <ul>
+        <li><b>唯一键字段</b>：标识同一条记录的字段（如 equipment_id），按值匹配而非数组索引，设备顺序变化不影响</li>
+        <li><b>排除字段</b>：逗号分隔，不参与比较（如 timestamp、insert_time 等每帧都变的字段）</li>
+        <li><b>变化阈值</b>：数值字段 |Δ| ≥ 阈值才算变化（死区过滤），0 = 关闭；类型变化（number→string）一律视为变化</li>
+        <li><b>超时清理</b>：某设备超过 N 秒未出现则移除其基准（防内存累积），再次出现时按新记录处理；0 = 不清理</li>
+    </ul>
+
+    <h3>行为说明</h3>
+    <ul>
+        <li>基准保存在节点闭包内，不使用 flow/global context；节点重启或重部署后基准清空，首帧按新记录全量输出（pass_through）或仅建基准（drop）</li>
+        <li>输入非数组：红色状态 + 抛出错误（可被 catch 节点捕获），不发送消息</li>
+        <li>记录缺少唯一键字段：跳过该条并 warn，其余记录正常处理</li>
+        <li>设备离线（记录减少）：不报错，仅对比存在的记录</li>
+        <li>字段为对象/数组：按 JSON.stringify 深比较（注意对 key 顺序敏感）</li>
+    </ul>
+
+    <h3>状态灯</h3>
+    <ul>
+        <li>绿点：本轮有变化输出</li>
+        <li>灰圈：无变化</li>
+        <li>蓝点：首帧已建基准（drop 模式）</li>
+        <li>红圈：输入错误</li>
+    </ul>
+</script>

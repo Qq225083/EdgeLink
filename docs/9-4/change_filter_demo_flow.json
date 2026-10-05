@@ -1,0 +1,155 @@
+[
+    {
+        "id": "cf_demo_tab",
+        "type": "tab",
+        "label": "change-filter 实验",
+        "disabled": false,
+        "info": "change-filter 节点上手实验：ProtoForge 仿真器 → MC读取 → 整形 → 变化过滤 → debug\n数据源：127.0.0.1:5001/tcp（ProtoForge 设备123 独立口，D1~D5）"
+    },
+    {
+        "id": "cf_demo_inject",
+        "type": "inject",
+        "z": "cf_demo_tab",
+        "name": "1秒轮询",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 1,
+        "topic": "",
+        "payload": "{}",
+        "payloadType": "json",
+        "x": 150,
+        "y": 120,
+        "wires": [
+            [
+                "cf_demo_mc"
+            ]
+        ]
+    },
+    {
+        "id": "cf_demo_mc",
+        "type": "MC Read",
+        "z": "cf_demo_tab",
+        "name": "读D1~D5",
+        "connection": "cf_demo_conn",
+        "address": "D1,5",
+        "addressType": "str",
+        "outputFormat": 0,
+        "errorHandling": "throw",
+        "outputs": 1,
+        "x": 360,
+        "y": 120,
+        "wires": [
+            [
+                "cf_demo_shape"
+            ]
+        ]
+    },
+    {
+        "id": "cf_demo_conn",
+        "type": "MC Protocol Connection",
+        "name": "ProtoForge-123",
+        "host": "127.0.0.1",
+        "port": "5001",
+        "protocol": "TCP",
+        "frame": "3E",
+        "plcType": "Q",
+        "ascii": false,
+        "timeout": 1000
+    },
+    {
+        "id": "cf_demo_shape",
+        "type": "function",
+        "z": "cf_demo_tab",
+        "name": "整形为记录数组",
+        "func": "// MC 输出 {D1:v1,...} → change-filter 需要的 [{plc_id, D1:v1, ...}]\nif (!msg.payload || typeof msg.payload !== 'object') return null;\nmsg.payload = [Object.assign({ plc_id: 'PLC-123' }, msg.payload)];\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "x": 580,
+        "y": 120,
+        "wires": [
+            [
+                "cf_demo_filter"
+            ]
+        ]
+    },
+    {
+        "id": "cf_demo_filter",
+        "type": "change-filter",
+        "z": "cf_demo_tab",
+        "name": "变化过滤",
+        "keyField": "plc_id",
+        "excludeFields": "",
+        "outputMode": "changed_only",
+        "firstPass": "pass_through",
+        "threshold": 0,
+        "timeoutSec": 0,
+        "x": 800,
+        "y": 120,
+        "wires": [
+            [
+                "cf_demo_tosql",
+                "cf_demo_debug"
+            ]
+        ]
+    },
+    {
+        "id": "cf_demo_debug",
+        "type": "debug",
+        "z": "cf_demo_tab",
+        "name": "过滤结果",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1020,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "cf_demo_tosql",
+        "type": "change-to-sql",
+        "z": "cf_demo_tab",
+        "name": "展开SQL",
+        "table": "wedh.wed_scn1",
+        "timeColumn": "insert_time",
+        "tagColumn": "tag_id",
+        "valueColumn": "number_value",
+        "keyField": "plc_id",
+        "outputFormat": "sql",
+        "fieldMapping": "{\"*\":{\"D1\":1,\"D2\":2,\"D3\":3,\"D4\":4,\"D5\":5}}",
+        "x": 1020,
+        "y": 180,
+        "wires": [
+            [
+                "cf_demo_debug_sql"
+            ]
+        ]
+    },
+    {
+        "id": "cf_demo_debug_sql",
+        "type": "debug",
+        "z": "cf_demo_tab",
+        "name": "生成的SQL",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "query",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1230,
+        "y": 180,
+        "wires": []
+    }
+]

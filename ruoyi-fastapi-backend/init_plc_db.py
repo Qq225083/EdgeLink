@@ -304,12 +304,12 @@ cur.execute("""
 CREATE TABLE IF NOT EXISTS plc_tag (
     id               BIGINT       NOT NULL AUTO_INCREMENT  COMMENT '点位ID',
     device_id        BIGINT       NOT NULL                 COMMENT '所属设备ID',
-    tag_name         VARCHAR(100) NOT NULL                 COMMENT '点位名称',
+    tag_name         VARCHAR(100) NOT NULL                 COMMENT '点位ID（业务标识，写入 plc_data_log.tag_id）',
     register_type    VARCHAR(10)  NOT NULL                 COMMENT '寄存器类型（协议相关：MC=D/W/X/Y/M, Modbus=Coil/Discrete/Holding/Input, S7=DB/I/Q/M）',
     register_address VARCHAR(50)  NOT NULL                 COMMENT '寄存器地址',
     data_type        VARCHAR(20)  NOT NULL                 COMMENT '数据类型（INT16/INT32/FLOAT/BIT/UINT16/UINT32/BOOL/DOUBLE）',
     unit             VARCHAR(20)  DEFAULT NULL             COMMENT '物理单位（寄存器原始单位）',
-    description      TEXT         DEFAULT NULL             COMMENT '点位描述',
+    description      TEXT         DEFAULT NULL             COMMENT '备注（点位名称/描述）',
     status           CHAR(1)      NOT NULL DEFAULT '0'     COMMENT '状态（0启用 1停用）',
     sort_order       INT          NOT NULL DEFAULT 0       COMMENT '排序号（升序）',
     transform_type   VARCHAR(20)  NOT NULL DEFAULT 'none'  COMMENT '换算类型（none/linear/slope_offset）',
@@ -552,6 +552,70 @@ for name, parent_id, order_num, perms in buttons:
         'admin', NOW(), 'admin', NOW())
     """, (name, parent_id, order_num, perms))
 print('[OK] 13 个按钮权限插入成功')
+
+# ===================================================================
+# 8.5 采集节点专用账号 edge_collector（bootstrap 下发凭据的登录主体）
+#     设计见 docs/edgelink_bootstrap_secure_design.md 5.2/5.3：
+#     角色只授 plc:tag:list（快照拉取沿用点位读取权限）；
+#     密码 = 环境变量 EDGE_COLLECTOR_PASSWORD（与后端 .env 的 edge_collector_password 一致），
+#     重复执行会同步密码（env 是密码的唯一事实来源）。
+# ===================================================================
+import bcrypt as _bcrypt
+
+_COLLECTOR_PASS = os.environ.get('EDGE_COLLECTOR_PASSWORD')
+if not _COLLECTOR_PASS:
+    raise SystemExit('错误: 请先设置环境变量 EDGE_COLLECTOR_PASSWORD（须与后端 .env 的 edge_collector_password 一致）')
+
+# 角色：采集节点（注意兼容软删除：角色被删过的环境要复活而不是跳过）
+cur.execute("SELECT role_id, del_flag FROM sys_role WHERE role_key = 'edge_collector'")
+row = cur.fetchone()
+if row and row[1] == '0':
+    collector_role_id = row[0]
+    print(f'[SKIP] 角色 edge_collector 已存在 (role_id={collector_role_id})')
+elif row:
+    collector_role_id = row[0]
+    cur.execute("UPDATE sys_role SET del_flag='0', status='0', update_by='admin', update_time=NOW() WHERE role_id = %s",
+                (collector_role_id,))
+    print(f'[OK] 角色 edge_collector 曾被软删除，已复活 (role_id={collector_role_id})')
+else:
+    cur.execute("""
+    INSERT INTO sys_role (role_name, role_key, role_sort, status, create_by, create_time)
+    VALUES ('采集节点', 'edge_collector', 5, '0', 'admin', NOW())
+    """)
+    collector_role_id = cur.lastrowid
+    print(f'[OK] 角色 edge_collector 创建 (role_id={collector_role_id})')
+
+# 角色权限：只授 plc:tag:list（Monitor 接口走 X-API-Key 鉴权，不走菜单权限）
+cur.execute("""
+INSERT INTO sys_role_menu (role_id, menu_id)
+SELECT %s, m.menu_id FROM sys_menu m
+WHERE m.perms = 'plc:tag:list'
+  AND NOT EXISTS (SELECT 1 FROM sys_role_menu rm WHERE rm.role_id = %s AND rm.menu_id = m.menu_id)
+""", (collector_role_id, collector_role_id))
+print('[OK] 角色权限 plc:tag:list 就位')
+
+# 账号：edge_collector（密码与后端 .env 对齐，重复执行会同步密码）
+_pwd_hash = _bcrypt.hashpw(_COLLECTOR_PASS.encode('utf-8'), _bcrypt.gensalt()).decode('utf-8')
+cur.execute("SELECT user_id FROM sys_user WHERE user_name = 'edge_collector' AND del_flag = '0'")
+row = cur.fetchone()
+if row:
+    collector_user_id = row[0]
+    cur.execute("UPDATE sys_user SET password = %s, status = '0', update_by = 'admin', update_time = NOW() WHERE user_id = %s",
+                (_pwd_hash, collector_user_id))
+    print(f'[OK] 账号 edge_collector 已存在，密码已同步 (user_id={collector_user_id})')
+else:
+    cur.execute("""
+    INSERT INTO sys_user (user_name, nick_name, password, status, del_flag, create_by, create_time, remark)
+    VALUES ('edge_collector', '采集节点', %s, '0', '0', 'admin', NOW(), 'bootstrap 下发的采集专用账号（勿给 admin 权限）')
+    """, (_pwd_hash,))
+    collector_user_id = cur.lastrowid
+    print(f'[OK] 账号 edge_collector 创建 (user_id={collector_user_id})')
+
+cur.execute("""
+INSERT INTO sys_user_role (user_id, role_id)
+SELECT %s, %s WHERE NOT EXISTS (SELECT 1 FROM sys_user_role WHERE user_id = %s AND role_id = %s)
+""", (collector_user_id, collector_role_id, collector_user_id, collector_role_id))
+print('[OK] 账号↔角色 绑定就位')
 
 # ===================================================================
 # 9. 验证

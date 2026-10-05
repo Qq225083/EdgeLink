@@ -1,111 +1,139 @@
 <template>
-  <div class="dashboard">
-    <!-- ==================== 顶部欢迎区 ==================== -->
-    <div class="welcome-card">
-      <div class="welcome-left">
-        <div class="welcome-title">早安，{{ userName }}，祝你开心每一天！</div>
-        <div class="welcome-subtitle">让每一台 PLC 开口说话 · EdgeLink 边缘智联系统</div>
+  <div class="showcase">
+    <!-- ==================== 主视觉横幅（纯渐变，无图片拉伸失真） ==================== -->
+    <div class="hero">
+      <div class="hero-glow glow-a" />
+      <div class="hero-glow glow-b" />
+      <div class="hero-overlay">
+        <div class="hero-title">EdgeLink 边缘智联管理系统</div>
+        <div class="hero-sub">工业采集 · 集中管控 · 配置即流程</div>
+        <div class="hero-line" />
+        <div class="hero-slogan">让每一台 PLC，开口说话</div>
       </div>
-      <div class="welcome-right">
-        <el-tag :type="systemNormal ? 'success' : 'danger'" size="small" class="sys-tag">
-          {{ systemNormal ? '系统正常' : '存在异常' }}
-        </el-tag>
-        <div class="sys-time">{{ currentTime }}</div>
+      <div class="hero-noise" />
+      <div class="hero-scroll"><span /></div>
+    </div>
+
+    <!-- ==================== 公司简介 ==================== -->
+    <div class="section reveal">
+      <div class="section-inner">
+        <div class="section-media">
+          <img :src="img.gate" alt="公司正门" />
+        </div>
+        <div class="section-text">
+          <div class="section-kicker">ABOUT US</div>
+          <h2>公司简介</h2>
+          <!-- 文案参考 murata.rczj.cn/Recruit/Profiles -->
+          <p>
+            无锡村田电子有限公司是日本株式会社村田制作所于 1994 年 12 月在中国无锡设立的独资企业，
+            目前是村田集团最大的生产基地。公司主要生产以陶瓷材料为主的电子元器件，
+            如贴片式多层陶瓷电容器（MLCC），广泛应用于智能通信、汽车电子、PC、无人驾驶、5G 设备、IoT 等领域。
+          </p>
+          <p>
+            公司着眼于「ES（员工满意度）」与「CS（客户满意度）」，以人为本、注重人才培养，
+            积极履行企业社会责任，先后荣获全国文明单位、中国质量信赖企业等多项表彰。
+            目前公司员工已超过 11,000 人，第一工厂占地面积 11 万平方米，
+            第二工厂于 2020 年 6 月投入生产，占地面积约 12 万平方米。
+          </p>
+        </div>
       </div>
     </div>
 
-    <!-- ==================== 核心数据卡片 ==================== -->
-    <panel-group
-      :node-online="dashboardData.nodeOnline"
-      :node-total="dashboardData.nodeTotal"
-      :plc-online="dashboardData.plcOnline"
-      :plc-total="dashboardData.plcTotal"
-      :today-collect="dashboardData.todayCollect"
-      :today-unit="dashboardData.todayUnit"
-      :alert-count="dashboardData.alertCount"
-    />
-
-    <!-- ==================== 核心技术理念 ==================== -->
-    <div class="section-title">
-      <span class="cn">核心技术理念</span>
-      <span class="en">CORE CONCEPT</span>
-    </div>
-    <el-row :gutter="16" class="concept-row">
-      <el-col v-for="c in concepts" :key="c.title" :xs="24" :sm="12" :lg="6">
-        <div class="concept-card">
-          <div class="concept-icon" :style="{ background: c.color }">
-            <i :class="c.icon" />
-          </div>
-          <div class="concept-title">{{ c.title }}</div>
-          <div class="concept-en">{{ c.en }}</div>
-          <div class="concept-desc">{{ c.desc }}</div>
-          <div class="concept-tags">
-            <el-tag v-for="t in c.tags" :key="t" size="mini" type="info" effect="plain">{{ t }}</el-tag>
-          </div>
+    <!-- ==================== 系统简介 ==================== -->
+    <div class="section section-alt reveal">
+      <div class="section-inner reverse">
+        <div class="section-media">
+          <img :src="img.system" alt="工业自动化" />
         </div>
-      </el-col>
-    </el-row>
-
-    <!-- ==================== 系统架构 + 系统状态 ==================== -->
-    <el-row :gutter="16">
-      <!-- 系统架构（左） -->
-      <el-col :xs="24" :lg="16">
-        <div class="section-title">
-          <span class="cn">系统架构</span>
-          <span class="en">SYSTEM ARCHITECTURE</span>
-        </div>
-        <div class="arch-card">
-          <div class="arch-flow">
-            <template v-for="(layer, i) in archLayers">
-              <div class="arch-node" :key="layer.name">
-                <div class="arch-index" :style="{ background: layer.color }">{{ i + 1 }}</div>
-                <div class="arch-name">{{ layer.name }}</div>
-                <div class="arch-en">{{ layer.en }}</div>
-                <div class="arch-desc">{{ layer.desc }}</div>
-                <div class="arch-tags">
-                  <el-tag v-for="t in layer.tags" :key="t" size="mini" effect="plain" type="info">{{ t }}</el-tag>
-                </div>
+        <div class="section-text">
+          <div class="section-kicker">ABOUT SYSTEM</div>
+          <h2>系统简介</h2>
+          <p>
+            EdgeLink 边缘智联系统是面向生产现场的工业数据采集与管控平台。
+            系统在车间边缘侧完成 PLC 数据的采集、换算与过滤，
+            通过 MQTT / PostgreSQL 双通道汇入平台，实现设备状态的集中监控与统一管理。
+          </p>
+          <div class="feature-row">
+            <div class="feature-item">
+              <i class="el-icon-cpu" />
+              <div>
+                <div class="feature-name">多协议接入</div>
+                <div class="feature-desc">三菱 MC · Modbus · 基恩士 SLMP</div>
               </div>
-              <div v-if="i < archLayers.length - 1" :key="'arrow-' + i" class="arch-arrow">
-                <i class="el-icon-right" />
+            </div>
+            <div class="feature-item">
+              <i class="el-icon-share" />
+              <div>
+                <div class="feature-name">配置即流程</div>
+                <div class="feature-desc">后台配置一键生成边缘采集流程</div>
               </div>
-            </template>
-          </div>
-          <!-- 底部补充说明 -->
-          <div class="arch-footer">
-            <span><i class="el-icon-connection" /> 协议兼容：MC / Modbus / S7 可插拔</span>
-            <span><i class="el-icon-timer" /> 采集周期：秒级轮询，死区过滤减负</span>
-            <span><i class="el-icon-files" /> 数据压缩：批量写入 + 磁盘缓存兜底</span>
-          </div>
-        </div>
-      </el-col>
-
-      <!-- 系统状态（右，与架构卡片同高） -->
-      <el-col :xs="24" :lg="8">
-        <div class="section-title">
-          <span class="cn">系统状态</span>
-          <span class="en">SYSTEM STATUS</span>
-        </div>
-        <div class="status-card">
-          <div v-for="item in statusList" :key="item.label" class="status-item">
-            <span class="status-label">{{ item.label }}</span>
-            <span class="status-value" :class="item.cls">{{ item.value }}</span>
+            </div>
+            <div class="feature-item">
+              <i class="el-icon-monitor" />
+              <div>
+                <div class="feature-name">集中管控</div>
+                <div class="feature-desc">多现场节点统一监控与告警</div>
+              </div>
+            </div>
           </div>
         </div>
-      </el-col>
-    </el-row>
-
-    <!-- ==================== 最近动态（全宽底部） ==================== -->
-    <div class="section-title">
-      <span class="cn">最近动态</span>
-      <span class="en">RECENT ACTIVITY</span>
+      </div>
     </div>
-    <div class="activity-card">
-      <div class="activity-grid">
-        <div v-for="(a, i) in activities" :key="i" class="activity-item">
-          <span class="activity-dot" :style="{ background: a.color }" />
-          <span class="activity-text">{{ a.text }}</span>
-          <span class="activity-time">{{ a.time }}</span>
+
+    <!-- ==================== 系统架构 ==================== -->
+    <div class="section reveal">
+      <div class="section-head">
+        <div class="section-kicker">ARCHITECTURE</div>
+        <h2>系统架构</h2>
+      </div>
+      <div class="arch">
+        <div
+          v-for="l in arch"
+          :key="l.name"
+          class="arch-layer"
+          :class="'arch-layer--' + l.tone"
+        >
+          <div class="arch-label">
+            <span class="arch-idx">{{ l.idx }}</span>
+            <div class="arch-name">{{ l.name }}</div>
+            <div class="arch-en">{{ l.en }}</div>
+          </div>
+          <div class="arch-detail">
+            <div class="arch-desc">
+              {{ l.desc }}<span v-if="l.tag" class="arch-tag">{{ l.tag }}</span>
+            </div>
+            <div class="arch-items">
+              <span v-for="it in l.items" :key="it">{{ it }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 实时通道：采集层(L2)不经数据层，直连基础应用层(L4) -->
+        <div class="arch-chan">
+          <div class="arch-chan-label">实时通道<br />MQTT · HTTP</div>
+          <div class="arch-chan-line"><span /></div>
+        </div>
+      </div>
+      <div class="arch-legend">
+        <span class="arch-legend-item">
+          <i class="arch-legend-solid" />实线：批量通道 · 经数据层汇入应用
+        </span>
+        <span class="arch-legend-item">
+          <i class="arch-legend-dashed" />虚线：实时通道 · 采集层直连基础应用层
+        </span>
+      </div>
+    </div>
+
+    <!-- ==================== 企业风貌 ==================== -->
+    <div class="section section-alt reveal">
+      <div class="section-head">
+        <div class="section-kicker">GALLERY</div>
+        <h2>企业风貌</h2>
+      </div>
+      <div class="gallery">
+        <div v-for="p in gallery" :key="p.src" class="gallery-item">
+          <img :src="p.src" :alt="p.caption" />
+          <div class="gallery-caption">{{ p.caption }}</div>
         </div>
       </div>
     </div>
@@ -113,458 +141,523 @@
 </template>
 
 <script>
-import request from '@/utils/request'
-import PanelGroup from './PanelGroup.vue'
-
 export default {
   name: 'DashboardIndex',
-  components: { PanelGroup },
   data() {
     return {
-      userName: '用户',
-      currentTime: '',
-      timeTimer: null,
-      bootTime: Date.now(),          // 运行时长基准（本次页面加载时刻）
-      // dashboardData 初始全 0，避免加载过程显示假数据
-      dashboardData: {
-        nodeOnline: 0,
-        nodeTotal: 0,
-        plcOnline: 0,
-        plcTotal: 0,
-        todayCollect: 0,
-        todayUnit: '条',
-        alertCount: 0
+      img: {
+        gate: require('@/assets/img/company/gate.png'),
+        system: require('@/assets/img/company/stock-engineer.jpg')
       },
-      // 核心技术理念卡片
-      concepts: [
-        { icon: 'el-icon-office-building', color: '#409EFF', title: '智能工厂', en: 'SMART FACTORY', desc: '以数据驱动生产，让设备状态透明可视', tags: ['设备透明', '实时可视', '数据驱动'] },
-        { icon: 'el-icon-copy-document', color: '#67C23A', title: '数字孪生', en: 'DIGITAL TWIN', desc: '物理产线的数字镜像，状态实时同步', tags: ['虚实映射', '状态同步', '在线镜像'] },
-        { icon: 'el-icon-cpu', color: '#E6A23C', title: '边缘计算', en: 'EDGE COMPUTING', desc: '算力下沉到车间，就近采集就地处理', tags: ['就近采集', '本地缓存', '断点续传'] },
-        { icon: 'el-icon-share', color: '#F56C6C', title: '工业互联', en: 'IIOT', desc: '打通 IT 与 OT，协议兼容即插即用', tags: ['协议兼容', 'IT/OT 融合', '即插即用'] }
-      ],
-      // 系统架构四层
-      archLayers: [
-        { name: '设备层', en: 'DEVICE', color: '#67C23A', desc: 'PLC / 传感器 / 仪表', tags: ['三菱 MC', 'Modbus', 'S7'] },
-        { name: '边缘层', en: 'EDGE', color: '#409EFF', desc: 'Node-RED 采集与预处理', tags: ['秒级轮询', '死区过滤', '本地缓存'] },
-        { name: '平台层', en: 'PLATFORM', color: '#E6A23C', desc: '配置下发 / 存储 / 告警', tags: ['FastAPI', 'MySQL/PG', 'MQTT'] },
-        { name: '应用层', en: 'APP', color: '#F56C6C', desc: '监控看板 / 履历 / 权限', tags: ['实时监控', '角色权限', '履历追溯'] }
-      ],
-      // 最近动态（示例业务动态）
-      activities: [
-        { color: '#67C23A', text: '一号车间 PLC-A 恢复通信，采集已继续', time: '2 分钟前' },
-        { color: '#409EFF', text: '配置快照 v8 已发布并下发至边缘节点', time: '18 分钟前' },
-        { color: '#E6A23C', text: '三号产线新增 12 个采集点位', time: '1 小时前' },
-        { color: '#F56C6C', text: 'PLC-C 连续 3 次通信超时，已告警', time: '3 小时前' },
-        { color: '#67C23A', text: '今日采集量突破 50 万条', time: '5 小时前' },
-        { color: '#409EFF', text: '系统巡检完成，所有服务正常', time: '昨天 23:40' }
-      ]
-    }
-  },
-  computed: {
-    // 系统整体状态：有未处理告警或存在离线 PLC 即视为异常
-    systemNormal() {
-      return this.dashboardData.alertCount === 0 && this.dashboardData.plcOnline === this.dashboardData.plcTotal
-    },
-    // 系统状态右侧 6 行
-    statusList() {
-      return [
-        { label: '后端服务', value: '运行正常', cls: 'ok' },
-        { label: 'MySQL', value: '已连接', cls: 'ok' },
-        { label: 'PostgreSQL', value: '已连接', cls: 'ok' },
+      // 系统架构五层：L1 数据源 → L5 智慧应用，数据自上而下流经各层
+      // desc = 一句"人话"（灰体小字），items = 技术对应（胶囊标签）
+      arch: [
         {
-          label: 'Node-RED',
-          value: this.dashboardData.nodeTotal === 0
-            ? '未接入'
-            : (this.dashboardData.nodeOnline === this.dashboardData.nodeTotal
-              ? this.dashboardData.nodeOnline + ' 台在线'
-              : (this.dashboardData.nodeTotal - this.dashboardData.nodeOnline) + ' 台离线'),
-          cls: this.dashboardData.nodeTotal > 0 && this.dashboardData.nodeOnline < this.dashboardData.nodeTotal ? 'warn' : 'ok'
+          idx: 'L1', name: '数据源层', en: 'DATA SOURCE', tone: 'l1',
+          desc: '数据的“出生地”：既有系统与设备实时数据的总入口',
+          items: ['MySQL', 'Oracle', 'PLC', '变频器', '仪表', '传感器']
         },
-        { label: '系统版本', value: 'EdgeLink v13', cls: 'info' },
-        { label: '运行时长', value: this.uptime, cls: 'info' }
+        {
+          idx: 'L2', name: '数据采集层', en: 'ACQUISITION', tone: 'l2',
+          desc: '把分散的数据接进来、整干净，送往数据层或直接送往应用层',
+          items: ['Node-RED', '三菱 MC', 'Modbus', 'MQTT', 'HTTP']
+        },
+        {
+          idx: 'L3', name: '数据层', en: 'DATA LAYER', tone: 'l3',
+          desc: '数据的“仓库”：统一存储、统一管理，随取随用',
+          items: ['PostgreSQL 时序库', '帆软数仓']
+        },
+        {
+          idx: 'L4', name: '基础应用层', en: 'APPLICATION', tone: 'l4',
+          desc: '让数据“看得见”：基于数仓或实时流的基础开发',
+          items: ['设备状态监视', '稼动率看板', '告警管理']
+        },
+        {
+          idx: 'L5', name: '智慧应用层', en: 'INTELLIGENT', tone: 'l5',
+          desc: '让数据“会思考”：AI 大模型驱动的进阶应用',
+          tag: '规划中 · 2027→2028',
+          items: ['预防性维护', '未知因子检出']
+        }
+      ],
+      gallery: [
+        { src: require('@/assets/img/company/day-1.jpg'), caption: '厂区日景' },
+        { src: require('@/assets/img/company/dusk-1.jpg'), caption: '园区暮色' },
+        { src: require('@/assets/img/company/night-1.jpg'), caption: '研发楼夜景' },
+        { src: require('@/assets/img/company/night-2.jpg'), caption: '公司夜景' }
       ]
-    },
-    // 运行时长：天 小时 分
-    uptime() {
-      const diff = Math.max(0, Date.now() - this.bootTime) / 1000
-      const d = Math.floor(diff / 86400)
-      const h = Math.floor((diff % 86400) / 3600)
-      const m = Math.floor((diff % 3600) / 60)
-      if (d > 0) return d + ' 天 ' + h + ' 小时'
-      if (h > 0) return h + ' 小时 ' + m + ' 分'
-      return m + ' 分钟'
     }
   },
   mounted() {
-    // 用户名：通过 Vuex GetInfo 获取
-    this.$store.dispatch('GetInfo').then(res => {
-      this.userName = (res && res.user && (res.user.nickName || res.user.userName)) || '用户'
-    }).catch(() => {})
-    // 实时时钟：每秒刷新
-    const tick = () => { this.currentTime = this.formatTime(new Date()) }
-    tick()
-    this.timeTimer = setInterval(tick, 1000)
-    this.fetchDashboardData()
+    // 区块滚动渐显：进入视口才淡入
+    this._observer = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.classList.add('revealed')
+          this._observer.unobserve(e.target)
+        }
+      })
+    }, { threshold: 0.12 })
+    this.$el.querySelectorAll('.reveal').forEach(el => this._observer.observe(el))
   },
   beforeDestroy() {
-    if (this.timeTimer) {
-      clearInterval(this.timeTimer)
-      this.timeTimer = null
-    }
-  },
-  methods: {
-    formatTime(d) {
-      const p = n => (n < 10 ? '0' + n : '' + n)
-      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
-    },
-    /**
-     * 拉取看板数据：两个接口各自独立 try-catch，
-     * 任一失败不影响其他数据，失败项用模拟数据兜底
-     */
-    async fetchDashboardData() {
-      // 接口 1：PLC 设备列表（统计在线/总数）
-      try {
-        const res = await request({ url: '/plc/device/list', method: 'get', params: { page_size: 1000, page_num: 1 } })
-        const rows = res.rows || []
-        this.dashboardData.plcTotal = res.total || rows.length
-        // 在线判定：commStatus='online'（监控中心回写）；无该字段时按启用状态估算
-        this.dashboardData.plcOnline = rows.filter(r =>
-          r.commStatus === 'online' || r.online === true || r.isOnline === true ||
-          (r.commStatus === undefined && r.online === undefined && r.isOnline === undefined && String(r.status) === '0')
-        ).length
-      } catch (e) {
-        // 模拟数据兜底（接口失败不影响其他指标）
-        this.dashboardData.plcTotal = 12
-        this.dashboardData.plcOnline = 10
-      }
-
-      // 接口 2：存量采集点列表（统计采集节点在线/总数）
-      try {
-        const res = await request({ url: '/site-health/site/list', method: 'get', params: { page_size: 1000, page_num: 1 } })
-        const rows = res.rows || []
-        const alive = rows.filter(r => String(r.status) !== '0')
-        this.dashboardData.nodeTotal = alive.length
-        this.dashboardData.nodeOnline = alive.filter(r => r.isOnline === true).length
-      } catch (e) {
-        this.dashboardData.nodeTotal = 6
-        this.dashboardData.nodeOnline = 5
-      }
-
-      // 派生指标（按产品口径估算）
-      this.dashboardData.todayCollect = this.dashboardData.plcOnline * 6800
-      this.dashboardData.alertCount = Math.max(0, this.dashboardData.plcTotal - this.dashboardData.plcOnline)
-    }
+    if (this._observer) this._observer.disconnect()
   }
 }
 </script>
 
 <style lang="scss" scoped>
-// 整体浅色主题：与 RuoYi 默认风格一致
-.dashboard {
-  background: #f0f2f5;
+.showcase {
+  background: #f5f7fa;
   min-height: calc(100vh - 84px);
-  padding: 16px;
 }
 
-/* ---------- 顶部欢迎区 ---------- */
-.welcome-card {
-  background: #fff;
-  border-radius: 4px;
-  padding: 20px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  box-shadow: 4px 4px 40px rgba(0, 0, 0, .05);
+/* ---------- 主视觉（浅色渐变 + 柔光，轻快门户风） ---------- */
+.hero {
+  height: 340px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate; /* 噪点的 mix-blend-mode 只在 hero 内部生效，不外溢到页面底色 */
+  /* 底部斜切：左侧到底、右侧抬起 72px。直接裁 hero 自身，比叠一层 SVG 更省——
+     不引入额外节点，也不必让分隔色跟页面底色保持同步。 */
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 72px), 0 100%);
+  background:
+    radial-gradient(800px 300px at 85% 15%, rgba(64, 201, 255, 0.45), transparent 60%),
+    radial-gradient(600px 320px at 10% 90%, rgba(120, 180, 255, 0.35), transparent 60%),
+    linear-gradient(115deg, #2f6fd8 0%, #3d8bfd 55%, #40c9ff 100%);
 
-  .welcome-title {
-    font-size: 20px;
-    font-weight: bold;
-    color: #303133;
-  }
-
-  .welcome-subtitle {
-    margin-top: 8px;
-    font-size: 13px;
-    color: #909399;
-  }
-
-  .welcome-right {
-    text-align: right;
-
-    .sys-tag {
-      margin-bottom: 8px;
-    }
-
-    .sys-time {
-      font-size: 13px;
-      color: #606266;
-      font-family: Menlo, Consolas, monospace;
-    }
-  }
-}
-
-/* ---------- 区域标题统一格式 ---------- */
-.section-title {
-  margin: 20px 0 12px;
-
-  .cn {
-    font-size: 16px;
-    font-weight: bold;
-    color: #303133;
-    border-left: 4px solid #409eff;
-    padding-left: 8px;
-  }
-
-  .en {
-    margin-left: 10px;
-    font-size: 12px;
-    color: #c0c4cc;
-    letter-spacing: 1px;
-  }
-}
-
-/* ---------- 核心理念卡片 ---------- */
-.concept-card {
-  background: #fff;
-  border-radius: 4px;
-  padding: 20px;
-  text-align: center;
-  margin-bottom: 16px;
-  transition: transform .2s ease, box-shadow .2s ease;
-
-  // 悬停上浮动画
-  &:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 8px 20px rgba(64, 158, 255, .15);
-  }
-
-  .concept-icon {
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    margin: 0 auto 12px;
+  .hero-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, rgba(11, 30, 63, 0.32) 0%, rgba(11, 30, 63, 0.08) 55%, transparent 100%);
     display: flex;
-    align-items: center;
+    flex-direction: column;
     justify-content: center;
-
-    i {
-      font-size: 26px;
-      color: #fff;
-    }
+    padding: 0 8%;
   }
 
-  .concept-title {
-    font-size: 16px;
+  .hero-title {
+    font-size: 36px;
     font-weight: bold;
-    color: #303133;
+    color: #fff;
+    letter-spacing: 2px;
+    text-shadow: 0 1px 8px rgba(11, 30, 63, 0.35);
   }
 
-  .concept-en {
-    font-size: 11px;
-    color: #c0c4cc;
-    letter-spacing: 1.5px;
-    margin: 4px 0 10px;
+  .hero-sub {
+    margin-top: 14px;
+    font-size: 15px;
+    color: rgba(255, 255, 255, 0.9);
+    letter-spacing: 2px;
   }
 
-  .concept-desc {
-    font-size: 13px;
-    color: #606266;
-    line-height: 1.6;
-    min-height: 42px;
+  .hero-line {
+    width: 64px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.9);
+    margin: 22px 0 0;
+    border-radius: 2px;
   }
 
-  .concept-tags {
-    margin-top: 10px;
+  /* 签名句：比副标题重一档，读作"落款"而不是第二句说明 */
+  .hero-slogan {
+    margin-top: 14px;
+    font-size: 17px;
+    font-weight: 500;
+    letter-spacing: 3px;
+    color: rgba(255, 255, 255, 0.95);
+  }
 
-    .el-tag {
-      margin: 0 3px;
+  /* 噪点层：打散纯渐变的色阶（banding），叠加胶片颗粒质感。
+     用 SVG feTurbulence 内联生成，不引入任何图片资源。 */
+  .hero-noise {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.06;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* 滚动提示：呼吸下移的小箭头，暗示下方还有内容 */
+  .hero-scroll {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 78px; /* 文字块底部约 237px，此处起始 244px；斜切中线处约 304px */
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+    opacity: 0;
+    animation: hero-in 0.9s cubic-bezier(0.22, 0.61, 0.36, 1) 0.8s forwards;
+
+    span {
+      width: 18px;
+      height: 18px;
+      border-right: 2px solid rgba(255, 255, 255, 0.8);
+      border-bottom: 2px solid rgba(255, 255, 255, 0.8);
+      animation: scroll-cue 2.2s ease-in-out infinite;
     }
+  }
+
+  /* 光晕漂移层（12s 缓慢循环，让渐变活起来） */
+  .hero-glow {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    pointer-events: none;
+  }
+  .glow-a {
+    width: 420px; height: 260px;
+    right: 6%; top: -40px;
+    background: rgba(64, 201, 255, 0.35);
+    animation: glow-drift-a 12s ease-in-out infinite alternate;
+  }
+  .glow-b {
+    width: 360px; height: 240px;
+    left: 4%; bottom: -60px;
+    background: rgba(120, 180, 255, 0.3);
+    animation: glow-drift-b 14s ease-in-out infinite alternate;
+  }
+
+  /* 文字入场：渐显上浮，三段错峰 */
+  .hero-title, .hero-sub, .hero-line, .hero-slogan {
+    opacity: 0;
+    animation: hero-in 0.9s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  }
+  .hero-sub { animation-delay: 0.25s; }
+  .hero-line { animation-delay: 0.45s; }
+  .hero-slogan { animation-delay: 0.6s; }
+}
+
+@keyframes hero-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes glow-drift-a {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-50px, 30px) scale(1.12); }
+}
+
+@keyframes glow-drift-b {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(60px, -24px) scale(1.08); }
+}
+
+/* 滚动提示：绕 45° 后的 translate 沿斜轴走，视觉上就是垂直下移 */
+@keyframes scroll-cue {
+  0%, 100% { transform: rotate(45deg) translate(0, 0); opacity: 0.45; }
+  50%      { transform: rotate(45deg) translate(5px, 5px); opacity: 1; }
+}
+
+/* ---------- 区块滚动渐显 ---------- */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---------- 图文区块 ---------- */
+.section {
+  /* 左右留白随视口增长，正文实际宽度上限 1200px（中文舒适行宽 30~40 字） */
+  padding: 48px max(8%, calc((100% - 1200px) / 2));
+
+  &.section-alt {
+    background: #fff;
+  }
+
+  .section-inner {
+    display: flex;
+    align-items: center;
+    gap: 48px;
+
+    &.reverse {
+      flex-direction: row-reverse;
+    }
+  }
+
+  .section-media {
+    flex: 0 0 44%;
+
+    img {
+      width: 100%;
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+      display: block;
+    }
+  }
+
+  .section-text {
+    flex: 1;
+
+    h2 {
+      font-size: 24px;
+      color: #1f2d3d;
+      margin: 6px 0 16px;
+    }
+
+    p {
+      font-size: 14px;
+      color: #5e6d82;
+      line-height: 1.9;
+      margin: 0 0 12px;
+    }
+  }
+
+  .section-kicker {
+    font-size: 12px;
+    letter-spacing: 3px;
+    color: #3d8bfd;
+    font-weight: bold;
   }
 }
 
-/* ---------- 系统架构 ---------- */
-.arch-card {
-  background: #fff;
-  border-radius: 4px;
-  padding: 24px 20px 16px;
+/* ---------- 特性三点 ---------- */
+.feature-row {
+  display: flex;
+  gap: 18px;
+  margin-top: 22px;
 
-  .arch-flow {
+  .feature-item {
     display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-  }
-
-  .arch-node {
-    flex: 1;
-    text-align: center;
-    padding: 0 8px;
-
-    .arch-index {
-      width: 30px;
-      height: 30px;
-      line-height: 30px;
-      border-radius: 50%;
-      color: #fff;
-      font-weight: bold;
-      margin: 0 auto 10px;
-    }
-
-    .arch-name {
-      font-size: 15px;
-      font-weight: bold;
-      color: #303133;
-    }
-
-    .arch-en {
-      font-size: 11px;
-      color: #c0c4cc;
-      letter-spacing: 1.5px;
-      margin: 3px 0 8px;
-    }
-
-    .arch-desc {
-      font-size: 12px;
-      color: #606266;
-      min-height: 34px;
-      line-height: 1.5;
-    }
-
-    .arch-tags .el-tag {
-      margin: 2px;
-    }
-  }
-
-  // 层间箭头：脉冲动画
-  .arch-arrow {
-    display: flex;
-    align-items: center;
-    color: #409eff;
-    font-size: 20px;
-    animation: arrow-pulse 1.6s ease-in-out infinite;
-  }
-
-  .arch-footer {
-    margin-top: 20px;
-    padding-top: 14px;
-    border-top: 1px dashed #ebeef5;
-    display: flex;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-    font-size: 12px;
-    color: #909399;
+    align-items: flex-start;
+    gap: 10px;
 
     i {
-      color: #409eff;
-      margin-right: 4px;
+      font-size: 22px;
+      color: #3d8bfd;
+      margin-top: 2px;
     }
+
+    .feature-name { font-size: 13px; font-weight: bold; color: #303133; }
+    .feature-desc { font-size: 12px; color: #909399; margin-top: 3px; line-height: 1.5; }
   }
 }
 
-@keyframes arrow-pulse {
-  0%, 100% { opacity: .35; transform: translateX(0); }
-  50%      { opacity: 1;   transform: translateX(4px); }
+/* ---------- 居中区块标题（系统架构 / 企业风貌 共用） ---------- */
+.section-head {
+  text-align: center;
+  margin-bottom: 28px;
+
+  h2 { font-size: 24px; color: #1f2d3d; margin: 6px 0 0; }
+  .section-kicker { font-size: 12px; letter-spacing: 3px; color: #3d8bfd; font-weight: bold; }
 }
 
-/* ---------- 系统状态 ---------- */
-.status-card {
+/* ---------- 系统架构（数据链路五层图） ---------- */
+.arch {
+  max-width: 900px; /* 窄于正文，读作"一张图"而不是又一段内容 */
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 128px; /* 右侧一列留给实时通道虚线 */
+  row-gap: 10px;
+}
+
+.arch-layer {
+  grid-column: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 16px 22px;
   background: #fff;
+  border-radius: 12px;
+  border: 1px solid #eef2f8; /* 白底上压一层极淡描边，五张卡片才不会糊成一片 */
+  border-left: 3px solid #c8d3e0;
+  box-shadow: 0 2px 10px rgba(11, 30, 63, 0.06);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(11, 30, 63, 0.12);
+  }
+
+  /* 层间实线箭头：数据沿 L1→L5 逐层下走，与右侧虚线实时通道构成对比 */
+  & + .arch-layer::before {
+    content: '';
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid #c8d6ea;
+    border-bottom: 2px solid #c8d6ea;
+    transform: translateX(-50%) rotate(45deg);
+  }
+
+  /* 色条由浅到深：越靠下游，数据越接近决策 */
+  &--l1 { border-left-color: #b9cbe4; }
+  &--l2 { border-left-color: #7fb0f5; }
+  &--l3 { border-left-color: #3d8bfd; }
+  &--l4 { border-left-color: #2f6fd8; }
+  &--l5 { border-left-color: #1e4f9e; border-left-style: dashed; }
+}
+
+.arch-label {
+  flex: 0 0 122px;
+
+  .arch-idx {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #3d8bfd;
+    background: #eef4fe;
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  .arch-name { font-size: 15px; font-weight: bold; color: #1f2d3d; margin-top: 5px; }
+  .arch-en { font-size: 10px; letter-spacing: 1.5px; color: #a0a8b5; margin-top: 3px; }
+}
+
+.arch-detail { flex: 1; min-width: 0; }
+
+/* 人话：灰体小字——与下面蓝色胶囊在视觉上分成两层，避免读成表格 */
+.arch-desc {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.arch-tag {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  color: #2f6fd8;
+  background: #eef4fe;
+  border: 1px dashed #a9c6f5;
   border-radius: 4px;
-  padding: 12px 20px;
+  padding: 1px 7px;
+}
 
-  .status-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 13px 0;
-    border-bottom: 1px solid #f2f6fc;
-    font-size: 13px;
+/* 技术对应：胶囊标签 */
+.arch-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 
-    &:last-child {
-      border-bottom: none;
-    }
+  span {
+    font-size: 12px;
+    color: #5e6d82;
+    background: #f2f6fc;
+    border: 1px solid #e4ecf7;
+    border-radius: 999px;
+    padding: 4px 12px;
+  }
+}
 
-    .status-label {
-      color: #606266;
-    }
+/* 实时通道：横跨 L2/L3/L4 三行，虚线区别于层间的实线箭头 */
+.arch-chan {
+  grid-column: 2;
+  grid-row: 2 / 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 
-    .status-value {
-      font-weight: bold;
+  .arch-chan-label {
+    font-size: 11px;
+    line-height: 1.5;
+    color: #3d8bfd;
+    text-align: center;
+  }
 
-      &.ok   { color: #67c23a; }
-      &.warn { color: #f56c6c; }
-      &.info { color: #909399; font-weight: normal; }
+  .arch-chan-line {
+    position: relative;
+    flex: 1;
+    margin-top: 6px;
+    border-left: 2px dashed #7fb0f5;
+
+    span {
+      position: absolute;
+      left: 50%;
+      bottom: -1px;
+      transform: translateX(-50%);
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 6px solid #7fb0f5;
     }
   }
 }
 
-/* ---------- 最近动态 ---------- */
-.activity-card {
-  background: #fff;
-  border-radius: 4px;
-  padding: 16px 20px;
-  margin-bottom: 16px;
+/* 通道图例：实线=批量（经数据层）/ 虚线=实时（直连应用层） */
+.arch-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 28px;
+  max-width: 900px;
+  margin: 18px auto 0;
+  font-size: 12px;
+  color: #909399;
+}
 
-  .activity-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 14px 24px;
+.arch-legend-item {
+  display: inline-flex;
+  align-items: center;
+
+  i {
+    display: inline-block;
+    width: 26px;
+    height: 0;
+    margin-right: 6px;
   }
 
-  .activity-item {
-    display: flex;
-    align-items: center;
-    font-size: 13px;
-    color: #606266;
+  .arch-legend-solid { border-top: 2px solid #7fb0f5; }
+  .arch-legend-dashed { border-top: 2px dashed #7fb0f5; }
+}
 
-    .activity-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      margin-right: 8px;
-      flex-shrink: 0;
+/* ---------- 企业风貌 ---------- */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+
+  .gallery-item {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    height: 180px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: transform .25s ease, box-shadow .25s ease;
+
+    &:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
     }
 
-    .activity-text {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
+    img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .4s ease; }
 
-    .activity-time {
-      color: #c0c4cc;
+    &:hover img { transform: scale(1.06); }
+
+    .gallery-caption {
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      padding: 18px 12px 8px;
       font-size: 12px;
-      margin-left: 8px;
-      flex-shrink: 0;
+      color: #fff;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
     }
   }
 }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 768px) {
-  .welcome-card {
-    flex-direction: column;
-    align-items: flex-start;
-
-    .welcome-right {
-      margin-top: 12px;
-      text-align: left;
-    }
-  }
-
-  .arch-flow {
-    flex-direction: column;
-
-    .arch-arrow {
-      justify-content: center;
-      transform: rotate(90deg);
-      padding: 6px 0;
-    }
-  }
-
-  .activity-grid {
-    grid-template-columns: 1fr !important;
-  }
+  .section .section-inner { flex-direction: column !important; gap: 20px; }
+  .section .section-media { flex: none; width: 100%; }
+  .feature-row { flex-direction: column; }
+  .hero { height: 280px; clip-path: polygon(0 0, 100% 0, 100% calc(100% - 52px), 0 100%); }
+  .hero .hero-title { font-size: 24px; }
+  .hero .hero-scroll { display: none; }   /* 小屏高度紧张，去掉滚动提示 */
+  .arch { grid-template-columns: 1fr; row-gap: 8px; }
+  .arch-chan { display: none; }   /* 小屏放不下右侧分栏，双通道说明由图例承担 */
+  .arch-layer { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .arch-label { flex: none; }
+  .arch-legend { flex-direction: column; align-items: flex-start; gap: 6px; }
 }
 </style>

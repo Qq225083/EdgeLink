@@ -1,5 +1,57 @@
 <template>
   <div class="app-container">
+    <el-row :gutter="16">
+      <!-- 左侧：采集点面板（点选过滤右侧 PLC；选中后才可添加） -->
+      <el-col :span="5">
+        <el-card shadow="never" class="node-panel">
+          <div slot="header" class="node-panel-header">
+            <span><i class="el-icon-monitor" /> 采集点</span>
+            <el-button type="text" size="mini" icon="el-icon-plus" @click="goSiteRegister">登记</el-button>
+          </div>
+          <el-input v-model="nodeKeyword" size="mini" placeholder="搜索名称 / IP" prefix-icon="el-icon-search" clearable class="node-search" />
+          <div class="node-list">
+          <div
+            class="node-item"
+            :class="{ active: selectedNode === null }"
+            @click="selectNode(null)"
+          >
+            <i class="el-icon-menu" /> 全部
+            <span class="node-count">{{ totalAll }}</span>
+          </div>
+          <!-- 采集点树：栋 → 楼层 → 工程 → 采集点（未登记栋/楼/工程的落入「未分组」） -->
+          <el-tree
+            ref="nodeTree"
+            :data="nodeTree"
+            :props="treeProps"
+            node-key="key"
+            :filter-node-method="filterNode"
+            :highlight-current="true"
+            :expand-on-click-node="true"
+            :default-expanded-keys="['ungrouped']"
+            @node-click="onTreeClick"
+          >
+            <span slot-scope="{ data }" class="tree-node">
+              <template v-if="data.isLeaf">
+                <el-tooltip placement="right" :content="healthTip(data.hostPcIp)">
+                  <span class="health-dot inline" :class="healthClass(data.hostPcIp)" @click.stop="goSiteHealth"></span>
+                </el-tooltip>
+                <span class="tree-label" :title="data.hostPcIp">{{ data.label }}</span>
+                <span class="node-count">{{ data.count }}</span>
+              </template>
+              <span v-else class="tree-group">{{ data.label }}（{{ data.count }}）</span>
+            </span>
+          </el-tree>
+          <div v-if="!nodeOptions.length" class="node-empty">还没有采集点，先点右上角「登记」</div>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 右侧：原有查询 + 列表 -->
+      <el-col :span="19">
+    <!-- 当前过滤范围指示（树收起后也能一眼看清当前在看哪个采集点） -->
+    <div class="scope-bar">
+      <i class="el-icon-location-outline" /> 当前：{{ scopeLabel }}
+    </div>
     <!-- 查询条件 -->
     <el-form :model="queryParams" ref="queryForm" size="small" :inline="true" v-show="showSearch" label-width="80px">
       <el-form-item label="设备名称" prop="deviceName">
@@ -31,7 +83,7 @@
     <!-- 操作按钮栏 -->
     <el-row :gutter="10" class="mb8">
       <el-col :span="1.5">
-        <el-button type="primary" icon="el-icon-plus" size="mini" @click="handleAdd" v-hasPermi="['plc:device:add']">新增</el-button>
+        <el-button type="primary" icon="el-icon-plus" size="mini" :disabled="!selectedNode" @click="handleAdd" v-hasPermi="['plc:device:add']" :title="selectedNode ? '' : '请先在左侧选择一个采集点'">新增</el-button>
       </el-col>
       <el-col :span="1.5">
         <el-button type="success" icon="el-icon-edit" size="mini" :disabled="single" @click="handleUpdate" v-hasPermi="['plc:device:edit']">修改</el-button>
@@ -55,9 +107,9 @@
       <el-table-column label="设备名称" align="center" prop="deviceName" width="140" :show-overflow-tooltip="true" />
       <el-table-column label="品牌" align="center" prop="plcBrand" width="90" />
       <el-table-column label="系列" align="center" prop="plcSeries" width="70" />
-      <el-table-column label="PLC IP:端口" align="center" width="140">
+      <el-table-column label="PLC IP:端口" align="center" width="160">
         <template slot-scope="scope">
-          <span>{{ scope.row.plcIp }}:{{ scope.row.plcPort }}</span>
+          <span style="white-space: nowrap">{{ scope.row.plcIp }}:{{ scope.row.plcPort }}</span>
         </template>
       </el-table-column>
       <el-table-column label="采集节点" align="center" prop="hostPcIp" width="140" :show-overflow-tooltip="true" />
@@ -74,7 +126,7 @@
         </template>
       </el-table-column>
       <el-table-column label="点位" align="center" prop="tagCount" width="55" />
-      <el-table-column label="备注" align="center" prop="remark" width="55" :show-overflow-tooltip="true" />
+      <el-table-column label="备注" align="center" prop="remark" min-width="100" :show-overflow-tooltip="true" />
       <el-table-column label="状态" align="center" prop="status" width="65">
         <template slot-scope="scope">
           <el-switch v-model="scope.row.status" active-value="0" inactive-value="1" @change="handleDeviceStatusChange(scope.row)" />
@@ -93,6 +145,8 @@
 
     <!-- 分页 -->
     <pagination v-show="total>0" :total="total" :page.sync="queryParams.pageNum" :limit.sync="queryParams.pageSize" @pagination="getList" />
+      </el-col>
+    </el-row>
 
     <!-- 新增/编辑设备对话框 -->
     <el-dialog :title="title" :visible.sync="open" width="90%" :class="'dialog-md'" append-to-body>
@@ -145,22 +199,35 @@
           <el-tab-pane label="网络配置" name="network">
         <!-- PLC IP/端口：RS-232C 隐藏，其余显示 -->
         <el-row v-show="form.comType !== 'PLC_RS232C'">
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="PLC IP" prop="plcIp">
               <el-input v-model="form.plcIp" placeholder="如：192.168.1.100" />
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="8">
             <el-form-item label="PLC端口" prop="plcPort">
               <el-input-number v-model="form.plcPort" :min="1" :max="65535" style="width: 100%" />
             </el-form-item>
           </el-col>
+          <!-- PC 侧源端口：防火墙严格环境固定源端口用；留空则系统自动分配 -->
+          <el-col :span="8">
+            <el-form-item label="PC源端口" prop="localPort">
+              <el-input-number v-model="form.localPort" :min="1" :max="65535" placeholder="留空系统分配" style="width: 100%" />
+            </el-form-item>
+          </el-col>
         </el-row>
-        <!-- 办公网IP：确定由哪台电脑采集（必填，与 Node-RED 所在 PC 的办公网卡 IP 一致） -->
+        <!-- 办公网IP：确定由哪台电脑采集（必填，从已登记采集点下拉选择） -->
         <el-row>
           <el-col :span="12">
             <el-form-item label="采集节点 *" prop="hostPcIp">
-              <el-input v-model="form.hostPcIp" placeholder="如：10.81.1.100 或 10.81.1.100:1881（多实例时用端口区分）" />
+              <el-select v-model="form.hostPcIp" placeholder="选择已登记的采集点（没有请到「采集点登记」先登记）" style="width: 100%" filterable :disabled="!!selectedNode && form.id == null" @change="syncMesIp">
+                <el-option
+                  v-for="n in nodeOptions"
+                  :key="n.id"
+                  :label="(n.nodeName || n.nodeKey) + '（' + n.hostPcIp + '）'"
+                  :value="n.hostPcIp"
+                />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -169,11 +236,11 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <!-- 工业内网IP/端口：始终显示（选填，与PLC同网段的工业网络IP） -->
+        <!-- 工业内网IP：自动继承采集点登记的工业网卡IP（只读）；端口选填 -->
         <el-row>
           <el-col :span="12">
-            <el-form-item label="工业内网IP *" prop="mesIp">
-              <el-input v-model="form.mesIp" placeholder="如：192.168.0.100（必填，PLC同网段的工业网络IP）" />
+            <el-form-item label="工业内网IP" prop="mesIp">
+              <el-input v-model="form.mesIp" placeholder="选择采集点后自动带出（采集点工业网卡IP）" disabled />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -221,8 +288,8 @@
         <el-row>
           <el-col :span="8">
             <el-form-item label="采集周期" prop="scanIntervalMs" label-width="70px">
-              <el-input-number v-model="form.scanIntervalMs" :min="1000" :max="60000" :step="100" style="width: 100%" />
-              <span style="font-size:11px;color:#999">当前最低 1000ms（1秒），亚秒级采集规划中</span>
+              <el-input-number v-model="form.scanIntervalMs" :min="100" :max="60000" :step="100" style="width: 100%" />
+              <span style="font-size:11px;color:#999">毫秒，最低 100ms；&lt;1000ms 时生成 delay 自循环支路</span>
             </el-form-item>
           </el-col>
           <el-col :span="8">
@@ -335,7 +402,7 @@
 
       <el-table v-loading="tagLoading" :data="tagList" @selection-change="handleTagSelectionChange">
         <el-table-column type="selection" width="55" align="center" />
-        <el-table-column label="点位名称" align="center" prop="tagName" :show-overflow-tooltip="true" width="130" />
+        <el-table-column label="点位ID" align="center" prop="tagName" :show-overflow-tooltip="true" width="130" />
         <el-table-column label="寄存器类型" align="center" prop="registerType" width="90">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.registerType === 'CALC'" type="warning" size="small">计算·{{ scope.row.calcOp }}</el-tag>
@@ -345,7 +412,7 @@
         <el-table-column label="地址" align="center" prop="registerAddress" width="100" />
         <el-table-column label="数据类型" align="center" prop="dataType" width="85" />
         <el-table-column label="单位" align="center" prop="unit" width="65" />
-        <el-table-column label="描述" align="center" prop="description" :show-overflow-tooltip="true" width="150" />
+        <el-table-column label="备注" align="center" prop="description" :show-overflow-tooltip="true" width="150" />
         <el-table-column label="状态" align="center" prop="status" width="65">
           <template slot-scope="scope">
             <el-switch v-model="scope.row.status" active-value="0" inactive-value="1" @change="handleTagStatusChange(scope.row)" />
@@ -369,15 +436,14 @@
       <el-form ref="tagFormRef" :model="tagForm" :rules="tagRules" label-width="110px">
         <el-tabs v-model="tagActiveTab">
           <el-tab-pane label="基本信息" name="basic">
-            <el-form-item label="点位名称" prop="tagName">
-              <el-input v-model="tagForm.tagName" placeholder="如：1号炉温度（给人看的名称）" />
+            <el-form-item label="点位ID" prop="tagName">
+              <el-input v-model="tagForm.tagName" placeholder="如：1001（业务标识，写入库用）" />
             </el-form-item>
             <el-form-item label="点位类型">
               <el-radio-group v-model="tagKind" @change="onTagKindChange">
                 <el-radio label="collect">采集点位</el-radio>
-                <el-radio label="calc">计算点位</el-radio>
+                <!-- 计算点位：过渡版（生成版 flow）不支持，入口暂时隐藏；存量计算点数据不受影响 -->
               </el-radio-group>
-              <span style="font-size:11px;color:#999;margin-left:8px">计算点位=同设备其他点位的 和/平均/最大/最小，不读寄存器</span>
             </el-form-item>
             <!-- 计算点位配置 -->
             <template v-if="isCalcTag">
@@ -445,8 +511,8 @@
                 </el-form-item>
               </el-col>
             </el-row>
-            <el-form-item label="描述" prop="description">
-              <el-input v-model="tagForm.description" type="textarea" placeholder="请输入点位描述" :rows="2" />
+            <el-form-item label="备注" prop="description">
+              <el-input v-model="tagForm.description" type="textarea" placeholder="请输入备注（点位名称/描述）" :rows="2" />
             </el-form-item>
           </el-tab-pane>
           <el-tab-pane label="换算配置" name="transform">
@@ -472,6 +538,9 @@
             <el-form-item label="工程单位" prop="engUnit">
               <el-input v-model="tagForm.engUnit" placeholder="换算后的显示单位，如：℃、MPa" />
             </el-form-item>
+            <!-- 上报策略（死区/强制间隔）：过渡版生成版 flow 不支持，入口隐藏；
+                 字段保留在表单模型里（默认值原样提交），V14 恢复能力时放出 -->
+            <!--
             <el-divider content-position="left">上报策略</el-divider>
             <el-row>
               <el-col :span="12">
@@ -487,6 +556,7 @@
                 </el-form-item>
               </el-col>
             </el-row>
+            -->
           </el-tab-pane>
         </el-tabs>
       </el-form>
@@ -501,9 +571,10 @@
 </template>
 
 <script>
-import { listDevice, getDevice, addDevice, updateDevice, delDevice, disableDevice, cloneDevice, toggleDeviceStatus, getProtocolCompat, getDriverSchema } from "@/api/plc/device";
+import { listDevice, getDevice, addDevice, updateDevice, delDevice, disableDevice, cloneDevice, toggleDeviceStatus, getProtocolCompat, getDriverSchema, countDeviceByNode } from "@/api/plc/device";
 import { listTag, getTag, addTag, updateTag, delTag, disableTag, downloadTagTemplate, importTags, toggleTagStatus } from "@/api/plc/tag";
 import { download } from "@/utils/request";
+import { listSite } from "@/api/plc/siteHealth";
 
 export default {
   name: "PlcDevice",
@@ -515,6 +586,13 @@ export default {
       multiple: true,
       showSearch: true,
       submitting: false,    // 表单提交中/加载中锁
+      nodeOptions: [],      // 已登记采集点（Node-RED PC）下拉选项
+      nodeCounts: {},       // 各采集点的 PLC 数量（左侧面板徽标）
+      nodeKeyword: '',      // 左侧面板采集点搜索关键字
+      siteHealthMap: {},    // 采集点健康状态（site-health 只读联动，key=IP 或 IP:端口）
+      healthTimer: null,    // 健康状态 30s 轮询定时器
+      treeProps: { label: 'label', children: 'children' },  // 采集点树字段映射
+      selectedNode: null,   // 左侧选中的采集点（null=全部；选中后才可新增 PLC）
       total: 0,
       deviceList: [],
       title: "",
@@ -528,6 +606,7 @@ export default {
         plcIp: null,
         status: null,
         plcBrand: null,
+        hostPcIp: null,
       },
       form: {},
       fxFrameDisabled: false,
@@ -562,7 +641,6 @@ export default {
           { pattern: /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/, message: "请输入正确的IP地址格式", trigger: "blur" }
         ],
         mesIp: [
-          { required: true, message: "工业内网IP不能为空", trigger: "blur" },
           { pattern: /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/, message: "请输入正确的IP地址格式", trigger: "blur" }
         ],
         backupPcIp: [
@@ -606,7 +684,8 @@ export default {
       tagKind: 'collect',  // 点位类型：collect=采集 calc=计算（派生）
       tagRules: {
         tagName: [
-          { required: true, message: "点位名称不能为空", trigger: "blur" }
+          { required: true, message: "点位ID不能为空", trigger: "blur" },
+          { pattern: /^\d+$/, message: "点位ID必须为纯数字", trigger: "blur" }
         ],
         registerType: [
           { required: true, message: "寄存器类型不能为空", trigger: "change" }
@@ -621,6 +700,66 @@ export default {
     };
   },
   computed: {
+    // 「全部」徽标：各采集点 PLC 数之和
+    totalAll() {
+      var sum = 0;
+      Object.keys(this.nodeCounts || {}).forEach(k => { sum += this.nodeCounts[k] || 0; });
+      return sum;
+    },
+    // 采集点树（栋 → 楼层 → 工程 → 采集点；缺登记情报的落「未分组」）
+    // 当前过滤范围指示（右侧顶部常显，树收起也清楚当前采集点）
+    scopeLabel() {
+      if (!this.selectedNode) return `全部采集点（共 ${this.totalAll} 台设备）`;
+      const n = (this.nodeOptions || []).find(x => x.hostPcIp === this.selectedNode);
+      const name = n ? (n.nodeName || n.nodeKey) : this.selectedNode;
+      const count = this.nodeCounts[this.selectedNode] || 0;
+      const h = this.healthOf(this.selectedNode);
+      const loc = h && (h.building || h.floor || h.processStage)
+        ? [h.building, h.floor, h.processStage].filter(Boolean).join('/') + ' · '
+        : '';
+      return `${loc}${name}（${this.selectedNode}，${count} 台设备）`;
+    },
+    nodeTree() {
+      const grouped = {};   // building -> floor -> process -> leaves[]
+      const ungrouped = [];
+      (this.nodeOptions || []).forEach(n => {
+        const h = this.healthOf(n.hostPcIp);
+        const leaf = {
+          key: 'leaf:' + n.hostPcIp,
+          label: (n.nodeName || n.nodeKey || n.hostPcIp),
+          isLeaf: true,
+          hostPcIp: n.hostPcIp,
+          count: this.nodeCounts[n.hostPcIp] || 0
+        };
+        const b = (h && h.building) || '';
+        const f = (h && h.floor) || '';
+        const p = (h && h.processStage) || '';
+        if (!b && !f && !p) { ungrouped.push(leaf); return; }
+        const bk = b || '未分栋', fk = f || '未分层', pk = p || '未分工程';
+        if (!grouped[bk]) grouped[bk] = {};
+        if (!grouped[bk][fk]) grouped[bk][fk] = {};
+        if (!grouped[bk][fk][pk]) grouped[bk][fk][pk] = [];
+        grouped[bk][fk][pk].push(leaf);
+      });
+      const sum = arr => arr.reduce((s, x) => s + (x.count || 0), 0);
+      const tree = [];
+      Object.keys(grouped).sort().forEach(b => {
+        const floors = [];
+        Object.keys(grouped[b]).sort().forEach(f => {
+          const procs = [];
+          Object.keys(grouped[b][f]).sort().forEach(p => {
+            const leaves = grouped[b][f][p];
+            procs.push({ key: `g:${b}/${f}/${p}`, label: p, count: sum(leaves), children: leaves });
+          });
+          floors.push({ key: `g:${b}/${f}`, label: f, count: sum(procs), children: procs });
+        });
+        tree.push({ key: `g:${b}`, label: b, count: sum(floors), children: floors });
+      });
+      if (ungrouped.length) {
+        tree.push({ key: 'ungrouped', label: '未分组（缺栋/楼/工程情报）', count: sum(ungrouped), children: ungrouped });
+      }
+      return tree;
+    },
     brandList() {
       var cfg = this.brandConfig || {};
       return Object.keys(cfg)
@@ -725,8 +864,19 @@ export default {
       return this.tagForm && ['INT32', 'UINT32', 'FLOAT', 'DOUBLE'].indexOf(this.tagForm.dataType) >= 0;
     },
   },
+  watch: {
+    // 搜索关键字 → 树过滤
+    nodeKeyword(val) {
+      if (this.$refs.nodeTree) this.$refs.nodeTree.filter((val || '').trim().toLowerCase());
+    }
+  },
   created() {
     this.getList();
+    this.loadNodeOptions();
+    this.loadNodeCounts();
+    // 健康状态联动（只读 site-health 列表），30s 轮询
+    this.loadSiteHealth();
+    this.healthTimer = setInterval(this.loadSiteHealth, 30000);
     // P0-2: 加载链 — 先读缓存(10分钟) → API → 保底空对象（缓存短周期，后端配置变更最多10分钟内生效）
     var cached = null;
     try { cached = JSON.parse(localStorage.getItem('plc_brand_config')); } catch(e) {}
@@ -748,6 +898,89 @@ export default {
     }.bind(this));
   },
   methods: {
+    /** 加载已登记采集点（数据源：site-health 站点表——台账唯一真相源） */
+    loadNodeOptions() {
+      return listSite({ pageNum: 1, pageSize: 1000 }).then(res => {
+        this.nodeOptions = (res.rows || []).map(s => ({
+          id: s.id,
+          nodeName: s.siteName,
+          hostPcIp: s.officeIp + (s.nodePort ? ':' + s.nodePort : ''),
+          industIp: s.industIp
+        }));
+      }).catch(() => { this.nodeOptions = []; });
+    },
+    /** 采集点变化时：工业内网IP自动继承该采集点登记的工业网卡IP（industIp），不再手填 */
+    syncMesIp() {
+      const n = (this.nodeOptions || []).find(x => x.hostPcIp === this.form.hostPcIp);
+      // 找不到采集点（如老数据）时保留原值，避免编辑时被清掉
+      if (n) this.form.mesIp = n.industIp || null;
+    },
+    /** 加载各采集点的 PLC 数量（左侧面板徽标） */
+    loadNodeCounts() {
+      countDeviceByNode().then(res => {
+        const map = {};
+        (res.data || []).forEach(r => { map[r.hostPcIp] = r.count; });
+        this.nodeCounts = map;
+      }).catch(() => {});
+    },
+    /** 加载采集点健康状态（只读 site-health 列表；按 IP / IP:端口 两种键索引） */
+    loadSiteHealth() {
+      listSite({ pageNum: 1, pageSize: 500 }).then(res => {
+        const map = {};
+        (res.rows || []).forEach(s => {
+          if (s.officeIp) {
+            if (!map[s.officeIp]) map[s.officeIp] = s;
+            if (s.nodePort) map[s.officeIp + ':' + s.nodePort] = s;
+          }
+        });
+        this.siteHealthMap = map;
+      }).catch(() => {});
+    },
+    /** 采集点健康记录：hostPcIp 兼容「IP」与「IP:端口」两种登记形态 */
+    healthOf(hostPcIp) {
+      if (!hostPcIp) return null;
+      return this.siteHealthMap[hostPcIp] || this.siteHealthMap[String(hostPcIp).split(':')[0]] || null;
+    },
+    healthClass(hostPcIp) {
+      const s = this.healthOf(hostPcIp);
+      if (!s) return 'none';           // 未接入健康监控（断链可见）
+      return s.isOnline ? 'on' : 'off';
+    },
+    healthTip(hostPcIp) {
+      const s = this.healthOf(hostPcIp);
+      if (!s) return '未接入健康监控（请到「采集登记」登记）';
+      const state = s.isOnline ? '在线' : '离线';
+      const mem = s.memoryUsedMb != null ? (' · 内存 ' + s.memoryUsedMb + 'MB') : '';
+      const hb = s.lastHeartbeat ? (' · 最后心跳 ' + s.lastHeartbeat) : ' · 从未上报';
+      return state + mem + hb + '（点击查看采集监控）';
+    },
+    /** 点击健康点：跳转「采集监控」页 */
+    goSiteHealth() {
+      this.$router.push('/edgelink/site-health/monitor');
+    },
+    /** 树过滤：叶子按名称/IP 匹配，分组节点自动保留（el-tree 保留匹配项的祖先） */
+    filterNode(value, data) {
+      if (!value) return true;
+      if (!data.isLeaf) return true;
+      const name = (data.label || '').toLowerCase();
+      const ip = (data.hostPcIp || '').toLowerCase();
+      return name.indexOf(value) >= 0 || ip.indexOf(value) >= 0;
+    },
+    /** 树点击：叶子=采集点过滤右侧列表；分组节点只展开/收起 */
+    onTreeClick(data) {
+      if (data.isLeaf) this.selectNode(data.hostPcIp);
+    },
+    /** 左侧采集点选择：过滤右侧 PLC 列表 */
+    selectNode(hostPcIp) {
+      this.selectedNode = hostPcIp;
+      this.queryParams.pageNum = 1;
+      this.queryParams.hostPcIp = hostPcIp || undefined;
+      this.getList();
+    },
+    /** 跳转采集点登记页 */
+    goSiteRegister() {
+      this.$router.push('/edgelink/link/site-register');
+    },
     /** 品牌变更时重置系列和通信方式 */
     onBrandChange(value) {
       this.form.plcSeries = null;
@@ -859,7 +1092,7 @@ export default {
         commTimeoutMs: 3000,
         retryCount: 2,
         retryIntervalMs: 500,
-        triggerKind: 0,
+        triggerKind: 1,   // 默认固定周期（0=握手规划中已禁用，不能当默认值）
         driverCode: null,
         protocolParams: null,
         status: '0',
@@ -997,10 +1230,17 @@ export default {
     },
 
     handleAdd() {
+      if (!this.selectedNode) {
+        this.$modal.msgWarning('请先在左侧选择一个采集点');
+        return;
+      }
       this.reset();
       this.activeTab = 'basic';
+      this.form.hostPcIp = this.selectedNode;   // 采集节点锁定为左侧选中的采集点
+      // 工业内网IP自动继承采集点的工业网卡IP（等下拉选项加载完再同步）
+      this.loadNodeOptions().then(() => this.syncMesIp());
       this.open = true;
-      this.title = "添加PLC设备";
+      this.title = "添加PLC设备（" + this.selectedNode + "）";
     },
 
     handleUpdate(row) {
@@ -1014,6 +1254,12 @@ export default {
       const id = row.id || this.ids[0];
       getDevice(id).then(response => {
         this.form = response.data;
+        // 握手触发（0）规划中已禁用：存量数据回显时兜底为固定周期
+        if (this.form.triggerKind === 0 || this.form.triggerKind == null) {
+          this.form.triggerKind = 1;
+        }
+        // 工业内网IP自动继承采集点的工业网卡IP（等下拉选项加载完再同步）
+        this.loadNodeOptions().then(() => this.syncMesIp());
         if (this.form.plcSeries === 'FX') {
           this.fxFrameDisabled = true;
         }
@@ -1036,7 +1282,7 @@ export default {
           this.collectDriverParams();
           if (this.form.id != null) {
             updateDevice(this.form).then(response => {
-              this.$modal.msgSuccess("修改成功，请前往【配置发布中心】下发到采集节点");
+              this.$modal.msgSuccess("修改成功，请到【流程发布-流程版本】重新生成并部署到采集节点");
               this.open = false;
               this.getList();
             }).catch(err => {
@@ -1044,7 +1290,7 @@ export default {
             });
           } else {
             addDevice(this.form).then(response => {
-              this.$modal.msgSuccess("新增成功，请前往【配置发布中心】下发到采集节点");
+              this.$modal.msgSuccess("新增成功，请到【流程发布-流程版本】重新生成并部署到采集节点");
               this.open = false;
               this.getList();
             }).catch(err => {
@@ -1058,7 +1304,7 @@ export default {
     /** 停用设备（status='1'） */
     handleDisable(row) {
       const ids = row.id || this.ids.join(',');
-      this.$modal.confirm('停用编号为"' + ids + '"的设备？（停用后需到【配置发布中心】发布才会停止采集，已写入数据保留。确认停用？）').then(function() {
+      this.$modal.confirm('停用编号为"' + ids + '"的设备？（停用后需到【流程发布】重新生成并部署才会停止采集，已写入数据保留。确认停用？）').then(function() {
         return disableDevice(ids);
       }).then(() => {
         this.getList();
@@ -1246,7 +1492,7 @@ export default {
         if (valid) {
           if (this.tagForm.id != null) {
             updateTag(this.tagForm).then(response => {
-              this.$modal.msgSuccess("修改成功，请前往【配置发布中心】下发到采集节点");
+              this.$modal.msgSuccess("修改成功，请到【流程发布-流程版本】重新生成并部署到采集节点");
               this.tagFormOpen = false;
               this.getTagList();
             }).catch(err => {
@@ -1254,7 +1500,7 @@ export default {
             });
           } else {
             addTag(this.tagForm).then(response => {
-              this.$modal.msgSuccess("新增成功，请前往【配置发布中心】下发到采集节点");
+              this.$modal.msgSuccess("新增成功，请到【流程发布-流程版本】重新生成并部署到采集节点");
               this.tagFormOpen = false;
               this.getTagList();
             }).catch(err => {
@@ -1355,11 +1601,148 @@ export default {
       clearTimeout(this._queryTimer);
       this._queryTimer = null;
     }
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthTimer = null;
+    }
   },
 };
 </script>
 
 <style lang="scss" scoped>
+/* 当前过滤范围指示条 */
+.scope-bar {
+  font-size: 13px;
+  color: #409eff;
+  font-weight: bold;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: #ecf5ff;
+  border-left: 3px solid #409eff;
+  border-radius: 3px;
+}
+.scope-bar i {
+  margin-right: 4px;
+}
+
+/* ======== 左侧采集点面板 ======== */
+.node-panel {
+  min-height: 400px;
+}
+.node-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: bold;
+}
+.node-panel-header i {
+  color: #409eff;
+  margin-right: 4px;
+}
+.node-search {
+  margin-bottom: 8px;
+}
+/* 节点多了面板不无限长高：固定滚动区 */
+.node-list {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+/* 健康状态点（site-health 只读联动） */
+.health-dot {
+  position: absolute;
+  left: 2px;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.health-dot.inline {
+  position: static;
+  display: inline-block;
+  margin-right: 6px;
+  flex-shrink: 0;
+}
+.health-dot.on { background: #67c23a; }
+.health-dot.off { background: #f56c6c; }
+.health-dot.none { background: #c0c4cc; }
+.node-item .node-text {
+  padding-left: 10px;
+}
+/* 采集点树 */
+.tree-node {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  font-size: 13px;
+}
+.tree-node .tree-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-node .node-count {
+  position: static;
+  transform: none;
+  margin-left: 6px;
+}
+.tree-group {
+  font-weight: bold;
+  color: #303133;
+  font-size: 13px;
+}
+.node-item {
+  position: relative;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  color: #606266;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.node-item:hover {
+  background: #f5f7fa;
+}
+.node-item.active {
+  background: #ecf5ff;
+  color: #409eff;
+  font-weight: bold;
+}
+.node-item .node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 36px;
+}
+.node-item .node-ip {
+  font-size: 11px;
+  color: #909399;
+  font-family: Menlo, Consolas, monospace;
+}
+.node-count {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: #f0f2f5;
+  border-radius: 8px;
+  font-size: 11px;
+  padding: 0 7px;
+  color: #606266;
+}
+.node-item.active .node-count {
+  background: #409eff;
+  color: #fff;
+}
+.node-empty {
+  color: #c0c4cc;
+  font-size: 12px;
+  text-align: center;
+  padding: 24px 0;
+}
+
 /* ======== 移动端 & 响应式适配 ======== */
 
 /* 工具栏按钮换行 */

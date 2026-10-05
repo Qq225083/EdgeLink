@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import secrets
 from datetime import datetime
 from typing import Any, Union
 
@@ -11,6 +12,7 @@ from exceptions.exception import ServiceException
 from module_plc.dao.device_dao import DeviceDao
 from module_plc.dao.monitor_dao import MonitorDao
 from module_plc.dao.tag_dao import TagDao
+from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey, hash_bootstrap_secret
 from module_plc.entity.do.change_log_do import PlcChangeLog
 from module_plc.entity.do.device_do import PlcDevice
 from module_plc.entity.do.monitor_do import DeviceCommStatus
@@ -143,6 +145,18 @@ class DeviceService:
             raise ServiceException(message=f'通信方式为 {com_type} 时必须填写 PLC IP 地址')
 
     @classmethod
+    def _require_plc_port_for_com_type(cls, plc_port: int | None, com_type: str | None) -> None:
+        """
+        RS-232C 串口通信不需要端口，其余方式必须填写 PLC 端口（采集点端口必填）
+
+        :param plc_port: PLC 端口
+        :param com_type: 通信方式
+        :raises ServiceException: 非RS-232C但缺少PLC端口时抛出
+        """
+        if com_type and com_type != 'PLC_RS232C' and plc_port is None:
+            raise ServiceException(message=f'通信方式为 {com_type} 时必须填写 PLC 端口')
+
+    @classmethod
     def _require_host_pc_ip(cls, host_pc_ip: str | None) -> None:
         """
         办公网IP 为必填项，用于确定由哪台采集PC负责此设备
@@ -154,15 +168,25 @@ class DeviceService:
             raise ServiceException(message='办公网IP为必填项，用于确定由哪台采集电脑负责此设备')
 
     @classmethod
-    def _require_indust_net_ip(cls, mes_ip: str | None) -> None:
+    async def _resolve_mes_port(cls, query_db: AsyncSession, mes_port: int | None) -> int:
         """
-        工业内网IP 为必填项，PLC所在的工业网络IP地址
+        工业内网端口：留空则取全局参数（sys_config: plc.mes_port.default），兜底 5007。
 
-        :param mes_ip: 工业内网IP地址
-        :raises ServiceException: mes_ip 为空时抛出
+        :param query_db: orm对象
+        :param mes_port: 表单填写的工业内网端口
+        :return: 最终端口
         """
-        if not mes_ip:
-            raise ServiceException(message='工业内网IP为必填项，用于标识PLC所在的工业网络地址')
+        if mes_port:
+            return mes_port
+        from module_admin.entity.do.config_do import SysConfig
+        row = await query_db.execute(
+            sa_select(SysConfig.config_value).where(SysConfig.config_key == 'plc.mes_port.default')
+        )
+        val = row.scalar_one_or_none()
+        try:
+            return int(val) if val else 5007
+        except (TypeError, ValueError):
+            return 5007
 
     # ==================== 设备 CRUD ====================
 
@@ -197,6 +221,11 @@ class DeviceService:
         return device_list_result
 
     @classmethod
+    async def count_by_node_services(cls, query_db: AsyncSession) -> list[dict]:
+        """按采集节点统计 PLC 数量（PLC 页左侧采集点面板的数量徽标）。"""
+        return await DeviceDao.count_by_node(query_db)
+
+    @classmethod
     async def add_device_services(
         cls, query_db: AsyncSession, page_object: PlcDeviceModel
     ) -> CrudResponseModel:
@@ -214,8 +243,7 @@ class DeviceService:
         if page_object.plc_ip:
             cls._validate_ip(page_object.plc_ip)
         cls._validate_ip(page_object.host_pc_ip, allow_port=True)
-        # 校验 工业内网IP：必填
-        cls._require_indust_net_ip(page_object.mes_ip)
+        # 工业内网IP：自动继承采集点登记的工业网卡IP（前端只读带出），不再必填；有值则校验格式
         if page_object.mes_ip:
             cls._validate_ip(page_object.mes_ip)
         if page_object.backup_pc_ip:
@@ -224,6 +252,8 @@ class DeviceService:
             cls._validate_port(page_object.plc_port)
         if page_object.mes_port and page_object.mes_port > 0:
             cls._validate_port(page_object.mes_port)
+        # 工业内网端口：留空则取全局默认（sys_config: plc.mes_port.default，兜底 5007）
+        page_object.mes_port = await cls._resolve_mes_port(query_db, page_object.mes_port)
         if page_object.plc_series and page_object.mc_frame:
             cls._validate_series_frame(page_object.plc_series, page_object.mc_frame)
 
@@ -284,10 +314,8 @@ class DeviceService:
         final_plc_ip = page_object.plc_ip if page_object.plc_ip is not None else device_info.plc_ip
         final_com_type = page_object.com_type if page_object.com_type else device_info.com_type
         final_host_pc_ip = page_object.host_pc_ip if page_object.host_pc_ip else device_info.host_pc_ip
-        final_mes_ip = page_object.mes_ip if page_object.mes_ip else device_info.mes_ip
         cls._require_plc_ip_for_com_type(final_plc_ip, final_com_type)
         cls._require_host_pc_ip(final_host_pc_ip)
-        cls._require_indust_net_ip(final_mes_ip)
         if page_object.host_pc_ip:
             cls._validate_ip(page_object.host_pc_ip, allow_port=True)
         if page_object.backup_pc_ip:

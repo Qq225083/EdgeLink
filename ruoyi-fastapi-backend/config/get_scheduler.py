@@ -150,7 +150,7 @@ class SchedulerUtil:
     @classmethod
     def _register_builtin_monitor_tasks(cls) -> None:
         """注册 EdgeLink 监控中心内置后台任务"""
-        from module_task.monitor_task import check_offline_nodes_task, check_offline_devices_task, clean_heartbeat_logs_task
+        from module_task.monitor_task import check_offline_nodes_task, check_offline_devices_task, clean_heartbeat_logs_task, reset_pg_counters_task
         from module_task.site_health_task import clean_site_health_heartbeat_logs_task
 
         # 离线节点检测：每30秒执行一次
@@ -203,7 +203,19 @@ class SchedulerUtil:
             coalesce=True,
             max_instances=1,
         )
-        logger.info('📎 内置监控任务已注册：离线检测（每30s）、心跳日志清理（每天3:00）、存量采集点履历清理（每天3:30）')
+        # PG 写入计数每日重置：每天凌晨0:05执行（生成版 pg-stat 为服务端累加，按日清零）
+        scheduler.add_job(
+            func=reset_pg_counters_task,
+            trigger=CronTrigger(hour=0, minute=5),
+            id='builtin_reset_pg_counters',
+            name='PG写入计数每日重置',
+            replace_existing=True,
+            jobstore='redis',
+            executor='default',
+            coalesce=True,
+            max_instances=1,
+        )
+        logger.info('📎 内置监控任务已注册：离线检测（每30s）、心跳日志清理（每天3:00）、存量采集点履历清理（每天3:30）、PG计数重置（每天0:05）')
 
     @classmethod
     async def close_system_scheduler(cls) -> None:

@@ -1,7 +1,7 @@
 {
   "name": "node-red-contrib-edgelink-bootstrap",
-  "version": "1.0.0",
-  "description": "EdgeLink 边缘采集接入配置节点——面板填写后端地址+预分配密钥，部署即生效（密钥走 credential，不写 flows.json）",
+  "version": "1.2.1",
+  "description": "EdgeLink 边缘采集接入配置节点——面板填写后端地址+预分配密钥，部署即调 /auto 完成双绑定激活（密钥走 credential/落盘文件，不写 flows.json；网络错误 60s 重试、拒答 300s 重探）",
   "author": {
     "name": "EdgeLink Team"
   },

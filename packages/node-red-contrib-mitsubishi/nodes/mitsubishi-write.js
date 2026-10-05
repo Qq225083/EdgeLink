@@ -1,5 +1,14 @@
 /**
- * mitsubishi-write — 三菱 MC Protocol 3E/4E 写入节点 v1.7.0
+ * mitsubishi-write — 三菱 MC Protocol 3E/4E 写入节点 v1.7.5
+ *
+ * v1.7.5: 复审二轮——release(connKey, node.id) owner 校验；coerceWriteValue 严格化
+ *         （BOOL 只认明确真假词，'banana' 拒写；数值必须有限，'Infinity' 拒写）；
+ *         无效 bitOffset 拒绝该点（不再按 bit0 写）
+ *
+ * v1.7.4: 审阅报告修复——ascii_slmp 下线；未知 regType 拒绝（不再回退 D 误写寄存器）；
+ *         整数越界统一拒绝（UINT32 不再 >>>0 静默回绕，16 位由钳制升级为拒绝）；
+ *         DEBUG_WIRE 默认 false；networkNo/stationNo 空值判定；
+ *         依赖 mc-protocol v1.7.4（地址严格校验）与 mc-udp v1.7.4（owner/ticket）
  *
  * v1.7.3: bitOffset 空串视为缺省（修 CSV 导入后每行误报 Invalid bitOffset 的噪音）
  * v1.7.2: UDP 路径支持三方言（binary/ascii_q/ascii_slmp）——字写/原生位写/RMW 全部走 udpReadWire/
@@ -27,23 +36,29 @@ module.exports = function (RED) {
   var mc = require('./mc-protocol');
   var mcUdp = require('./mc-udp');
 
-  var DEBUG_WIRE = true;  // 🔧 v1.7.0: 线级日志（>>> 发出 / <<< 收到），现场调试用，量产可改 false
+  var DEBUG_WIRE = false;  // 🔧 v1.7.4 review P2：量产默认关闭线级日志（此前默认 true 会把读写值/寄存器分布灌进日志）；现场调试时改 true
 
   // 🔧 v1.6.0: 面板默认值列是字符串，统一按类型收敛。
   // BOOL 用词表（true/1/on），避免字符串 "false"/"0" 被 truthy 误判为写 1；
   // 数字 Number() 转换，非法值返回 null —— 拒写而不是静默写 0（写操作有副作用）
   function coerceWriteValue(v, dt) {
+    // 🔧 v1.7.5 复审 P1：BOOL 只接受明确的真/假等价词，其余拒绝（此前 'banana'→静默写 0）
     if (dt === 'BOOL') {
-      // 🔧 v1.7.4: 无法识别的 BOOL 值拒写（返回 null），而非静默写 0——与数字类型"非法值拒写"策略一致
-      if (v === true || v === 1 || v === '1' || v === 'true' || v === 'TRUE' || v === 'on' || v === 'ON') return 1;
-      if (v === false || v === 0 || v === '0' || v === 'false' || v === 'FALSE' || v === 'off' || v === 'OFF') return 0;
-      return null;
+      if (v === true || v === 1) return 1;
+      if (v === false || v === 0) return 0;
+      if (typeof v === 'string') {
+        var s = v.trim().toLowerCase();
+        if (s === '1' || s === 'true' || s === 'on' || s === 'yes') return 1;
+        if (s === '0' || s === 'false' || s === 'off' || s === 'no') return 0;
+      }
+      return null;   // 无法明确解释 → 拒写
     }
+    // 🔧 v1.7.5 复审 P1：数值必须有限（此前 'Infinity' 通过 isNaN 检查，写成 Inf 位模式）
     if (typeof v === 'string') {
       var n = Number(v.trim());
-      return isNaN(n) ? null : n;
+      return Number.isFinite(n) ? n : null;
     }
-    if (typeof v === 'number') return isNaN(v) ? null : v;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
     if (typeof v === 'boolean') return v ? 1 : 0;
     return null;
   }
@@ -80,7 +95,8 @@ module.exports = function (RED) {
 
   function poolKey(plc) {
     // 🔧 v1.7.0: 键追加 commCode — 同 PLC 不同数据代码不得复用连接
-    return plc.host + ':' + plc.port + ':' + plc.frame + ':' + plc.networkNo + ':' + plc.stationNo + ':' + (plc.protocol || 'tcp') + ':' + (plc.commCode || 'binary');
+    // 🔧 源端口绑定（localPort，防火墙严格环境）不同也不能复用连接
+    return plc.host + ':' + plc.port + ':' + plc.frame + ':' + plc.networkNo + ':' + plc.stationNo + ':' + (plc.protocol || 'tcp') + ':' + (plc.commCode || 'binary') + ':' + (plc.localPort || 0);
   }
 
   function getConnection(node, plc, callback) {
@@ -152,7 +168,10 @@ module.exports = function (RED) {
 
     client.once('error', onConnectError);
 
-    client.connect(plc.port, plc.host, function () {
+    var connectOpts = { port: plc.port, host: plc.host };
+    // PC 侧源端口绑定：防火墙严格环境要求 PC↔PLC 走固定源端口时配置（留空则系统自动分配）
+    if (plc.localPort) connectOpts.localPort = plc.localPort;
+    client.connect(connectOpts, function () {
       clearTimeout(connectTimer);
       client.removeListener('error', onConnectError);
 
@@ -165,14 +184,9 @@ module.exports = function (RED) {
       entry.users = entry.users || {};
       entry.users[node.id] = true;
 
-      // 🔧 修复#1：闭包校验 socket 身份——旧 socket 迟到的 close/end/error 不误杀池中新条目
-      function destroyIfCurrent() {
-        var e = CONN_POOL_W[key];
-        if (e && e.socket === client) destroyConnection(key);
-      }
-      client.once('end', destroyIfCurrent);
-      client.once('close', destroyIfCurrent);
-      client.once('error', destroyIfCurrent);
+      client.once('end', function () { destroyConnection(key); });
+      client.once('close', function () { destroyConnection(key); });
+      client.once('error', function () { destroyConnection(key); });
 
       callback(null, client);
     });
@@ -294,11 +308,14 @@ module.exports = function (RED) {
           var legacy = (pp.ascii !== undefined) ? pp.ascii : cfg.ascii;
           return legacy ? 'ascii_slmp' : 'binary';
         })(),
-        networkNo: pp.networkNo || cfg.networkNo || 0,
-        stationNo: pp.stationNo || cfg.stationNo || 0,
+        // 🔧 v1.7.4 review P2：空值判定而非 ||（消息显式传 0 时可覆盖非零配置值）
+        networkNo: (pp.networkNo !== undefined && pp.networkNo !== null) ? pp.networkNo : (cfg.networkNo || 0),
+        stationNo: (pp.stationNo !== undefined && pp.stationNo !== null) ? pp.stationNo : (cfg.stationNo || 0),
         timeout: mc.clampInt(incoming.timeout || cfg.timeout, 3000, 500, 30000),
         maxRetries: mc.clampInt(incoming.maxRetries || cfg.maxRetries, 2, 0, 10),
-        retryInterval: mc.clampInt(incoming.retryInterval || cfg.retryInterval, 300, 50, 10000)
+        retryInterval: mc.clampInt(incoming.retryInterval || cfg.retryInterval, 300, 50, 10000),
+        // PC 侧源端口（选填）：防火墙严格环境固定 PC→PLC 源端口；留空/0 = 系统自动分配
+        localPort: parseInt(incoming.localPort, 10) || 0
       };
 
       if (plc.protocol !== 'tcp' && plc.protocol !== 'udp') {
@@ -319,6 +336,16 @@ module.exports = function (RED) {
       if (plc.commCode === 'ascii_q' && plc.frame !== '3E') {
         msg.payload = { success: false, deviceId: incoming.id || incoming.deviceId, deviceName: incoming.deviceName, data: {}, error: 'ascii_q 仅支持 3E 帧', driverType: 'driver-mc-write-protocol' };
         node.error('[MC-WRITE] ascii_q 仅支持 3E 帧', msg);
+        node.send(msg);
+        if (done) done();
+        return;
+      }
+      // 🔧 v1.7.4 review P0-1/P0-2：ascii_slmp 下线（编码不符合 SLMP ASCII 规范：
+      // 设备码是二进制 A8 而非 D*、长度按字节数而非字符数、应答按请求布局解析）。
+      // 三菱真正的 ASCII = ascii_q（Q 真机已验证），请改用它或 binary。
+      if (plc.commCode === 'ascii_slmp') {
+        msg.payload = { success: false, deviceId: incoming.id || incoming.deviceId, deviceName: incoming.deviceName, data: {}, error: 'ascii_slmp 已下线（编码不符合 SLMP ASCII 规范）。三菱 ASCII 通信请改用 ascii_q，或使用 binary。', driverType: 'driver-mc-write-protocol' };
+        node.error('[MC-WRITE] ascii_slmp 已下线，请改用 ascii_q 或 binary', msg);
         node.send(msg);
         if (done) done();
         return;
@@ -346,12 +373,10 @@ module.exports = function (RED) {
       var deviceName = incoming.deviceName || plc.name || ('PLC-' + deviceId);
 
       var _sent = false;
-      var ownsGate = false;  // 🔧 v1.7.4: 本轮是否已取得轮次闸——仅取得后才在 safeSend 里清闸
       function safeSend(m) {
         if (_sent) return;
         _sent = true;
-        // 🔧 v1.7.4: 仅当本轮真正取得闸才清，避免 "round in progress" 误删在途轮次
-        if (ownsGate && typeof connKey !== 'undefined' && connKey && IN_FLIGHT_W[connKey] === node.id) {
+        if (typeof connKey !== 'undefined' && connKey && IN_FLIGHT_W[connKey] === node.id) {
           delete IN_FLIGHT_W[connKey];
         }
         try { send(m); } catch (_) {}
@@ -396,10 +421,12 @@ module.exports = function (RED) {
       var allValidTags = [];
       for (var i = 0; i < tags.length; i++) {
         var t = tags[i];
-        var rt = t.regType || 'D';
+        // 🔧 v1.7.4 review P1：未知元件类型直接拒绝该点（绝不回退 D 写错寄存器）；
+        // 空 regType 仍默认 D，大小写归一（CSV 常见小写输入）
+        var rt = String(t.regType || 'D').trim().toUpperCase();
         if (!mc.MC_DEVICE_CODES[rt]) {
-          if (rt) node.warn('[MC-WRITE] Unknown regType: ' + rt + ', using D');
-          rt = 'D';
+          node.warn('[MC-WRITE] Unknown regType: ' + t.regType + '，点位 ' + (t.id || t.name || ('#' + i)) + ' 已拒绝（不会写入任何寄存器）');
+          continue;
         }
         var DT_MAP = { 'FLOAT': 'FLOAT32', 'BIT': 'BOOL' };
         var dt = DT_MAP[t.dataType] || t.dataType || 'INT16';
@@ -418,13 +445,17 @@ module.exports = function (RED) {
         var tagId = t.id || t.name || (rt + displayAddr);
         var bo = t.byteOrder || null;
         var wo = t.wordOrder || null;
-        var bitOff = (function () {
-          // 🔧 v1.7.3: 空串同样视为缺省值（CSV 导入空列=''，此前每行误报 Invalid bitOffset）
-          if (t.bitOffset === undefined || t.bitOffset === null || String(t.bitOffset).trim() === '') return null;
-          var bv = parseInt(t.bitOffset, 10);
-          if (isNaN(bv) || bv < 0 || bv > 15) { node.warn('[MC-WRITE] Invalid bitOffset ' + t.bitOffset + ', using 0'); return 0; }
-          return bv;
-        })();
+        // 🔧 v1.7.5 复审 P1：无效 bitOffset 拒绝该点（此前告警后按 bit0 写——把不存在的第16位
+        // 变成真实写第0位，写安全不可接受）。空串仍视为缺省（CSV 导入空列=''）。
+        var bitOff = null;
+        if (!(t.bitOffset === undefined || t.bitOffset === null || String(t.bitOffset).trim() === '')) {
+          var _bv = parseInt(t.bitOffset, 10);
+          if (isNaN(_bv) || _bv < 0 || _bv > 15) {
+            node.warn('[MC-WRITE] Invalid bitOffset ' + t.bitOffset + ' for ' + (t.id || t.name || (rt + addr)) + '，该点已拒绝（不会写入）');
+            continue;
+          }
+          bitOff = _bv;
+        }
         // 值校验与钳制
         // 🔧 v1.6.0: 面板默认值列是字符串，统一按类型收敛；非法值拒写而不是静默写 0
         var writeVal = coerceWriteValue(t.value, dt);
@@ -432,23 +463,18 @@ module.exports = function (RED) {
           node.warn('[MC-WRITE] Invalid value for tag ' + (t.id || t.name || (rt + addr)) + ': ' + t.value);
           continue;
         }
-        if (dt === 'UINT16' && writeVal > 65535) {
-          node.warn('[MC-WRITE] UINT16 overflow for ' + tagId + ', clamped to 65535');
-          writeVal = 65535;
-        } else if (dt === 'INT16' && writeVal > 32767) {
-          node.warn('[MC-WRITE] INT16 overflow for ' + tagId + ', clamped to 32767');
-          writeVal = 32767;
-        } else if (dt === 'INT16' && writeVal < -32768) {
-          node.warn('[MC-WRITE] INT16 underflow for ' + tagId + ', clamped to -32768');
-          writeVal = -32768;
-        }
-        // 🔧 v1.7.4: UINT32 越界钳制（此前 encodeWriteWords 用 >>>0 静默回绕，无告警）
-        if (dt === 'UINT32' && writeVal > 4294967295) {
-          node.warn('[MC-WRITE] UINT32 overflow for ' + tagId + ', clamped to 4294967295');
-          writeVal = 4294967295;
-        } else if (dt === 'UINT32' && writeVal < 0) {
-          node.warn('[MC-WRITE] UINT32 underflow for ' + tagId + ', clamped to 0');
-          writeVal = 0;
+        // 🔧 v1.7.4 review P1：整数越界统一改为"拒绝该点"（此前 16 位钳制、UINT32 用 >>>0 静默回绕，
+        // 如 -1→0xFFFFFFFF、2^32→0——写入侧静默改值不可接受）。越界点不参与分组，绝不发包。
+        var RANGE = {
+          UINT16: [0, 65535], INT16: [-32768, 32767],
+          UINT32: [0, 4294967295], INT32: [-2147483648, 2147483647]
+        };
+        if (RANGE[dt]) {
+          var _lo = RANGE[dt][0], _hi = RANGE[dt][1];
+          if (!(writeVal >= _lo && writeVal <= _hi)) {
+            node.warn('[MC-WRITE] ' + dt + ' out of range for ' + tagId + ': ' + writeVal + ' ∈ [' + _lo + ', ' + _hi + ']，该点已拒绝（不会写入）');
+            continue;
+          }
         }
 
         allValidTags.push({
@@ -537,7 +563,6 @@ module.exports = function (RED) {
       }
       IN_FLIGHT_W[connKey] = node.id;
       node._inFlightKeys[connKey] = true;
-      ownsGate = true;  // 🔧 v1.7.4: 本轮取得轮次闸，safeSend 才负责清闸
       node._usedConns[connKey] = true;
 
       var poolEntry = CONN_POOL_W[connKey];
@@ -688,9 +713,9 @@ module.exports = function (RED) {
           }
 
           function processPhaseUdp(pi) {
-            if (node._closed) { mcUdp.release(connKey); return; }
+            if (node._closed) { mcUdp.release(connKey, node.id); return; }
             if (pi >= totalPhases.length) {
-              mcUdp.release(connKey);
+              mcUdp.release(connKey, node.id);
               assembleAndSend();
               return;
             }
@@ -716,7 +741,7 @@ module.exports = function (RED) {
               }
 
               function attemptWordUdp(attempt) {
-                if (node._closed) { mcUdp.release(connKey); return; }
+                if (node._closed) { mcUdp.release(connKey, node.id); return; }
                 if (attempt > maxRetries) {
                   hasFailed = true;
                   if (!firstError) firstError = 'MC/UDP write failed for ' + grp.regType + startA;
@@ -736,7 +761,7 @@ module.exports = function (RED) {
                   return;
                 }
                 mcUdp.request(connKey, frame, plc.port, plc.host, timeout, function (rerr, buf) {
-                  if (node._closed) { mcUdp.release(connKey); return; }
+                  if (node._closed) { mcUdp.release(connKey, node.id); return; }
                   if (rerr || !buf) {
                     setTimeout(function () { attemptWordUdp(attempt + 1); }, retryInterval);
                     return;
@@ -782,13 +807,13 @@ module.exports = function (RED) {
 
           // ===== v1.5.1: UDP 原生位写（单往返，无 RMW 竞态）=====
           function processBitPhaseUdp(pi, bitGrp) {
-            if (node._closed) { mcUdp.release(connKey); return; }
+            if (node._closed) { mcUdp.release(connKey, node.id); return; }
             var sorted = bitGrp.tags.slice().sort(function (a, b) { return a.addr - b.addr; });
             var bits = sorted.map(function (t) { return { addr: t.addr, value: t.value ? 1 : 0 }; });
             var enc = mc.encodeBitWriteData(bits);
 
             function attemptBitUdp(attempt) {
-              if (node._closed) { mcUdp.release(connKey); return; }
+              if (node._closed) { mcUdp.release(connKey, node.id); return; }
               if (attempt > maxRetries) {
                 hasFailed = true;
                 if (!firstError) firstError = 'MC/UDP bit-write failed for ' + bitGrp.regType + enc.startAddr;
@@ -811,7 +836,7 @@ module.exports = function (RED) {
                 return;
               }
               mcUdp.request(connKey, frame, plc.port, plc.host, timeout, function (rerr, buf) {
-                if (node._closed) { mcUdp.release(connKey); return; }
+                if (node._closed) { mcUdp.release(connKey, node.id); return; }
                 if (rerr || !buf) {
                   setTimeout(function () { attemptBitUdp(attempt + 1); }, retryInterval);
                   return;
@@ -863,7 +888,7 @@ module.exports = function (RED) {
             }
 
             function rmwUdpRead(attempt) {
-              if (node._closed) { mcUdp.release(connKey); return; }
+              if (node._closed) { mcUdp.release(connKey, node.id); return; }
               if (attempt > maxRetries) {
                 hasFailed = true;
                 if (!firstError) firstError = '[RMW-READ] failed for ' + rmwGrp.regType + rmwGrp.wordAddr;
@@ -872,7 +897,7 @@ module.exports = function (RED) {
                 return;
               }
               mcUdp.request(connKey, readFrame, plc.port, plc.host, timeout, function (rerr, buf) {
-                if (node._closed) { mcUdp.release(connKey); return; }
+                if (node._closed) { mcUdp.release(connKey, node.id); return; }
                 if (rerr || !buf) { setTimeout(function () { rmwUdpRead(attempt + 1); }, retryInterval); return; }
                 var _ub = udpToBin(buf);
                 if (_ub.err) {
@@ -925,7 +950,7 @@ module.exports = function (RED) {
                 }
 
                 function rmwUdpWrite(writeAttempt) {
-                  if (node._closed) { mcUdp.release(connKey); return; }
+                  if (node._closed) { mcUdp.release(connKey, node.id); return; }
                   if (writeAttempt > maxRetries) {
                     hasFailed = true;
                     if (!firstError) firstError = '[RMW-WRITE] failed for ' + rmwGrp.regType + rmwGrp.wordAddr;
@@ -934,7 +959,7 @@ module.exports = function (RED) {
                     return;
                   }
                   mcUdp.request(connKey, writeFrame, plc.port, plc.host, timeout, function (werr, wbuf) {
-                    if (node._closed) { mcUdp.release(connKey); return; }
+                    if (node._closed) { mcUdp.release(connKey, node.id); return; }
                     if (werr || !wbuf) { setTimeout(function () { rmwUdpWrite(writeAttempt + 1); }, retryInterval); return; }
                     var _wub = udpToBin(wbuf);
                     if (_wub.err) {

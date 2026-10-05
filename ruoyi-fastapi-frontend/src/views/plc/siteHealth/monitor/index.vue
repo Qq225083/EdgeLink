@@ -50,6 +50,14 @@
     <el-table v-loading="loading" :data="siteList" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="55" align="center" />
       <el-table-column label="采集场所" align="center" prop="siteName" width="120" :show-overflow-tooltip="true" />
+      <!-- 来源：区分纯监控点（存量登记）与采集点（采集配置联动） -->
+      <el-table-column label="来源" align="center" width="90">
+        <template slot-scope="scope">
+          <el-tag size="mini" :type="scope.row.source === 'config' ? 'success' : 'info'">
+            {{ scope.row.source === 'config' ? '采集配置' : '存量登记' }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="位置（栋/楼/工程）" align="center" width="150" :show-overflow-tooltip="true">
         <template slot-scope="scope">
           {{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}

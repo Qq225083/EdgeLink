@@ -1,6 +1,6 @@
 from typing import Any, Union
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.vo import PageModel
@@ -109,6 +109,8 @@ class DeviceDao:
                 PlcDevice.plc_ip == query_object.plc_ip if query_object.plc_ip else True,
                 PlcDevice.status == query_object.status if query_object.status else True,
                 PlcDevice.plc_brand == query_object.plc_brand if query_object.plc_brand else True,
+                # 按采集节点（Node-RED PC 的 IP:端口）过滤 —— PLC 页左右分栏用
+                PlcDevice.host_pc_ip == query_object.host_pc_ip if query_object.host_pc_ip else True,
             )
             .order_by(PlcDevice.id)
         )
@@ -117,6 +119,16 @@ class DeviceDao:
         )
 
         return device_list
+
+    @classmethod
+    async def count_by_node(cls, db: AsyncSession) -> list[dict]:
+        """按采集节点（host_pc_ip）统计 PLC 数量 —— PLC 页左侧采集点面板的数量徽标。"""
+        result = await db.execute(
+            select(PlcDevice.host_pc_ip, func.count(PlcDevice.id))
+            .where(PlcDevice.del_flag == '0')
+            .group_by(PlcDevice.host_pc_ip)
+        )
+        return [{'hostPcIp': r[0], 'count': r[1]} for r in result.all()]
 
     @classmethod
     async def add_device_dao(cls, db: AsyncSession, device: PlcDeviceModel) -> PlcDevice:
