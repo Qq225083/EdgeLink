@@ -406,7 +406,7 @@ def main():
     live_user = [{'id': 'u1', 'type': 'tab', 'label': '张三的页面'}] + infra_only
     assert _scoped_match(live_user, infra_only) is True, '无前缀基础设施页不得误伤用户页面'
     # 漂移归一化：编辑器格式噪音（g/FieldType/坐标/布尔字符串化/空值补全/PG凭证）不算漂移
-    from module_flowgen.service.deploy_service import _canon_hash
+    from module_flowgen.service.deploy_service import _canon_hash, _required_modules
     raw = [
         {'id': 'n1', 'type': 'change', 'name': '块内装配', 'rules': [{'t': 'set', 'p': 'payload'}], 'wires': [['n2']], 'x': 620, 'y': 140},
         {'id': 'c1', 'type': 'postgreSQLConfig', 'name': '采集库', 'host': '127.0.0.1', 'port': 5432, 'database': 'd1', 'ssl': False},
@@ -423,6 +423,15 @@ def main():
     real_change = [{'id': 'n1', 'type': 'change', 'name': '块内装配', 'rules': [{'t': 'set', 'p': 'topic'}], 'wires': [['n2']]}]
     assert _canon_hash(raw[:1]) != _canon_hash(real_change), '真实逻辑变化必须算漂移'
     print('[OK] 漂移归一化（编辑器噪音免疫 + 真实变化敏感）')
+
+    # ---- 部署前置校验：所需节点包推断 ----
+    req = _required_modules(flows)
+    assert 'node-red-contrib-mcprotocol' in req and 'MC Read' in req['node-red-contrib-mcprotocol'], 'MC 支路应需要 mcprotocol'
+    req_pg = _required_modules(pgt)
+    assert 'node-red-contrib-postgresql' in req_pg, 'PG 支路应需要 postgresql 包'
+    req_core = _required_modules([{'id': 'x', 'type': 'change'}, {'id': 'y', 'type': 'link out'}])
+    assert req_core == {}, '核心节点不应要求任何包'
+    print('[OK] 部署前置校验：节点包需求推断')
     print('[OK] 标签页前缀自定义 + 合并部署/漂移认门规则（含无前缀精确匹配）')
 
     # ---- 基础设施 tab：共享配置 + flows 上传 + 无 key 字段 ----

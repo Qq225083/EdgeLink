@@ -29,6 +29,12 @@
       <el-form-item label="关键字" prop="keyword">
         <el-input v-model="queryParams.keyword" placeholder="采集场所/办公IP/工业IP/联系人" clearable style="width: 280px" @keyup.enter.native="handleQuery" />
       </el-form-item>
+      <el-form-item label="来源" prop="source">
+        <el-select v-model="queryParams.source" placeholder="全部" clearable style="width: 130px" @change="handleQuery">
+          <el-option label="采集配置" value="config" />
+          <el-option label="存量登记" value="register" />
+        </el-select>
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" icon="el-icon-search" size="mini" @click="handleQuery">搜索</el-button>
         <el-button icon="el-icon-refresh" size="mini" @click="resetQuery">重置</el-button>
@@ -48,32 +54,36 @@
 
     <!-- 采集点列表表格 -->
     <el-table v-loading="loading" :data="siteList" @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="55" align="center" />
-      <el-table-column label="采集场所" align="center" prop="siteName" width="120" :show-overflow-tooltip="true" />
+      <el-table-column type="expand" width="45">
+        <template slot-scope="scope">
+          <div class="expand-detail">
+            <div class="detail-item"><span class="detail-label">工业网IP</span><span>{{ scope.row.industIp || '-' }}</span></div>
+            <div class="detail-item"><span class="detail-label">上报IP</span><span>{{ scope.row.reportIp || '-' }}</span></div>
+            <div class="detail-item"><span class="detail-label">心跳间隔</span><span>{{ scope.row.heartbeatInterval || 30 }}s</span></div>
+            <div class="detail-item"><span class="detail-label">联系人</span><span>{{ scope.row.contact || '-' }}</span></div>
+            <div class="detail-item"><span class="detail-label">采集点标识</span><span>{{ scope.row.nodeKey || '-' }}</span></div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column type="selection" width="45" align="center" />
+      <el-table-column label="采集场所" align="center" prop="siteName" min-width="120" :show-overflow-tooltip="true" />
       <!-- 来源：区分纯监控点（存量登记）与采集点（采集配置联动） -->
-      <el-table-column label="来源" align="center" width="90">
+      <el-table-column label="来源" align="center" width="85">
         <template slot-scope="scope">
           <el-tag size="mini" :type="scope.row.source === 'config' ? 'success' : 'info'">
             {{ scope.row.source === 'config' ? '采集配置' : '存量登记' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="位置（栋/楼/工程）" align="center" width="150" :show-overflow-tooltip="true">
+      <el-table-column label="位置（栋/楼/工程）" align="center" min-width="130" :show-overflow-tooltip="true">
         <template slot-scope="scope">
           {{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}
         </template>
       </el-table-column>
-      <el-table-column label="办公网IP" align="center" prop="officeIp" width="120" :show-overflow-tooltip="true" />
-      <el-table-column label="工业网IP" align="center" prop="industIp" width="120" :show-overflow-tooltip="true">
-        <template slot-scope="scope">{{ scope.row.industIp || '-' }}</template>
+      <el-table-column label="办公网IP:端口" align="center" width="140" :show-overflow-tooltip="true">
+        <template slot-scope="scope">{{ scope.row.officeIp }}{{ scope.row.nodePort ? ':' + scope.row.nodePort : '' }}</template>
       </el-table-column>
-      <el-table-column label="端口" align="center" prop="nodePort" width="80">
-        <template slot-scope="scope">{{ scope.row.nodePort == null ? '-' : scope.row.nodePort }}</template>
-      </el-table-column>
-      <el-table-column label="联系人" align="center" prop="contact" width="90" :show-overflow-tooltip="true">
-        <template slot-scope="scope">{{ scope.row.contact || '-' }}</template>
-      </el-table-column>
-      <el-table-column label="状态" align="center" width="90">
+      <el-table-column label="状态" align="center" width="80">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.status === 0" type="info" size="mini">已停用</el-tag>
           <el-tag v-else-if="!scope.row.hasReported" type="warning" size="mini">未接入</el-tag>
@@ -81,7 +91,7 @@
           <el-tag v-else type="danger" size="mini">离线</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="最近报错" align="center" width="90">
+      <el-table-column label="最近报错" align="center" width="85">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.lastErrors && scope.row.lastErrors.length" type="warning" size="mini" class="error-tag" @click="handleErrors(scope.row)">
             报错 {{ scope.row.lastErrors.length }} 条
@@ -89,26 +99,20 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="最近心跳" align="center" width="160" :show-overflow-tooltip="true">
+      <el-table-column label="最近心跳" align="center" width="150" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ formatTime(scope.row.lastHeartbeat) }}</template>
       </el-table-column>
-      <el-table-column label="心跳间隔" align="center" width="90">
-        <template slot-scope="scope">{{ scope.row.heartbeatInterval || 30 }}s</template>
-      </el-table-column>
-      <el-table-column label="进程内存" align="center" width="100">
+      <el-table-column label="进程内存" align="center" width="90">
         <template slot-scope="scope">{{ formatMb(scope.row.memoryRssMb) }}</template>
       </el-table-column>
-      <el-table-column label="整机已用" align="center" width="100">
+      <el-table-column label="整机已用" align="center" width="90">
         <template slot-scope="scope">{{ formatMb(scope.row.memoryUsedMb) }}</template>
       </el-table-column>
-      <el-table-column label="运行流" align="center" prop="runningFlows" width="70">
+      <el-table-column label="运行流" align="center" width="65">
         <template slot-scope="scope">{{ scope.row.runningFlows == null ? '-' : scope.row.runningFlows }}</template>
       </el-table-column>
-      <el-table-column label="运行时长" align="center" width="110">
+      <el-table-column label="运行时长" align="center" width="100">
         <template slot-scope="scope">{{ formatUptime(scope.row.uptimeSec) }}</template>
-      </el-table-column>
-      <el-table-column label="上报IP" align="center" prop="reportIp" width="120" :show-overflow-tooltip="true">
-        <template slot-scope="scope">{{ scope.row.reportIp || '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" align="center" class-name="small-padding fixed-width op-cell" width="480" fixed="right">
         <template slot-scope="scope">
@@ -344,6 +348,7 @@ export default {
         pageSize: 10,
         keyword: null,
         state: null,
+        source: null,
       },
       // 一览卡片统计
       summary: { total: 0, online: 0, offline: 0, notConnected: 0, disabled: 0 },
@@ -780,6 +785,25 @@ export default {
 </script>
 
 <style scoped>
+/* 展开行详情：两列网格，信息不再挤主行 */
+.expand-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 6px 24px;
+  padding: 8px 16px 8px 40px;
+  background: #fafbfc;
+}
+.detail-item {
+  font-size: 13px;
+  color: #303133;
+  display: flex;
+  gap: 8px;
+}
+.detail-label {
+  color: #909399;
+  min-width: 90px;
+  flex-shrink: 0;
+}
 /* 一览卡片：复用 V12 监控页的 KPI 渐变卡片视觉语言 */
 .kpi-row {
   display: flex;

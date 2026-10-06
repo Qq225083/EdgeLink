@@ -31,6 +31,19 @@ _WATCH_MODULES = (
     'node-red-contrib-edgelink-site-health',
 )
 
+# 节点类型 → 所需节点包（部署前置校验用；核心节点不在此表）
+_TYPE_TO_MODULE = {
+    'MC Read': 'node-red-contrib-mcprotocol',
+    'MC Protocol Connection': 'node-red-contrib-mcprotocol',
+    'modbus-read': 'node-red-contrib-modbus',
+    'modbus-client': 'node-red-contrib-modbus',
+    'postgresql': 'node-red-contrib-postgresql',
+    'postgreSQLConfig': 'node-red-contrib-postgresql',
+    'site-health': 'node-red-contrib-edgelink-site-health',
+    'site-health-server': 'node-red-contrib-edgelink-site-health',
+    'site-flows-upload': 'node-red-contrib-edgelink-site-health',
+}
+
 _TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=5.0)  # 大画布部署可达 20-30s
 
 # 画布快照每现场保留份数
@@ -185,23 +198,44 @@ async def _get_json(client: httpx.AsyncClient, url: str):
     return resp.json()
 
 
-async def _read_module_versions(client: httpx.AsyncClient, base: str) -> str:
-    """读边缘实装节点包版本（留痕用；失败不阻塞主流程）。
-    GET /nodes 返回数组，每项的 module/version 才是包名与版本（name 是节点名）。"""
+async def _read_installed_modules(client: httpx.AsyncClient, base: str) -> set:
+    """边缘实装节点包名集合（GET /nodes；失败返回空集，调用方自行决定是否放行）。"""
     try:
         resp = await client.get(f'{base}/nodes', headers={'Accept': 'application/json'})
         resp.raise_for_status()
         nodes = resp.json()
     except Exception:
-        return ''
+        return set()
     if not isinstance(nodes, list):
+        return set()
+    return {item.get('module', '') for item in nodes}
+
+
+async def _read_module_versions(client: httpx.AsyncClient, base: str) -> str:
+    """读边缘实装节点包版本（留痕用；失败不阻塞主流程）。
+    GET /nodes 返回数组，每项的 module/version 才是包名与版本（name 是节点名）。"""
+    installed = await _read_installed_modules(client, base)
+    try:
+        resp = await client.get(f'{base}/nodes', headers={'Accept': 'application/json'})
+        nodes = resp.json()
+    except Exception:
         return ''
     found = {}
-    for item in nodes:
+    for item in nodes if isinstance(nodes, list) else []:
         mod = item.get('module', '')
         if mod in _WATCH_MODULES:
             found[mod] = item.get('version', '?')
     return ' '.join(f'{m.split("node-red-contrib-")[-1]}@{found[m]}' for m in _WATCH_MODULES if m in found)
+
+
+def _required_modules(flows: list) -> dict:
+    """从 payload 的节点类型推出所需节点包 → {包名: [用到的节点类型]}。"""
+    need: dict[str, set] = {}
+    for n in flows:
+        mod = _TYPE_TO_MODULE.get(n.get('type', ''))
+        if mod:
+            need.setdefault(mod, set()).add(n['type'])
+    return {m: sorted(t) for m, t in need.items()}
 
 
 class FlowDeployService:
@@ -341,6 +375,17 @@ class FlowDeployService:
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 live_flows, rev_before = _parse_flows_response(await _get_json(client, f'{base}/flows'))
+                # 部署前置校验：边缘必须装有本版本用到的节点包，缺包直接拒绝部署并指引安装
+                required = _required_modules(flows)
+                if required:
+                    installed = await _read_installed_modules(client, base)
+                    missing = {m: t for m, t in required.items() if m not in installed}
+                    if missing:
+                        detail = '；'.join(f'{m}（用到节点: {"、".join(t)}）' for m, t in missing.items())
+                        raise ServiceException(
+                            message=f'边缘缺少所需节点包：{detail}。\n'
+                                    f'请到「下载中心」下载对应安装包，在边缘机器安装（或放入 userDir/node_modules）后重启 Node-RED，再重新部署。'
+                        )
                 if full_replace:
                     body_obj = {'flows': flows}
                 else:

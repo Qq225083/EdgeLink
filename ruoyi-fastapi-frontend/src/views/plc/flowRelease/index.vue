@@ -271,7 +271,7 @@ export default {
   },
   methods: {
     loadSites() {
-      listSite({ pageNum: 1, pageSize: 100 }).then(response => {
+      listSite({ pageNum: 1, pageSize: 100, source: 'config' }).then(response => {
         this.siteOptions = response.rows || [];
         if (this.siteOptions.length > 0 && !this.queryParams.siteId) {
           this.queryParams.siteId = this.siteOptions[0].id;

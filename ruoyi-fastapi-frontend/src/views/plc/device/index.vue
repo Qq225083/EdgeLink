@@ -898,9 +898,9 @@ export default {
     }.bind(this));
   },
   methods: {
-    /** 加载已登记采集点（数据源：site-health 站点表——台账唯一真相源） */
+    /** 加载采集点选项（仅采集配置来源；存量登记点不参与生成/设备绑定） */
     loadNodeOptions() {
-      return listSite({ pageNum: 1, pageSize: 1000 }).then(res => {
+      return listSite({ pageNum: 1, pageSize: 1000, source: 'config' }).then(res => {
         this.nodeOptions = (res.rows || []).map(s => ({
           id: s.id,
           nodeName: s.siteName,

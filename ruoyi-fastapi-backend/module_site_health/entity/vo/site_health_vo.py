@@ -77,6 +77,7 @@ class SiteHealthPageQueryModel(BaseModel):
     page_num: int = Field(default=1, description='当前页码')
     page_size: int = Field(default=10, description='每页记录数')
     keyword: Optional[str] = Field(default=None, description='关键字（采集场所/办公IP/工业IP/联系人，模糊）')
+    source: Optional[str] = Field(default=None, description='来源过滤：register=存量登记 config=采集配置，不传为全部')
     state: Optional[str] = Field(
         default=None,
         description='状态过滤：online/offline/notConnected/disabled，不传为全部',

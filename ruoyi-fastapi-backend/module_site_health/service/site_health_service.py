@@ -402,6 +402,8 @@ class SiteHealthService:
     async def get_site_list(cls, db: AsyncSession, page_query: SiteHealthPageQueryModel):
         """分页查询采集点列表（支持状态过滤），附带在线状态与最新指标。"""
         query = select(SiteHealthSite)
+        if page_query.source:
+            query = query.where(SiteHealthSite.source == page_query.source)
         if page_query.keyword and page_query.keyword.strip():
             kw = f'%{page_query.keyword.strip()}%'
             query = query.where(
