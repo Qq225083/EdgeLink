@@ -133,41 +133,79 @@
     <!-- 心跳履历抽屉 -->
     <el-drawer :title="historyTitle" :visible.sync="historyOpen" size="60%" :append-to-body="true">
       <div class="history-toolbar">
-        <el-button size="mini" icon="el-icon-refresh" @click="loadHistory(false)">刷新</el-button>
-        <span class="history-count">已加载 {{ historyList.length }} 条（倒序，红色行为上报中断点）</span>
+        <el-date-picker v-model="historyRange" type="datetimerange" size="mini" style="width: 340px"
+          range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间"
+          value-format="yyyy-MM-dd HH:mm:ss" @change="handleHistoryRangeChange" />
+        <el-button size="mini" icon="el-icon-refresh" @click="loadHistory(false); loadOfflineIntervals()">刷新</el-button>
+        <span class="history-count">默认最近 7 天，可自选起止时间</span>
       </div>
-      <el-table v-loading="historyLoading" :data="historyList" size="small" border :row-class-name="tableRowClassName">
-        <el-table-column label="上报时间" align="center" width="180" :show-overflow-tooltip="true">
-          <template slot-scope="scope">
-            {{ formatTime(scope.row.reportTime) }}
-            <el-tooltip v-if="scope.row._gap" content="上报中断：与上一条履历的间隔超过 3×心跳间隔（期间节点离线/停用/断网）" placement="top">
-              <span class="gap-badge">断</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="上报IP" align="center" prop="reportIp" width="120" :show-overflow-tooltip="true">
-          <template slot-scope="scope">{{ scope.row.reportIp || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="进程内存" align="center" width="100">
-          <template slot-scope="scope">{{ formatMb(scope.row.memoryRssMb) }}</template>
-        </el-table-column>
-        <el-table-column label="整机已用" align="center" width="100">
-          <template slot-scope="scope">{{ formatMemUsed(scope.row) }}</template>
-        </el-table-column>
-        <el-table-column label="运行流" align="center" prop="runningFlows" width="70">
-          <template slot-scope="scope">{{ scope.row.runningFlows == null ? '-' : scope.row.runningFlows }}</template>
-        </el-table-column>
-        <el-table-column label="版本" align="center" prop="nodeRedVersion" width="90" :show-overflow-tooltip="true">
-          <template slot-scope="scope">{{ scope.row.nodeRedVersion || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="运行时长" align="center" width="110">
-          <template slot-scope="scope">{{ formatUptime(scope.row.uptimeSec) }}</template>
-        </el-table-column>
-      </el-table>
-      <div class="history-footer">
-        <span v-if="!historyHasMore && historyList.length" class="history-count">已加载全部</span>
-        <el-button v-if="historyHasMore" size="mini" :loading="historyLoading" @click="loadHistory(true)">加载更多</el-button>
-      </div>
+      <el-tabs v-model="historyTab">
+        <el-tab-pane label="断线区间" name="offline">
+          <div class="offline-summary">
+            <el-tag v-if="offlineCurrent" type="danger" size="small">当前离线中</el-tag>
+            <el-tag v-else-if="offlineSiteStatus === 0" type="info" size="small">已停用</el-tag>
+            <el-tag v-else type="success" size="small">当前在线</el-tag>
+            <span class="history-count">判定规则：相邻心跳间隔 &gt; 3×心跳间隔 记为一段离线；恢复时 uptime 变小标记疑似重启</span>
+          </div>
+          <el-table :data="offlineList" size="small" border max-height="420">
+            <el-table-column label="断线开始" align="center" width="170" :show-overflow-tooltip="true">
+              <template slot-scope="scope">{{ formatTime(scope.row.start) }}</template>
+            </el-table-column>
+            <el-table-column label="恢复时间" align="center" width="170" :show-overflow-tooltip="true">
+              <template slot-scope="scope">
+                <el-tag v-if="scope.row.ongoing" type="danger" size="mini">未恢复</el-tag>
+                <span v-else>{{ formatTime(scope.row.end) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="离线时长" align="center" width="110">
+              <template slot-scope="scope">{{ formatDuration(scope.row.durationSec) }}</template>
+            </el-table-column>
+            <el-table-column label="疑似重启" align="center" width="90">
+              <template slot-scope="scope">
+                <el-tag v-if="scope.row.restarted" type="warning" size="mini">疑似重启</el-tag>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane label="心跳履历" name="logs">
+          <div class="history-toolbar">
+            <el-button size="mini" icon="el-icon-refresh" @click="loadHistory(false)">刷新</el-button>
+            <span class="history-count">已加载 {{ historyList.length }} 条（倒序，红色行为上报中断点）</span>
+          </div>
+          <el-table v-loading="historyLoading" :data="historyList" size="small" border :row-class-name="tableRowClassName">
+            <el-table-column label="上报时间" align="center" width="180" :show-overflow-tooltip="true">
+              <template slot-scope="scope">
+                {{ formatTime(scope.row.reportTime) }}
+                <el-tooltip v-if="scope.row._gap" content="上报中断：与上一条履历的间隔超过 3×心跳间隔（期间节点离线/停用/断网）" placement="top">
+                  <span class="gap-badge">断</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="上报IP" align="center" prop="reportIp" width="120" :show-overflow-tooltip="true">
+              <template slot-scope="scope">{{ scope.row.reportIp || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="进程内存" align="center" width="100">
+              <template slot-scope="scope">{{ formatMb(scope.row.memoryRssMb) }}</template>
+            </el-table-column>
+            <el-table-column label="整机已用" align="center" width="100">
+              <template slot-scope="scope">{{ formatMemUsed(scope.row) }}</template>
+            </el-table-column>
+            <el-table-column label="运行流" align="center" prop="runningFlows" width="70">
+              <template slot-scope="scope">{{ scope.row.runningFlows == null ? '-' : scope.row.runningFlows }}</template>
+            </el-table-column>
+            <el-table-column label="版本" align="center" prop="nodeRedVersion" width="90" :show-overflow-tooltip="true">
+              <template slot-scope="scope">{{ scope.row.nodeRedVersion || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="运行时长" align="center" width="110">
+              <template slot-scope="scope">{{ formatUptime(scope.row.uptimeSec) }}</template>
+            </el-table-column>
+          </el-table>
+          <div class="history-footer">
+            <el-pagination small layout="total, prev, pager, next" :total="historyTotal" :page-size="historyPageSize" :current-page.sync="historyPageNum" @current-change="handleHistoryPageChange" />
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </el-drawer>
 
     <!-- 修改采集点对话框（仅情报字段，密钥只能走重置） -->
@@ -229,6 +267,9 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-form-item label="Teams Webhook" prop="teamsWebhook">
+          <el-input v-model="editForm.teamsWebhook" placeholder="断线通知用 Teams Incoming Webhook 地址（选填）" maxlength="500" />
+        </el-form-item>
         <el-form-item label="采集备注" prop="remark">
           <el-input v-model="editForm.remark" type="textarea" :rows="3" placeholder="选填" maxlength="200" show-word-limit />
         </el-form-item>
@@ -269,12 +310,17 @@
     <!-- 最近报错对话框（节点心跳捎带上报的 error 级日志快照） -->
     <el-dialog :title="errorsTitle" :visible.sync="errorsOpen" width="640px" append-to-body>
       <el-alert
-        title="以下为节点最近一次心跳上报的 error 级日志（最多 10 条，单条截断 500 字）；完整日志以现场 Node-RED 日志为准"
+        title="以下为该采集点最近 7 天的异常履历（逐条记录，最多 500 条，单条截断 500 字）；完整日志以现场 Node-RED 日志为准"
         type="info"
         :closable="false"
         show-icon
         style="margin-bottom: 12px"
       />
+      <div class="history-toolbar" style="margin-bottom: 10px">
+        <el-date-picker v-model="historyRange" type="datetimerange" size="mini" style="width: 340px"
+          range-separator="至" start-placeholder="开始时间" end-placeholder="结束时间"
+          value-format="yyyy-MM-dd HH:mm:ss" @change="handleErrorsRangeChange" />
+      </div>
       <el-table :data="errorsList" size="small" border max-height="420">
         <el-table-column label="时间" align="center" prop="ts" width="160" :show-overflow-tooltip="true" />
         <el-table-column label="次数" align="center" width="70">
@@ -289,6 +335,9 @@
           </template>
         </el-table-column>
       </el-table>
+      <div class="history-footer">
+        <el-pagination small layout="total, prev, pager, next" :total="errorsTotal" :page-size="errorsPageSize" :current-page.sync="errorsPageNum" @current-change="handleErrorsPageChange" />
+      </div>
     </el-dialog>
 
     <!-- flows.json 上传记录抽屉 -->
@@ -325,7 +374,7 @@
 </template>
 
 <script>
-import { listSite, getSiteSummary, getSiteHistory, getSiteTrend, updateSite, regenerateSiteKey, toggleSiteStatus, delSite, getSiteUploads, downloadSiteUpload } from "@/api/plc/siteHealth";
+import { listSite, getSiteSummary, getSiteHistory, getSiteTrend, updateSite, regenerateSiteKey, toggleSiteStatus, delSite, getSiteUploads, downloadSiteUpload, getSiteErrors, getSiteOfflineIntervals } from "@/api/plc/siteHealth";
 import * as echarts from "echarts";
 import { saveAs } from "file-saver";
 import { blobValidate } from "@/utils/ruoyi";
@@ -356,11 +405,17 @@ export default {
       // 履历抽屉
       historyOpen: false,
       historyTitle: '',
+      historyTab: 'offline',
+      historyRange: null,
+      offlineList: [],
+      offlineCurrent: false,
+      offlineSiteStatus: null,
       historyLoading: false,
       historyList: [],
       historyLimit: 200,
-      historyOffset: 0,
-      historyHasMore: false,
+      historyPageNum: 1,
+      historyPageSize: 50,
+      historyTotal: 0,
       currentSite: null,
       // 修改采集点
       editOpen: false,
@@ -420,6 +475,9 @@ export default {
       errorsOpen: false,
       errorsTitle: '',
       errorsList: [],
+      errorsPageNum: 1,
+      errorsPageSize: 50,
+      errorsTotal: 0,
       // flows.json 上传记录抽屉
       uploadsOpen: false,
       uploadsTitle: '',
@@ -488,24 +546,47 @@ export default {
       this.currentSite = row;
       this.historyTitle = '【' + row.siteName + '】心跳履历';
       this.historyOpen = true;
+      this.historyTab = 'offline';
+      this.historyPageNum = 1;
       this.loadHistory(false);
+      this.loadOfflineIntervals();
     },
-    /** 加载履历：loadMore=true 时按 offset 追加，否则从头刷新 */
-    loadHistory(loadMore) {
+    /** 加载离线区间（断线开始/恢复/时长/疑似重启） */
+    loadOfflineIntervals() {
       if (!this.currentSite) return;
-      if (!loadMore) this.historyOffset = 0;
+      const range = this.historyRange || [];
+      getSiteOfflineIntervals(this.currentSite.id, 7, { start: range[0], end: range[1] }).then(response => {
+        const d = response.data || {};
+        this.offlineList = d.intervals || [];
+        this.offlineCurrent = !!d.currentOffline;
+        this.offlineSiteStatus = d.siteStatus == null ? null : Number(d.siteStatus);
+      }).catch(() => { this.offlineList = []; this.offlineCurrent = false; });
+    },
+    /** 加载履历（按页码分页 + 时间范围筛选） */
+    loadHistory() {
+      if (!this.currentSite) return;
       this.historyLoading = true;
-      getSiteHistory(this.currentSite.id, { limit: this.historyLimit, offset: this.historyOffset }).then(response => {
-        const rows = response.data || [];
-        const merged = loadMore ? this.historyList.concat(rows) : rows;
-        this.historyOffset = merged.length;
-        this.historyHasMore = rows.length >= this.historyLimit;
-        this.markGaps(merged);
-        this.historyList = merged;
+      const offset = (this.historyPageNum - 1) * this.historyPageSize;
+      const range = this.historyRange || [];
+      getSiteHistory(this.currentSite.id, { limit: this.historyPageSize, offset, start: range[0], end: range[1] }).then(response => {
+        const d = response.data || {};
+        const rows = d.rows || [];
+        this.historyTotal = d.total || 0;
+        this.markGaps(rows);
+        this.historyList = rows;
         this.historyLoading = false;
       }).catch(() => {
         this.historyLoading = false;
       });
+    },
+    handleHistoryRangeChange() {
+      this.historyPageNum = 1;
+      this.loadHistory();
+      this.loadOfflineIntervals();
+    },
+    handleHistoryPageChange(page) {
+      this.historyPageNum = page;
+      this.loadHistory();
     },
     /** 断点标记：相邻两条履历间隔 > 3×心跳间隔，说明期间节点离线/停用/断网，较新的一条标红 */
     markGaps(list) {
@@ -631,11 +712,32 @@ export default {
       this.newKey = '';
       this.regenSiteName = '';
     },
-    /** 查看最近报错（心跳捎带的 error 级日志快照） */
+    /** 查看异常履历（最近 7 天逐条记录，分页展示） */
     handleErrors(row) {
-      this.errorsTitle = '【' + row.siteName + '】最近报错';
-      this.errorsList = row.lastErrors || [];
+      this.currentSite = row;
+      this.errorsTitle = '【' + row.siteName + '】异常履历（最近 7 天）';
       this.errorsOpen = true;
+      this.errorsPageNum = 1;
+      this.errorsList = [];
+      this.loadErrors();
+    },
+    loadErrors() {
+      if (!this.currentSite) return;
+      const offset = (this.errorsPageNum - 1) * this.errorsPageSize;
+      const range = this.historyRange || [];
+      getSiteErrors(this.currentSite.id, { limit: this.errorsPageSize, offset, start: range[0], end: range[1] }).then(response => {
+        const d = response.data || {};
+        this.errorsList = d.rows || [];
+        this.errorsTotal = d.total || 0;
+      }).catch(() => { this.errorsList = []; this.errorsTotal = 0; });
+    },
+    handleErrorsRangeChange() {
+      this.errorsPageNum = 1;
+      this.loadErrors();
+    },
+    handleErrorsPageChange(page) {
+      this.errorsPageNum = page;
+      this.loadErrors();
     },
     /** 打开上传记录抽屉 */
     handleUploads(row) {
@@ -780,11 +882,31 @@ export default {
       if (h > 0) return h + '小时' + m + '分';
       return m + '分';
     },
+    formatDuration(sec) {
+      if (sec == null) return '-';
+      let s = Number(sec);
+      if (isNaN(s) || s < 0) return '-';
+      const d = Math.floor(s / 86400);
+      const h = Math.floor((s % 86400) / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = Math.floor(s % 60);
+      if (d > 0) return d + '天' + h + '小时';
+      if (h > 0) return h + '小时' + m + '分';
+      if (m > 0) return m + '分' + ss + '秒';
+      return ss + '秒';
+    },
   }
 };
 </script>
 
 <style scoped>
+/* 断线区间页签：顶部摘要 */
+.offline-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
 /* 展开行详情：两列网格，信息不再挤主行 */
 .expand-detail {
   display: grid;

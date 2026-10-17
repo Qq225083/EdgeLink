@@ -27,6 +27,7 @@ from module_site_health.entity.vo.site_health_vo import (
     SiteFlowsUploadBodyModel,
     SiteFlowsUploadModel,
 )
+from module_site_health.dao.site_health_dao import SiteHealthDao
 from module_site_health.service.site_health_service import SiteHealthService
 from utils.response_util import ResponseUtil
 
@@ -168,10 +169,58 @@ async def get_site_history(
     site_id: Annotated[int, Path(description='采集点ID')],
     limit: Annotated[int, Query(description='条数', ge=1, le=500)] = 200,
     offset: Annotated[int, Query(description='偏移（加载更多用）', ge=0)] = 0,
+    start: Annotated[Optional[str], Query(description='起始时间（YYYY-MM-DD HH:mm:ss，可只给日期）')] = None,
+    end: Annotated[Optional[str], Query(description='结束时间（同格式）')] = None,
     query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
 ) -> Response:
-    rows = await SiteHealthService.get_history(query_db, site_id, limit, offset)
-    return ResponseUtil.success(data=rows)
+    rows = await SiteHealthService.get_history(query_db, site_id, limit, offset, start=start, end=end)
+    total = await SiteHealthDao.count_heartbeat_logs(query_db, site_id, start=start, end=end)
+    return ResponseUtil.success(data={'rows': rows, 'total': total})
+
+
+@site_health_controller.get(
+    '/site/{site_id}/errors',
+    summary='采集点异常履历（默认最近 7 天，逐条记录）',
+    response_model=DataResponseModel[list],
+    dependencies=[UserInterfaceAuthDependency('site:health:list')],
+)
+async def get_site_errors(
+    request: Request,
+    site_id: Annotated[int, Path(description='采集点ID')],
+    days: Annotated[int, Query(description='最近 N 天', ge=1, le=90)] = 7,
+    limit: Annotated[int, Query(description='条数上限', ge=1, le=1000)] = 500,
+    offset: Annotated[int, Query(description='偏移（分页用）', ge=0)] = 0,
+    start: Annotated[Optional[str], Query(description='起始时间（YYYY-MM-DD HH:mm:ss，可只给日期）')] = None,
+    end: Annotated[Optional[str], Query(description='结束时间（同格式）')] = None,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    rows = await SiteHealthDao.get_error_logs(query_db, site_id, days=days, limit=limit, offset=offset, start=start, end=end)
+    total = await SiteHealthDao.count_error_logs(query_db, site_id, days=days, start=start, end=end)
+    return ResponseUtil.success(data={
+        'rows': [
+            {'id': r.id, 'ts': r.error_time, 'msg': r.msg, 'count': r.count, 'createTime': r.create_time.isoformat() if r.create_time else None}
+            for r in rows
+        ],
+        'total': total,
+    })
+
+
+@site_health_controller.get(
+    '/site/{site_id}/offline-intervals',
+    summary='采集点离线区间（断线开始/恢复/时长/疑似重启，默认最近 7 天）',
+    response_model=DataResponseModel[dict],
+    dependencies=[UserInterfaceAuthDependency('site:health:list')],
+)
+async def get_site_offline_intervals(
+    request: Request,
+    site_id: Annotated[int, Path(description='采集点ID')],
+    days: Annotated[int, Query(description='最近 N 天', ge=1, le=90)] = 7,
+    start: Annotated[Optional[str], Query(description='起始时间（YYYY-MM-DD HH:mm:ss，可只给日期）')] = None,
+    end: Annotated[Optional[str], Query(description='结束时间（同格式）')] = None,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days, start=start, end=end)
+    return ResponseUtil.success(data=result)
 
 
 @site_health_controller.get(

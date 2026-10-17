@@ -8,6 +8,7 @@ from module_site_health.entity.do.site_health_do import (
     SiteHealthSite,
     SiteHealthHeartbeatLog,
     SiteHealthFlowsUpload,
+    SiteHealthErrorLog,
     hash_site_key,
 )
 
@@ -44,16 +45,32 @@ class SiteHealthDao:
         return result.scalars().first()
 
     @staticmethod
-    async def get_history(db: AsyncSession, site_id: int, limit: int = 200, offset: int = 0) -> list[SiteHealthHeartbeatLog]:
-        """获取某采集点心跳履历（倒序，支持 offset 分页加载更多）。"""
-        result = await db.execute(
+    async def get_history(db: AsyncSession, site_id: int, limit: int = 200, offset: int = 0,
+                          start: str | None = None, end: str | None = None) -> list[SiteHealthHeartbeatLog]:
+        """获取某采集点心跳履历（倒序，支持 offset 分页与起止时间筛选）。"""
+        query = (
             select(SiteHealthHeartbeatLog)
             .where(SiteHealthHeartbeatLog.site_id == site_id)
-            .order_by(desc(SiteHealthHeartbeatLog.id))
-            .limit(limit)
-            .offset(offset)
+        )
+        if start:
+            query = query.where(SiteHealthHeartbeatLog.report_time >= start)
+        if end:
+            query = query.where(SiteHealthHeartbeatLog.report_time <= end)
+        result = await db.execute(
+            query.order_by(desc(SiteHealthHeartbeatLog.id)).limit(limit).offset(offset)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def count_heartbeat_logs(db: AsyncSession, site_id: int, start: str | None = None, end: str | None = None) -> int:
+        """某采集点心跳履历总条数（分页器总数用，支持起止时间筛选）。"""
+        query = select(func.count(SiteHealthHeartbeatLog.id)).where(SiteHealthHeartbeatLog.site_id == site_id)
+        if start:
+            query = query.where(SiteHealthHeartbeatLog.report_time >= start)
+        if end:
+            query = query.where(SiteHealthHeartbeatLog.report_time <= end)
+        result = await db.execute(query)
+        return result.scalar() or 0
 
     @staticmethod
     async def get_memory_trend(db: AsyncSession, site_id: int, hours: int) -> list:
@@ -150,3 +167,91 @@ class SiteHealthDao:
             )
         )
         return result.rowcount or 0
+
+    # ==================== 异常履历（保留 7 天） ====================
+
+    @staticmethod
+    async def add_error_logs(db: AsyncSession, site_id: int, items: list[dict]) -> int:
+        """逐条插入异常履历（与最新快照分开存，履历只增不覆盖）。"""
+        count = 0
+        for item in items:
+            db.add(SiteHealthErrorLog(
+                site_id=site_id,
+                error_time=item['ts'],
+                msg=item['msg'],
+                count=item.get('count') or 1,
+            ))
+            count += 1
+        return count
+
+    @staticmethod
+    async def get_error_logs(db: AsyncSession, site_id: int, days: int = 7, limit: int = 500, offset: int = 0,
+                             start: str | None = None, end: str | None = None) -> list[SiteHealthErrorLog]:
+        """某采集点异常履历（倒序，支持分页与起止时间筛选；start/end 与 days 互斥）。"""
+        cutoff = None if (start or end) else (datetime.now() - timedelta(days=days))
+        query = select(SiteHealthErrorLog).where(SiteHealthErrorLog.site_id == site_id)
+        if cutoff:
+            query = query.where(SiteHealthErrorLog.create_time >= cutoff)
+        if start:
+            query = query.where(SiteHealthErrorLog.create_time >= start)
+        if end:
+            query = query.where(SiteHealthErrorLog.create_time <= end)
+        result = await db.execute(
+            query.order_by(desc(SiteHealthErrorLog.id)).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+    @staticmethod
+    async def count_error_logs(db: AsyncSession, site_id: int, days: int = 7,
+                               start: str | None = None, end: str | None = None) -> int:
+        """某采集点异常履历总条数（分页器总数用）。"""
+        cutoff = None if (start or end) else (datetime.now() - timedelta(days=days))
+        query = select(func.count(SiteHealthErrorLog.id)).where(SiteHealthErrorLog.site_id == site_id)
+        if cutoff:
+            query = query.where(SiteHealthErrorLog.create_time >= cutoff)
+        if start:
+            query = query.where(SiteHealthErrorLog.create_time >= start)
+        if end:
+            query = query.where(SiteHealthErrorLog.create_time <= end)
+        result = await db.execute(query)
+        return result.scalar() or 0
+
+    @staticmethod
+    async def clean_old_error_logs(db: AsyncSession, retention_days: int = 7, batch_size: int = 5000) -> int:
+        """清理超过保留天数的异常履历（分批删除，与心跳履历清理同策略）。"""
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        total = 0
+        while True:
+            ids = (
+                await db.execute(
+                    select(SiteHealthErrorLog.id)
+                    .where(SiteHealthErrorLog.create_time < cutoff)
+                    .order_by(SiteHealthErrorLog.id)
+                    .limit(batch_size)
+                )
+            ).scalars().all()
+            if not ids:
+                break
+            await db.execute(delete(SiteHealthErrorLog).where(SiteHealthErrorLog.id.in_(ids)))
+            await db.commit()
+            total += len(ids)
+            if len(ids) < batch_size:
+                break
+        return total
+
+    @staticmethod
+    async def get_heartbeat_logs_asc(db: AsyncSession, site_id: int, days: int = 7, limit: int = 5000,
+                                     start: str | None = None, end: str | None = None) -> list[SiteHealthHeartbeatLog]:
+        """某采集点心跳履历（升序，离线区间推导用，支持起止时间筛选；start/end 与 days 互斥）。"""
+        cutoff = None if (start or end) else (datetime.now() - timedelta(days=days))
+        query = select(SiteHealthHeartbeatLog).where(SiteHealthHeartbeatLog.site_id == site_id)
+        if cutoff:
+            query = query.where(SiteHealthHeartbeatLog.report_time >= cutoff)
+        if start:
+            query = query.where(SiteHealthHeartbeatLog.report_time >= start)
+        if end:
+            query = query.where(SiteHealthHeartbeatLog.report_time <= end)
+        result = await db.execute(
+            query.order_by(SiteHealthHeartbeatLog.report_time.asc()).limit(limit)
+        )
+        return result.scalars().all()

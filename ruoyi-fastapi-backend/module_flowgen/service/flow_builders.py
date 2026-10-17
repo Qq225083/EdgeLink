@@ -640,18 +640,21 @@ def pg_sql_expr(node_id: int, device: dict, multi_block: bool, fields: list = No
     qcq = '"\',\'"'  # JSONata 文本 "','"
 
     # 列名 → JSONata 取值表达式（数字裸值、字符串加引号、可空走 NULL）
+    # 字符串列必须转义单引号，否则 tag_name/unit 里一个 ' 就拼出坏 SQL（注入/语法错误）
+    def _str(field: str) -> str:
+        return f'$replace({field}, "\'", "\'\'")'
     field_expr = {
         'device_id': f'{device["id"]}',
         'tag_id': '$string(tag_id)',
         'node_id': f'{node_id}',
-        'tag_name': f'{quote} & tag_name & {quote}',
-        'tag_address': f'{quote} & tag_address & {quote}',
-        'register_type': f'{quote} & register_type & {quote}',
-        'raw_value': '(raw_value != null ? $string(raw_value) : "NULL")',
-        'eng_value': '(eng_value != null ? $string(eng_value) : "NULL")',
-        'unit': f'{quote} & unit & {quote}',
-        'quality': f'{quote} & quality & {quote}',
-        'transform_type': f'{quote} & transform_type & {quote}',
+        'tag_name': f'{quote} & {_str("tag_name")} & {quote}',
+        'tag_address': f'{quote} & {_str("tag_address")} & {quote}',
+        'register_type': f'{quote} & {_str("register_type")} & {quote}',
+        'raw_value': '(raw_value = true ? "1" : raw_value = false ? "0" : raw_value != null ? $string(raw_value) : "NULL")',
+        'eng_value': '(eng_value = true ? "1" : eng_value = false ? "0" : eng_value != null ? $string(eng_value) : "NULL")',
+        'unit': f'{quote} & {_str("unit")} & {quote}',
+        'quality': f'{quote} & {_str("quality")} & {quote}',
+        'transform_type': f'{quote} & {_str("transform_type")} & {quote}',
         'ts': f'{quote} & ts & {quote}',
     }
     # NOT NULL 约束列（plc_data_log: device_id/tag_id/quality 非空）——强制带上，防呆

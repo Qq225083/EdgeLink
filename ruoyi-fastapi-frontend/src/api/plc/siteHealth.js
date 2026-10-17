@@ -20,6 +20,24 @@ export function listSite(query) {
   })
 }
 
+// 查询采集点离线区间（断线开始/恢复/时长）
+export function getSiteOfflineIntervals(siteId, days, query) {
+  return request({
+    url: '/site-health/site/' + siteId + '/offline-intervals',
+    method: 'get',
+    params: { days: days || 7, ...query }
+  })
+}
+
+// 查询采集点异常履历（默认最近 7 天，逐条记录，支持分页）
+export function getSiteErrors(siteId, query) {
+  return request({
+    url: '/site-health/site/' + siteId + '/errors',
+    method: 'get',
+    params: { days: 7, ...query }
+  })
+}
+
 // 查询采集点状态统计（一览卡片）
 export function getSiteSummary() {
   return request({

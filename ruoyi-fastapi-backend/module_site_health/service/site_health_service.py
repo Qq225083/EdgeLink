@@ -79,6 +79,7 @@ class SiteHealthService:
             floor=model.floor.strip(),
             process_stage=model.process_stage.strip(),
             contact=model.contact.strip() if model.contact else None,
+            teams_webhook=model.teams_webhook.strip() if model.teams_webhook else None,
             remark=model.remark.strip() if model.remark else None,
             node_port=model.node_port,
             status=1,
@@ -123,6 +124,7 @@ class SiteHealthService:
         site.floor = model.floor.strip()
         site.process_stage = model.process_stage.strip()
         site.contact = model.contact.strip() if model.contact else None
+        site.teams_webhook = model.teams_webhook.strip() if model.teams_webhook else None
         site.remark = model.remark.strip() if model.remark else None
         site.node_port = model.node_port
         await db.commit()
@@ -282,6 +284,14 @@ class SiteHealthService:
         site.uptime_sec = int(uptime_sec or 0)
         if errors is not None:
             site.last_errors = cls._normalize_errors(errors, now)
+            # 异常履历：逐条插入（保留 7 天），与"最新快照"分开存，互不影响
+            normalized = json.loads(site.last_errors or '[]')
+            if normalized:
+                try:
+                    await SiteHealthDao.add_error_logs(db, site_id, normalized)
+                except Exception as exc:
+                    # 履历表异常（如未迁移）不能阻断心跳主链路
+                    logger.warning(f'异常履历写入失败（不影响心跳）：{exc}')
 
         db.add(
             SiteHealthHeartbeatLog(
@@ -467,9 +477,10 @@ class SiteHealthService:
         return summary
 
     @classmethod
-    async def get_history(cls, db: AsyncSession, site_id: int, limit: int, offset: int) -> list[dict]:
+    async def get_history(cls, db: AsyncSession, site_id: int, limit: int, offset: int,
+                          start: str | None = None, end: str | None = None) -> list[dict]:
         """获取某采集点心跳履历（camelCase 字典列表，供前端直接渲染）。"""
-        logs = await SiteHealthDao.get_history(db, site_id, limit, offset)
+        logs = await SiteHealthDao.get_history(db, site_id, limit, offset, start=start, end=end)
         return CamelCaseUtil.transform_result(list(logs))
 
     @classmethod
@@ -484,3 +495,59 @@ class SiteHealthService:
             }
             for r in rows
         ]
+
+    @classmethod
+    async def get_offline_intervals(cls, db: AsyncSession, site_id: int, days: int = 7,
+                                    start: str | None = None, end: str | None = None) -> dict:
+        """离线区间推导：相邻心跳间隔 > 3×心跳间隔 记为一段离线。
+        恢复时 uptime 变小 → 标记疑似重启；最后一条距今超阈值 → 当前离线中。"""
+        logs = await SiteHealthDao.get_heartbeat_logs_asc(db, site_id, days, start=start, end=end)
+        result = await db.execute(
+            select(SiteHealthSite.heartbeat_interval, SiteHealthSite.teams_webhook, SiteHealthSite.status)
+            .where(SiteHealthSite.id == site_id)
+        )
+        row = result.first()
+        interval = (row[0] if row else 30) or 30
+        teams_webhook = row[1] if row else None
+        site_status = row[2] if row else 1
+        threshold = 3 * interval
+        now = datetime.now()
+        intervals = []
+        for prev, curr in zip(logs, logs[1:]):
+            gap = (curr.report_time - prev.report_time).total_seconds()
+            if gap > threshold:
+                intervals.append({
+                    'start': prev.report_time.isoformat(),
+                    'end': curr.report_time.isoformat(),
+                    'durationSec': int(gap),
+                    'restarted': (curr.uptime_sec or 0) < (prev.uptime_sec or 0),
+                })
+
+        # 当前状态必须用"未筛选"的最新心跳判断，不能被用户选的时间范围污染；
+        # 停用站点不视为离线。ongoing 区间只在它落在筛选范围内时才并入列表。
+        latest_rows = await SiteHealthDao.get_history(db, site_id, limit=1)
+        current_offline = False
+        if site_status != 0 and latest_rows:
+            last = latest_rows[0]
+            ongoing = (now - last.report_time).total_seconds()
+            if ongoing > threshold:
+                current_offline = True
+                start_dt = datetime.fromisoformat(start.replace(' ', 'T')) if start else None
+                end_dt = datetime.fromisoformat(end.replace(' ', 'T')) if end else None
+                in_range = (not start_dt or last.report_time >= start_dt) and (not end_dt or last.report_time <= end_dt)
+                if in_range:
+                    intervals.append({
+                        'start': last.report_time.isoformat(),
+                        'end': None,
+                        'durationSec': int(ongoing),
+                        'restarted': False,
+                        'ongoing': True,
+                    })
+        intervals.reverse()
+        return {
+            'thresholdSec': threshold,
+            'currentOffline': current_offline,
+            'siteStatus': site_status,
+            'teamsWebhook': teams_webhook,
+            'intervals': intervals,
+        }

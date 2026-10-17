@@ -1,0 +1,250 @@
+[
+  {
+    "id": "teamsNotifyTab01",
+    "type": "tab",
+    "label": "TEAMS_断线通知",
+    "disabled": false,
+    "info": "每 60 秒轮询后端离线区间接口，断线开始/恢复各发一次 Teams 通知（Adaptive Card）。"
+  },
+  {
+    "id": "teamsNote01",
+    "type": "comment",
+    "z": "teamsNotifyTab01",
+    "name": "【配置说明】\n1. 在【采集点登记】页录入 Teams Incoming Webhook（离线区间接口会带出 teamsWebhook，webhook 节点用 {{teamsWebhook}} 渲染，不用改本页）；\n2. 「离线区间接口」节点的 X-API-Key 填后端 MONITOR_API_KEY（与心跳上报同一把）；\n3. 「断线判定与去重」里的 site 常量可改采集点名称和负责人（siteId 在 url 里也要同步改）；\n4. 去重逻辑：同一断线只报一次，恢复补一条；首次启动只建状态不补报历史；离线不足 60 秒先不报（防抖）。\n5. 本页与生成页无关，合并部署不会被替换。",
+    "info": "",
+    "x": 120,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "teamsInject01",
+    "type": "inject",
+    "z": "teamsNotifyTab01",
+    "name": "每 60 秒轮询",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "60",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 5,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 200,
+    "y": 160,
+    "wires": [
+      [
+        "teamsHttpQuery01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsHttpQuery01",
+    "type": "http request",
+    "z": "teamsNotifyTab01",
+    "name": "离线区间接口",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "http://127.0.0.1:9099/monitor/offline-intervals-edge?site_id=1&days=1",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [
+      {
+        "keyType": "other",
+        "keyValue": "X-API-Key",
+        "valueType": "other",
+        "valueValue": "REPLACE_WITH_MONITOR_API_KEY"
+      }
+    ],
+    "x": 430,
+    "y": 160,
+    "wires": [
+      [
+        "teamsJudge01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsJudge01",
+    "type": "function",
+    "z": "teamsNotifyTab01",
+    "name": "断线判定与去重",
+    "func": "const site = { id: 1, name: '二厂3楼', owner: '小张' };\nconst resp = (msg.payload && msg.payload.data) ? msg.payload.data : (msg.payload || {});\nconst teamsWebhook = resp.teamsWebhook;\nconst intervals = resp.intervals || [];\nconst alerted = flow.get('alerted') || {};\nconst recoveredSent = flow.get('recoveredSent') || {};\nconst first = !flow.get('inited');\nconst out = [];\n\nfor (const iv of intervals) {\n    if (!iv.start) continue;\n    const seen = alerted[iv.start];\n    if (first) {\n        // 首次启动：只登记历史，不通知，防重启轰炸\n        alerted[iv.start] = true;\n        if (!iv.ongoing) recoveredSent[iv.start] = true;\n        continue;\n    }\n    if (!seen) {\n        // 断线开始：只报一次；离线不足 60 秒先不报（防抖，下一轮再判）\n        if (iv.ongoing && iv.durationSec < 60) continue;\n        alerted[iv.start] = true;\n        out.push({ type: 'offline', iv: iv });\n    } else if (!iv.ongoing && !recoveredSent[iv.start]) {\n        // 恢复：之前报过断线且已结束，补一条恢复通知\n        recoveredSent[iv.start] = true;\n        out.push({ type: 'recovered', iv: iv });\n    }\n}\nflow.set('inited', true);\nflow.set('alerted', alerted);\nflow.set('recoveredSent', recoveredSent);\nmsg.site = site;\nmsg.teamsWebhook = teamsWebhook;\nmsg.payload = out;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 690,
+    "y": 160,
+    "wires": [
+      [
+        "teamsSwitch01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsSwitch01",
+    "type": "switch",
+    "z": "teamsNotifyTab01",
+    "name": "有通知?",
+    "property": "payload.length",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "gt",
+        "v": "0",
+        "vt": "num"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 1,
+    "x": 910,
+    "y": 160,
+    "wires": [
+      [
+        "teamsSplit01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsSplit01",
+    "type": "split",
+    "z": "teamsNotifyTab01",
+    "name": "逐条通知",
+    "spl": "msg.payload",
+    "splType": "msg",
+    "stream": true,
+    "split": "\\n",
+    "splitType": "str",
+    "arraySplt": 1,
+    "arraySpltType": "len",
+    "x": 1090,
+    "y": 160,
+    "wires": [
+      [
+        "teamsCard01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsCard01",
+    "type": "function",
+    "z": "teamsNotifyTab01",
+    "name": "拼 Adaptive Card",
+    "func": "const iv = msg.payload.iv;\nconst type = msg.payload.type;\nconst title = type === 'offline' ? '【EdgeLink 断线告警】' : '【EdgeLink 恢复通知】';\nconst lines = [\n    `${msg.site.name} 于 ${iv.start} 断线。`,\n    iv.ongoing\n        ? `当前仍未恢复（已持续 ${Math.floor(iv.durationSec / 60)} 分钟）`\n        : `已于 ${iv.end} 恢复（离线 ${Math.floor(iv.durationSec / 60)} 分钟）`,\n    `疑似重启：${iv.restarted ? '是' : '否'}`,\n    `负责人：${msg.site.owner}`\n];\nmsg.payload = {\n    type: 'message',\n    attachments: [{\n        contentType: 'application/vnd.microsoft.card.adaptive',\n        content: {\n            '$schema': 'http://adaptivecards.io/schemas/adaptive-card.json',\n            type: 'AdaptiveCard',\n            version: '1.4',\n            body: [\n                { type: 'TextBlock', size: 'Large', weight: 'Bolder', text: title, color: type === 'offline' ? 'Attention' : 'Good' },\n                { type: 'TextBlock', text: lines.join('\\n'), wrap: true }\n            ]\n        }\n    }]\n};\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 160,
+    "wires": [
+      [
+        "teamsGuard01",
+        "teamsDebug01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsWebhook01",
+    "type": "http request",
+    "z": "teamsNotifyTab01",
+    "name": "Teams Webhook",
+    "method": "POST",
+    "ret": "txt",
+    "paytoqs": "ignore",
+    "url": "{{teamsWebhook}}",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [
+      {
+        "keyType": "other",
+        "keyValue": "Content-Type",
+        "valueType": "other",
+        "valueValue": "application/json"
+      }
+    ],
+    "x": 1740,
+    "y": 160,
+    "wires": [
+      [
+        "teamsDebug01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsDebug01",
+    "type": "debug",
+    "z": "teamsNotifyTab01",
+    "name": "通知结果",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1510,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "teamsGuard01",
+    "type": "switch",
+    "z": "teamsNotifyTab01",
+    "name": "webhook已配置?",
+    "property": "teamsWebhook",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "nempty"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 2,
+    "x": 1510,
+    "y": 220,
+    "wires": [
+      [
+        "teamsWebhook01"
+      ],
+      [
+        "teamsDebugEmpty01"
+      ]
+    ]
+  },
+  {
+    "id": "teamsDebugEmpty01",
+    "type": "debug",
+    "z": "teamsNotifyTab01",
+    "name": "未配置webhook，跳过通知",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1740,
+    "y": 220,
+    "wires": []
+  }
+]

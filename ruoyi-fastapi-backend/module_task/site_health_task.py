@@ -11,12 +11,15 @@ from utils.log_util import logger
 
 
 async def clean_site_health_heartbeat_logs_task() -> None:
-    """每天凌晨清理超过 7 天的存量采集点心跳履历。"""
+    """每天凌晨清理超过 7 天的存量采集点心跳履历 + 异常履历。"""
     async with AsyncSessionLocal() as db:
         try:
             count = await SiteHealthDao.clean_old_heartbeat_logs(db, retention_days=7)
             if count:
                 logger.info(f'存量采集点履历清理完成：删除 {count} 条过期记录')
+            err_count = await SiteHealthDao.clean_old_error_logs(db, retention_days=7)
+            if err_count:
+                logger.info(f'存量采集点异常履历清理完成：删除 {err_count} 条过期记录')
             await db.commit()
         except SQLAlchemyError as exc:
             await db.rollback()

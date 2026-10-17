@@ -20,6 +20,7 @@ from module_plc.entity.vo.monitor_vo import (
 from module_plc.dao.monitor_dao import MonitorDao
 from module_plc.service.device_service import DeviceService
 from module_plc.service.monitor_service import MonitorService
+from module_site_health.service.site_health_service import SiteHealthService
 from utils.log_util import logger
 from utils.response_util import ResponseUtil
 
@@ -302,3 +303,19 @@ async def confirm_alert(
 ) -> Response:
     result = await MonitorService.confirm_alert(query_db, alert_id)
     return ResponseUtil.success(msg=result.message)
+
+
+@monitor_edge_controller.get(
+    '/offline-intervals-edge',
+    summary='离线区间（边缘专用，X-API-Key 鉴权，供 Teams 通知流轮询）',
+    response_model=DataResponseModel[dict],
+)
+async def get_offline_intervals_edge(
+    request: Request,
+    site_id: Annotated[int, Query(description='采集点ID（site_health_site.id）')],
+    days: Annotated[int, Query(description='最近 N 天', ge=1, le=90)] = 7,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    await _verify_monitor_api_key(request)
+    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days)
+    return ResponseUtil.success(data=result)

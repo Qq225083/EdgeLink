@@ -608,14 +608,14 @@
         "p": "pg_sql_0",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 101 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & 66 & \",\" & (raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & transform_type & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 101 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & 66 & \",\" & (raw_value = true ? \"1\" : raw_value = false ? \"0\" : raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & $replace(transform_type, \"'\", \"''\") & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       },
       {
         "p": "pg_sql_1",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 101 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 101 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       }
     ],
@@ -1554,14 +1554,14 @@
         "p": "pg_sql_0",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 102 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & 66 & \",\" & (raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & transform_type & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 102 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & 66 & \",\" & (raw_value = true ? \"1\" : raw_value = false ? \"0\" : raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & $replace(transform_type, \"'\", \"''\") & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       },
       {
         "p": "pg_sql_1",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 102 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 102 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       }
     ],
@@ -2675,14 +2675,14 @@
         "p": "pg_sql_0",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 109 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & 66 & \",\" & (raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & transform_type & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO public.plc_data_log (device_id,tag_id,quality,node_id,raw_value,eng_value,transform_type,ts) VALUES \" & $join($vals.(\"(\" & 109 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & 66 & \",\" & (raw_value = true ? \"1\" : raw_value = false ? \"0\" : raw_value != null ? $string(raw_value) : \"NULL\") & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & $replace(transform_type, \"'\", \"''\") & \"'\" & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       },
       {
         "p": "pg_sql_1",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 109 & \",\" & $string(tag_id) & \",\" & \"'\" & quality & \"'\" & \",\" & (eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
+        "to": "($vals := pg_values; \"INSERT INTO edgelink.his_log (device_id,tag_id,quality,eng_value,ts) VALUES \" & $join($vals.(\"(\" & 109 & \",\" & $string(tag_id) & \",\" & \"'\" & $replace(quality, \"'\", \"''\") & \"'\" & \",\" & (eng_value = true ? \"1\" : eng_value = false ? \"0\" : eng_value != null ? $string(eng_value) : \"NULL\") & \",\" & \"'\" & ts & \"'\" & \")\"), \",\"))",
         "tot": "jsonata"
       }
     ],
