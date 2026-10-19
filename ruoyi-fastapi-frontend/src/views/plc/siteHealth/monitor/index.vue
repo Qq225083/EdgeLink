@@ -165,6 +165,9 @@
             <el-table-column label="疑似重启" align="center" width="90">
               <template slot-scope="scope">
                 <el-tag v-if="scope.row.restarted" type="warning" size="mini">疑似重启</el-tag>
+                <el-tooltip v-else-if="scope.row.durationSec < 300" content="离线不足 5 分钟：多为后端重启、画布全量部署或网络闪断，通常非节点真断线" placement="top">
+                  <el-tag type="info" size="mini">短时中断</el-tag>
+                </el-tooltip>
                 <span v-else>-</span>
               </template>
             </el-table-column>
