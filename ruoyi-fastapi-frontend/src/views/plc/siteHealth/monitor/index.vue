@@ -430,6 +430,7 @@ export default {
         officeIp: null,
         industIp: null,
         nodePort: null,
+        teamsWebhook: null,
         siteName: null,
         building: null,
         floor: null,
@@ -635,6 +636,7 @@ export default {
         processStage: row.processStage,
         contact: row.contact,
         remark: row.remark,
+        teamsWebhook: row.teamsWebhook,
       };
       this.editOpen = true;
       this.$nextTick(() => {
