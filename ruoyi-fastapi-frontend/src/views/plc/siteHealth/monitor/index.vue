@@ -57,33 +57,38 @@
       <el-table-column type="expand" width="45">
         <template slot-scope="scope">
           <div class="expand-detail">
+            <div class="detail-item"><span class="detail-label">位置</span><span>{{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}</span></div>
             <div class="detail-item"><span class="detail-label">工业网IP</span><span>{{ scope.row.industIp || '-' }}</span></div>
             <div class="detail-item"><span class="detail-label">上报IP</span><span>{{ scope.row.reportIp || '-' }}</span></div>
-            <div class="detail-item"><span class="detail-label">心跳间隔</span><span>{{ scope.row.heartbeatInterval || 30 }}s</span></div>
-            <div class="detail-item"><span class="detail-label">联系人</span><span>{{ scope.row.contact || '-' }}</span></div>
             <div class="detail-item"><span class="detail-label">采集点标识</span><span>{{ scope.row.nodeKey || '-' }}</span></div>
+            <div class="detail-item"><span class="detail-label">Node-RED 版本</span><span>{{ scope.row.nodeRedVersion || '-' }}</span></div>
+          </div>
+          <div class="expand-actions">
+            <el-button size="mini" plain icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['site:health:edit']">修改</el-button>
+            <el-button size="mini" plain icon="el-icon-key" @click="handleRegenerate(scope.row)" v-hasPermi="['site:health:edit']">重置密钥</el-button>
+            <el-button size="mini" plain :icon="scope.row.status === 0 ? 'el-icon-video-play' : 'el-icon-video-pause'" @click="handleToggleStatus(scope.row)" v-hasPermi="['site:health:edit']">{{ scope.row.status === 0 ? '启用' : '停用' }}</el-button>
+            <el-button size="mini" plain type="danger" icon="el-icon-delete" @click="handleDelete(scope.row)" v-hasPermi="['site:health:remove']">删除</el-button>
           </div>
         </template>
       </el-table-column>
       <el-table-column type="selection" width="45" align="center" />
-      <el-table-column label="采集场所" align="center" prop="siteName" min-width="120" :show-overflow-tooltip="true" />
-      <!-- 来源：区分纯监控点（存量登记）与采集点（采集配置联动） -->
-      <el-table-column label="来源" align="center" width="85">
+      <el-table-column label="采集场所" align="center" prop="siteName" min-width="160" :show-overflow-tooltip="true" />
+      <el-table-column label="联系人" align="center" prop="contact" min-width="90" :show-overflow-tooltip="true">
+        <template slot-scope="scope">{{ scope.row.contact || '-' }}</template>
+      </el-table-column>
+      <!-- 来源：纯文本+图标，与状态列的彩色标签区分开 -->
+      <el-table-column label="来源" align="center" min-width="100">
         <template slot-scope="scope">
-          <el-tag size="mini" :type="scope.row.source === 'config' ? 'success' : 'info'">
+          <span class="source-text">
+            <i :class="scope.row.source === 'config' ? 'el-icon-connection' : 'el-icon-edit-outline'" />
             {{ scope.row.source === 'config' ? '采集配置' : '存量登记' }}
-          </el-tag>
+          </span>
         </template>
       </el-table-column>
-      <el-table-column label="位置（栋/楼/工程）" align="center" min-width="130" :show-overflow-tooltip="true">
-        <template slot-scope="scope">
-          {{ [scope.row.building, scope.row.floor, scope.row.processStage].filter(Boolean).join(' / ') || '-' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="办公网IP:端口" align="center" width="140" :show-overflow-tooltip="true">
+      <el-table-column label="办公网IP:端口" align="center" min-width="160" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ scope.row.officeIp }}{{ scope.row.nodePort ? ':' + scope.row.nodePort : '' }}</template>
       </el-table-column>
-      <el-table-column label="状态" align="center" width="80">
+      <el-table-column label="状态" align="center" width="85">
         <template slot-scope="scope">
           <el-tag v-if="scope.row.status === 0" type="info" size="mini">已停用</el-tag>
           <el-tag v-else-if="!scope.row.hasReported" type="warning" size="mini">未接入</el-tag>
@@ -91,38 +96,34 @@
           <el-tag v-else type="danger" size="mini">离线</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="最近报错" align="center" width="85">
-        <template slot-scope="scope">
-          <el-tag v-if="scope.row.lastErrors && scope.row.lastErrors.length" type="warning" size="mini" class="error-tag" @click="handleErrors(scope.row)">
-            报错 {{ scope.row.lastErrors.length }} 条
-          </el-tag>
-          <span v-else>-</span>
-        </template>
+      <el-table-column label="心跳间隔" align="center" min-width="80">
+        <template slot-scope="scope">{{ scope.row.heartbeatInterval || 30 }}s</template>
       </el-table-column>
-      <el-table-column label="最近心跳" align="center" width="150" :show-overflow-tooltip="true">
+      <el-table-column label="最近心跳" align="center" min-width="160" :show-overflow-tooltip="true">
         <template slot-scope="scope">{{ formatTime(scope.row.lastHeartbeat) }}</template>
       </el-table-column>
-      <el-table-column label="进程内存" align="center" width="90">
+      <el-table-column label="进程内存" align="center" min-width="95">
         <template slot-scope="scope">{{ formatMb(scope.row.memoryRssMb) }}</template>
       </el-table-column>
-      <el-table-column label="整机已用" align="center" width="90">
+      <el-table-column label="整机已用" align="center" min-width="95">
         <template slot-scope="scope">{{ formatMb(scope.row.memoryUsedMb) }}</template>
       </el-table-column>
-      <el-table-column label="运行流" align="center" width="65">
+      <el-table-column label="运行流数" align="center" min-width="80">
         <template slot-scope="scope">{{ scope.row.runningFlows == null ? '-' : scope.row.runningFlows }}</template>
       </el-table-column>
-      <el-table-column label="运行时长" align="center" width="100">
+      <el-table-column label="运行时长" align="center" min-width="105">
         <template slot-scope="scope">{{ formatUptime(scope.row.uptimeSec) }}</template>
       </el-table-column>
-      <el-table-column label="操作" align="center" class-name="small-padding fixed-width op-cell" width="480" fixed="right">
+      <el-table-column label="操作" align="center" class-name="small-padding fixed-width op-cell" width="280" fixed="right">
         <template slot-scope="scope">
           <el-button size="mini" type="text" icon="el-icon-view" @click="handleHistory(scope.row)" v-hasPermi="['site:health:list']">履历</el-button>
           <el-button size="mini" type="text" icon="el-icon-data-line" @click="handleTrend(scope.row)" v-hasPermi="['site:health:list']">趋势</el-button>
           <el-button size="mini" type="text" icon="el-icon-folder-opened" @click="handleUploads(scope.row)" v-hasPermi="['site:health:list']">上传记录</el-button>
-          <el-button size="mini" type="text" icon="el-icon-edit" @click="handleUpdate(scope.row)" v-hasPermi="['site:health:edit']">修改</el-button>
-          <el-button size="mini" type="text" icon="el-icon-key" @click="handleRegenerate(scope.row)" v-hasPermi="['site:health:edit']">重置密钥</el-button>
-          <el-button size="mini" type="text" :icon="scope.row.status === 0 ? 'el-icon-video-play' : 'el-icon-video-pause'" @click="handleToggleStatus(scope.row)" v-hasPermi="['site:health:edit']">{{ scope.row.status === 0 ? '启用' : '停用' }}</el-button>
-          <el-button size="mini" type="text" icon="el-icon-delete" style="color: #F56C6C" @click="handleDelete(scope.row)" v-hasPermi="['site:health:remove']">删除</el-button>
+          <el-button size="mini" type="text" icon="el-icon-warning-outline"
+            :style="scope.row.lastErrors && scope.row.lastErrors.length ? 'color:#E6A23C' : ''"
+            @click="handleErrors(scope.row)" v-hasPermi="['site:health:list']">
+            报错{{ scope.row.lastErrors && scope.row.lastErrors.length ? ' ' + scope.row.lastErrors.length + '条' : '' }}
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -146,8 +147,9 @@
             <el-tag v-else-if="offlineSiteStatus === 0" type="info" size="small">已停用</el-tag>
             <el-tag v-else type="success" size="small">当前在线</el-tag>
             <span class="history-count">判定规则：相邻心跳间隔 &gt; 3×心跳间隔 记为一段离线；恢复时 uptime 变小标记疑似重启</span>
+            <el-switch v-model="offlineShowShort" active-text="含短间隔(&lt;5分钟)" style="margin-left: auto" @change="loadOfflineIntervals" />
           </div>
-          <el-table :data="offlineList" size="small" border max-height="420">
+          <el-table v-loading="offlineLoading" :data="offlineList" size="small" border max-height="420">
             <el-table-column label="断线开始" align="center" width="170" :show-overflow-tooltip="true">
               <template slot-scope="scope">{{ formatTime(scope.row.start) }}</template>
             </el-table-column>
@@ -267,8 +269,8 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="Teams Webhook" prop="teamsWebhook">
-          <el-input v-model="editForm.teamsWebhook" placeholder="断线通知用 Teams Incoming Webhook 地址（选填）" maxlength="500" />
+        <el-form-item label="通知地址" prop="teamsWebhook">
+          <el-input v-model="editForm.teamsWebhook" placeholder="断线通知地址：告警邮箱 或 Teams Incoming Webhook（选填）" maxlength="500" />
         </el-form-item>
         <el-form-item label="采集备注" prop="remark">
           <el-input v-model="editForm.remark" type="textarea" :rows="3" placeholder="选填" maxlength="200" show-word-limit />
@@ -410,6 +412,9 @@ export default {
       offlineList: [],
       offlineCurrent: false,
       offlineSiteStatus: null,
+      offlineLoading: false,
+      // 短维护间隔（重启后端/重新部署造成的几分钟断档）默认不显示，开关可切回全量
+      offlineShowShort: false,
       historyLoading: false,
       historyList: [],
       historyLimit: 200,
@@ -545,22 +550,35 @@ export default {
     handleHistory(row) {
       this.currentSite = row;
       this.historyTitle = '【' + row.siteName + '】心跳履历';
-      this.historyOpen = true;
+      // 切换采集点时先清空上一个站点的数据，避免短暂显示旧数据
       this.historyTab = 'offline';
+      this.historyRange = null;
       this.historyPageNum = 1;
+      this.historyList = [];
+      this.historyTotal = 0;
+      this.offlineList = [];
+      this.offlineCurrent = false;
+      this.offlineSiteStatus = null;
+      this.historyOpen = true;
       this.loadHistory(false);
       this.loadOfflineIntervals();
     },
-    /** 加载离线区间（断线开始/恢复/时长/疑似重启） */
+    /** 加载离线区间（断线开始/恢复/时长/疑似重启；默认过滤 <5 分钟的短维护间隔） */
     loadOfflineIntervals() {
       if (!this.currentSite) return;
       const range = this.historyRange || [];
-      getSiteOfflineIntervals(this.currentSite.id, 7, { start: range[0], end: range[1] }).then(response => {
+      this.offlineLoading = true;
+      getSiteOfflineIntervals(this.currentSite.id, 7, {
+        start: range[0],
+        end: range[1],
+        min_sec: this.offlineShowShort ? 0 : 300,
+      }).then(response => {
         const d = response.data || {};
         this.offlineList = d.intervals || [];
         this.offlineCurrent = !!d.currentOffline;
         this.offlineSiteStatus = d.siteStatus == null ? null : Number(d.siteStatus);
-      }).catch(() => { this.offlineList = []; this.offlineCurrent = false; });
+        this.offlineLoading = false;
+      }).catch(() => { this.offlineList = []; this.offlineCurrent = false; this.offlineLoading = false; });
     },
     /** 加载履历（按页码分页 + 时间范围筛选） */
     loadHistory() {
@@ -743,6 +761,7 @@ export default {
     handleUploads(row) {
       this.uploadsSiteId = row.id;
       this.uploadsTitle = '【' + row.siteName + '】flows.json 上传记录';
+      this.uploadsList = [];
       this.uploadsOpen = true;
       this.loadUploads();
     },
@@ -1032,9 +1051,20 @@ export default {
 .key-actions {
   text-align: center;
 }
-/* 最近报错标记（可点击） */
-.error-tag {
-  cursor: pointer;
+/* 来源列：纯文本+图标，与状态列标签视觉区分 */
+.source-text {
+  color: #606266;
+  font-size: 13px;
+}
+.source-text i {
+  margin-right: 4px;
+  color: #909399;
+}
+/* 展开行内的操作按钮区（修改/重置密钥/启停/删除） */
+.expand-actions {
+  padding: 8px 16px 12px 40px;
+  background: #fafbfc;
+  border-top: 1px dashed #ebeef5;
 }
 .error-msg {
   font-family: Menlo, Consolas, monospace;

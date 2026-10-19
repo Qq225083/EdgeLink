@@ -1,0 +1,192 @@
+[
+  {
+    "id": "watchTab01",
+    "type": "tab",
+    "label": "中心站点状态监视_邮件告警",
+    "disabled": false,
+    "info": "中心服务器单流监控全部采集点：每 60 秒轮询 /monitor/site-status-edge（一次返回所有站点），站点断线/恢复时发邮件提醒。新站点登记后自动纳入监控，现场节点零改动。"
+  },
+  {
+    "id": "watchNote01",
+    "type": "comment",
+    "z": "watchTab01",
+    "name": "【配置说明】\n1. 前置：中心服务器 Node-RED 需安装邮件节点：cd <NR数据目录> && npm i node-red-node-email，装完重启 NR；\n2. 「站点状态接口」节点：url 改为中心后端地址，X-API-Key 填后端 MONITOR_API_KEY；\n3. 收件人：优先用采集点登记页里该站点的「Teams Webhook」字段——填邮箱地址即按邮箱通知（http(s) 开头的值会被识别为 webhook，退回兜底收件人）；站点没填则发到「拼邮件内容」首行 RECIPIENTS 兜底地址；\n4. e-mail 节点填 SMTP 服务器/端口/账号/授权码（凭据不随流导出，导入后必须重填；公司内部 SMTP 通常免认证，authtype 选 None）；\n5. 监控语义：停用(status=0)和从未上报的站点不监控；首轮轮询只建基线不补报（防部署轰炸）；断线不足 60 秒先不报（防抖，下一轮再判）；新出现的站点若已在离线状态会直接告警；\n6. 本流只在中心服务器部署一份，现场节点无需任何改动。",
+    "info": "",
+    "x": 130,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "watchInject01",
+    "type": "inject",
+    "z": "watchTab01",
+    "name": "每 60 秒轮询",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "60",
+    "crontab": "",
+    "once": true,
+    "onceDelay": 5,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 200,
+    "y": 160,
+    "wires": [
+      [
+        "watchHttpQuery01"
+      ]
+    ]
+  },
+  {
+    "id": "watchHttpQuery01",
+    "type": "http request",
+    "z": "watchTab01",
+    "name": "站点状态接口",
+    "method": "GET",
+    "ret": "obj",
+    "paytoqs": "ignore",
+    "url": "http://127.0.0.1:9099/monitor/site-status-edge",
+    "tls": "",
+    "persist": false,
+    "proxy": "",
+    "insecureHTTPParser": false,
+    "authType": "",
+    "senderr": false,
+    "headers": [
+      {
+        "keyType": "other",
+        "keyValue": "X-API-Key",
+        "valueType": "other",
+        "valueValue": "REPLACE_WITH_MONITOR_API_KEY"
+      }
+    ],
+    "x": 430,
+    "y": 160,
+    "wires": [
+      [
+        "watchJudge01"
+      ]
+    ]
+  },
+  {
+    "id": "watchJudge01",
+    "type": "function",
+    "z": "watchTab01",
+    "name": "状态变化判定与去重",
+    "func": "const resp = (msg.payload && msg.payload.data) ? msg.payload.data : (msg.payload || {});\nconst rows = resp.rows || [];\nconst states = flow.get('states') || {};\nconst first = !flow.get('inited');\nconst out = [];\nconst now = Date.now();\n\nfor (const s of rows) {\n    // 停用 / 从未上报的站点不监控，并清掉遗留状态\n    if (s.status === 0 || !s.hasReported) {\n        delete states[s.id];\n        continue;\n    }\n    const prev = states[s.id];\n    // 离线起点 ≈ 当前时间 - 后端算好的已离线秒数（恢复通知里算时长用）\n    const offlineSince = s.isOnline ? null : now - (s.offlineSec || 0) * 1000;\n\n    if (first) {\n        // 首次轮询：只建基线，不通知，防部署/重启轰炸\n        states[s.id] = { online: s.isOnline, offlineSince: offlineSince };\n        continue;\n    }\n    if (!prev) {\n        // 基线之后新出现的站点：已离线则直接告警，在线则只登记\n        states[s.id] = { online: s.isOnline, offlineSince: offlineSince };\n        if (!s.isOnline && (s.offlineSec || 0) >= 60) {\n            out.push({ type: 'offline', site: s });\n        }\n        continue;\n    }\n    if (prev.online && !s.isOnline) {\n        // 断线：只报一次；离线不足 60 秒先不报（防抖，下一轮再判）\n        if ((s.offlineSec || 0) < 60) continue;\n        states[s.id] = { online: false, offlineSince: offlineSince };\n        out.push({ type: 'offline', site: s });\n    } else if (!prev.online && s.isOnline) {\n        // 恢复：补一条恢复通知，附本次离线时长\n        const durationMin = prev.offlineSince ? Math.round((now - prev.offlineSince) / 60000) : null;\n        states[s.id] = { online: true, offlineSince: null };\n        out.push({ type: 'recovered', site: s, durationMin: durationMin });\n    }\n}\n\nflow.set('inited', true);\nflow.set('states', states);\nmsg.payload = out;\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 690,
+    "y": 160,
+    "wires": [
+      [
+        "watchSwitch01"
+      ]
+    ]
+  },
+  {
+    "id": "watchSwitch01",
+    "type": "switch",
+    "z": "watchTab01",
+    "name": "有通知?",
+    "property": "payload.length",
+    "propertyType": "msg",
+    "rules": [
+      {
+        "t": "gt",
+        "v": "0",
+        "vt": "num"
+      }
+    ],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 1,
+    "x": 910,
+    "y": 160,
+    "wires": [
+      [
+        "watchSplit01"
+      ]
+    ]
+  },
+  {
+    "id": "watchSplit01",
+    "type": "split",
+    "z": "watchTab01",
+    "name": "逐条通知",
+    "spl": "msg.payload",
+    "splType": "msg",
+    "stream": true,
+    "split": "\\n",
+    "splitType": "str",
+    "arraySplt": 1,
+    "arraySpltType": "len",
+    "x": 1090,
+    "y": 160,
+    "wires": [
+      [
+        "watchMail01"
+      ]
+    ]
+  },
+  {
+    "id": "watchMail01",
+    "type": "function",
+    "z": "watchTab01",
+    "name": "拼邮件内容",
+    "func": "const RECIPIENTS = 'user1@example.com,user2@example.com';  // ← 兜底收件人：站点没登记通知地址时发到这里，多个用英文逗号分隔\n\nconst s = msg.payload.site;\nconst type = msg.payload.type;\nconst where = [s.building, s.floor].filter(Boolean).join('');\n\n// 通知地址复用采集点登记的 teams_webhook 字段：http(s) 开头是 Teams webhook（暂不支持，跳过），否则按邮箱用\nconst target = (s.notifyTarget || '').trim();\nif (target && !/^https?:\\/\\//i.test(target)) {\n    msg.to = target;\n} else if (target) {\n    // 登记的是 webhook 而本流只发邮件：退回兜底收件人，防止漏报\n    msg.to = RECIPIENTS;\n} else {\n    msg.to = RECIPIENTS;\n}\nif (type === 'offline') {\n    msg.topic = `【EdgeLink 断线告警】${s.siteName}`;\n    msg.payload = [\n        `采集点「${s.siteName}」${where ? '（' + where + '）' : ''}已断线。`,\n        `最后心跳：${s.lastHeartbeat || '未知'}`,\n        `已离线：${Math.floor((s.offlineSec || 0) / 60)} 分钟`,\n        `负责人：${s.contact || '未登记'}`,\n        '',\n        '请检查该站点 Node-RED 运行状态与网络。'\n    ].join('\\n');\n} else {\n    msg.topic = `【EdgeLink 恢复通知】${s.siteName}`;\n    msg.payload = [\n        `采集点「${s.siteName}」${where ? '（' + where + '）' : ''}已恢复上线。`,\n        msg.payload.durationMin != null ? `本次离线约 ${msg.payload.durationMin} 分钟。` : '',\n        `负责人：${s.contact || '未登记'}`\n    ].filter(Boolean).join('\\n');\n}\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 1290,
+    "y": 160,
+    "wires": [
+      [
+        "watchEmail01",
+        "watchDebug01"
+      ]
+    ]
+  },
+  {
+    "id": "watchEmail01",
+    "type": "e-mail",
+    "z": "watchTab01",
+    "server": "smtp.example.com",
+    "port": "465",
+    "authtype": "BASIC",
+    "saslformat": true,
+    "token": "oauth2Response.access_token",
+    "secure": true,
+    "tls": true,
+    "name": "告警邮件发送",
+    "x": 1530,
+    "y": 160,
+    "wires": []
+  },
+  {
+    "id": "watchDebug01",
+    "type": "debug",
+    "z": "watchTab01",
+    "name": "告警记录",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "topic",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 1510,
+    "y": 220,
+    "wires": []
+  }
+]

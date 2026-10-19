@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "TEAMS_断线通知",
     "disabled": false,
-    "info": "每 60 秒轮询后端离线区间接口，断线开始/恢复各发一次 Teams 通知（Adaptive Card）。"
+    "info": "【已弃用】单站点样例（site_id 写死），已被 site_status_watch_flow.json（中心端监控全部站点+邮件告警）取代。保留供 Teams webhook 解禁后参照卡片逻辑。原说明：每 60 秒轮询后端离线区间接口，断线开始/恢复各发一次 Teams 通知（Adaptive Card）。"
   },
   {
     "id": "teamsNote01",

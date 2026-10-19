@@ -217,9 +217,10 @@ async def get_site_offline_intervals(
     days: Annotated[int, Query(description='最近 N 天', ge=1, le=90)] = 7,
     start: Annotated[Optional[str], Query(description='起始时间（YYYY-MM-DD HH:mm:ss，可只给日期）')] = None,
     end: Annotated[Optional[str], Query(description='结束时间（同格式）')] = None,
+    min_sec: Annotated[int, Query(description='最短离线时长（秒），过滤重启后端/重新部署造成的短维护间隔，0=不过滤', ge=0)] = 0,
     query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
 ) -> Response:
-    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days, start=start, end=end)
+    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days, start=start, end=end, min_sec=min_sec)
     return ResponseUtil.success(data=result)
 
 

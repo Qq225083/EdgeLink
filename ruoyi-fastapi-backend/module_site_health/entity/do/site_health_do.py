@@ -31,7 +31,7 @@ class SiteHealthSite(Base):
     floor = Column(String(50), comment='楼层（采集场所拆分）')
     process_stage = Column(String(50), comment='工程（采集场所拆分）')
     contact = Column(String(50), comment='联系人')
-    teams_webhook = Column(String(500), comment='Teams Incoming Webhook 地址（断线通知用）')
+    teams_webhook = Column(String(500), comment='断线通知地址：告警邮箱 或 Teams Incoming Webhook')
     remark = Column(String(200), comment='采集备注')
     heartbeat_interval = Column(Integer, default=30, comment='心跳间隔秒（节点上报，10-180）')
     status = Column(SmallInteger, default=1, comment='0停用 1启用')

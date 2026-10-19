@@ -314,8 +314,24 @@ async def get_offline_intervals_edge(
     request: Request,
     site_id: Annotated[int, Query(description='采集点ID（site_health_site.id）')],
     days: Annotated[int, Query(description='最近 N 天', ge=1, le=90)] = 7,
+    min_sec: Annotated[int, Query(description='最短离线时长（秒），过滤短维护间隔，0=不过滤', ge=0)] = 0,
     query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
 ) -> Response:
     await _verify_monitor_api_key(request)
-    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days)
+    result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days, min_sec=min_sec)
+    return ResponseUtil.success(data=result)
+
+
+@monitor_edge_controller.get(
+    '/site-status-edge',
+    summary='全部采集点状态（边缘专用，X-API-Key 鉴权，供中心告警流轮询）',
+    description='一次返回所有采集点的在线状态（3×心跳间隔判定），新站点登记后自动纳入，无需逐站点轮询',
+    response_model=DataResponseModel[dict],
+)
+async def get_site_status_edge(
+    request: Request,
+    query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
+) -> Response:
+    await _verify_monitor_api_key(request)
+    result = await SiteHealthService.get_site_status_all(query_db)
     return ResponseUtil.success(data=result)

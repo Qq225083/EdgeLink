@@ -3,7 +3,7 @@ import hashlib
 import ipaddress
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, or_, select
@@ -498,10 +498,11 @@ class SiteHealthService:
 
     @classmethod
     async def get_offline_intervals(cls, db: AsyncSession, site_id: int, days: int = 7,
-                                    start: str | None = None, end: str | None = None) -> dict:
+                                    start: str | None = None, end: str | None = None,
+                                    min_sec: int = 0) -> dict:
         """离线区间推导：相邻心跳间隔 > 3×心跳间隔 记为一段离线。
-        恢复时 uptime 变小 → 标记疑似重启；最后一条距今超阈值 → 当前离线中。"""
-        logs = await SiteHealthDao.get_heartbeat_logs_asc(db, site_id, days, start=start, end=end)
+        恢复时 uptime 变小 → 标记疑似重启；最后一条距今超阈值 → 当前离线中。
+        min_sec：只列出时长 ≥ min_sec 的区间（过滤重启后端/重新部署造成的短维护间隔）。"""
         result = await db.execute(
             select(SiteHealthSite.heartbeat_interval, SiteHealthSite.teams_webhook, SiteHealthSite.status)
             .where(SiteHealthSite.id == site_id)
@@ -511,11 +512,23 @@ class SiteHealthService:
         teams_webhook = row[1] if row else None
         site_status = row[2] if row else 1
         threshold = 3 * interval
+
+        # 取数上限按时间跨度与心跳间隔自适应：跨度(秒)/间隔 + 余量，
+        # 避免固定 5000 条在高频心跳或长跨度下截掉数据（心跳间隔最小 10s，7 天可达 6 万条）
+        if start or end:
+            start_dt0 = datetime.fromisoformat(start.replace(' ', 'T')) if start else None
+            end_dt0 = datetime.fromisoformat(end.replace(' ', 'T')) if end else None
+            span_sec = ((end_dt0 or datetime.now()) - (start_dt0 or (datetime.now() - timedelta(days=days)))).total_seconds()
+        else:
+            span_sec = days * 86400
+        limit = int(span_sec / interval) + 200
+        logs = await SiteHealthDao.get_heartbeat_logs_asc(db, site_id, days, limit=limit, start=start, end=end)
+
         now = datetime.now()
         intervals = []
         for prev, curr in zip(logs, logs[1:]):
             gap = (curr.report_time - prev.report_time).total_seconds()
-            if gap > threshold:
+            if gap > threshold and gap >= min_sec:
                 intervals.append({
                     'start': prev.report_time.isoformat(),
                     'end': curr.report_time.isoformat(),
@@ -524,7 +537,7 @@ class SiteHealthService:
                 })
 
         # 当前状态必须用"未筛选"的最新心跳判断，不能被用户选的时间范围污染；
-        # 停用站点不视为离线。ongoing 区间只在它落在筛选范围内时才并入列表。
+        # 停用站点不视为离线。ongoing 区间只在它落在筛选范围内且时长达标时才并入列表。
         latest_rows = await SiteHealthDao.get_history(db, site_id, limit=1)
         current_offline = False
         if site_status != 0 and latest_rows:
@@ -535,7 +548,7 @@ class SiteHealthService:
                 start_dt = datetime.fromisoformat(start.replace(' ', 'T')) if start else None
                 end_dt = datetime.fromisoformat(end.replace(' ', 'T')) if end else None
                 in_range = (not start_dt or last.report_time >= start_dt) and (not end_dt or last.report_time <= end_dt)
-                if in_range:
+                if in_range and ongoing >= min_sec:
                     intervals.append({
                         'start': last.report_time.isoformat(),
                         'end': None,
@@ -546,8 +559,42 @@ class SiteHealthService:
         intervals.reverse()
         return {
             'thresholdSec': threshold,
+            'minSec': min_sec,
             'currentOffline': current_offline,
             'siteStatus': site_status,
             'teamsWebhook': teams_webhook,
             'intervals': intervals,
         }
+
+    @classmethod
+    async def get_site_status_all(cls, db: AsyncSession) -> dict:
+        """全部采集点状态快照（edge 告警流轮询用）：一次返回所有站点的在线状态与告警所需字段。
+
+        在线判定复用 _decorate_row 的 3×心跳间隔规则；offlineSec 当场算好，调用方无需再做时间运算。
+        """
+        result = await db.execute(select(SiteHealthSite).order_by(SiteHealthSite.id))
+        entities = [row[0] for row in result.all()]
+        now = datetime.now()
+        rows = []
+        for r in CamelCaseUtil.transform_result(entities):
+            cls._decorate_row(r, now)
+            last_hb = r.get('lastHeartbeat')
+            offline_sec = 0
+            if not r['isOnline'] and last_hb is not None:
+                offline_sec = int((now - last_hb).total_seconds())
+            rows.append({
+                'id': r['id'],
+                'siteName': r.get('siteName'),
+                'building': r.get('building'),
+                'floor': r.get('floor'),
+                'contact': r.get('contact'),
+                # 告警通知地址复用 teams_webhook 字段：http(s) 开头为 Teams webhook，否则按邮箱地址用
+                'notifyTarget': r.get('teamsWebhook'),
+                'status': r.get('status'),
+                'hasReported': r['hasReported'],
+                'isOnline': r['isOnline'],
+                'lastHeartbeat': last_hb.strftime('%Y-%m-%d %H:%M:%S') if last_hb else None,
+                'heartbeatInterval': r.get('heartbeatInterval') or 30,
+                'offlineSec': offline_sec,
+            })
+        return {'serverTime': now.strftime('%Y-%m-%d %H:%M:%S'), 'rows': rows}

@@ -73,8 +73,8 @@
               </el-form-item>
             </el-col>
           </el-row>
-          <el-form-item label="Teams Webhook" prop="teamsWebhook">
-            <el-input v-model="form.teamsWebhook" placeholder="断线通知用 Teams Incoming Webhook 地址（选填）" maxlength="500" />
+          <el-form-item label="通知地址" prop="teamsWebhook">
+            <el-input v-model="form.teamsWebhook" placeholder="断线通知地址：告警邮箱 或 Teams Incoming Webhook（选填）" maxlength="500" />
           </el-form-item>
           <el-form-item label="采集备注" prop="remark">
             <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="选填，如采集点位范围、程序版本等" maxlength="200" show-word-limit />

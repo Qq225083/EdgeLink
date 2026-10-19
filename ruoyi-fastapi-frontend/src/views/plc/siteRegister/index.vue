@@ -74,8 +74,8 @@
           </el-row>
           <el-row :gutter="20">
             <el-col :span="24">
-              <el-form-item label="Teams Webhook" prop="teamsWebhook">
-                <el-input v-model="form.teamsWebhook" placeholder="断线通知用 Teams Incoming Webhook 地址（可空）" maxlength="500" />
+              <el-form-item label="通知地址" prop="teamsWebhook">
+                <el-input v-model="form.teamsWebhook" placeholder="断线通知地址：告警邮箱 或 Teams Incoming Webhook（可空）" maxlength="500" />
               </el-form-item>
             </el-col>
           </el-row>

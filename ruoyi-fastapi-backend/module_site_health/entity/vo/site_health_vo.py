@@ -17,7 +17,7 @@ class SiteRegisterModel(BaseModel):
     floor: str = Field(description='楼层', max_length=50)
     process_stage: str = Field(description='工程', max_length=50)
     contact: Optional[str] = Field(default=None, description='联系人', max_length=50)
-    teams_webhook: Optional[str] = Field(default=None, description='Teams Incoming Webhook 地址（断线通知用，可空）', max_length=500)
+    teams_webhook: Optional[str] = Field(default=None, description='断线通知地址：告警邮箱 或 Teams Incoming Webhook（可空，按值前缀自动区分）', max_length=500)
     remark: Optional[str] = Field(default=None, description='采集备注', max_length=200)
     node_port: int = Field(description='Node-RED 监听端口（办公网IP+端口唯一标识一个采集点）', ge=1, le=65535)
 
@@ -33,7 +33,7 @@ class SiteUpdateModel(BaseModel):
     floor: str = Field(description='楼层', max_length=50)
     process_stage: str = Field(description='工程', max_length=50)
     contact: Optional[str] = Field(default=None, description='联系人', max_length=50)
-    teams_webhook: Optional[str] = Field(default=None, description='Teams Incoming Webhook 地址（断线通知用，可空）', max_length=500)
+    teams_webhook: Optional[str] = Field(default=None, description='断线通知地址：告警邮箱 或 Teams Incoming Webhook（可空，按值前缀自动区分）', max_length=500)
     remark: Optional[str] = Field(default=None, description='采集备注', max_length=200)
     node_port: int = Field(description='Node-RED 监听端口', ge=1, le=65535)
 

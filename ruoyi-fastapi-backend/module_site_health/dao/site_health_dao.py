@@ -242,7 +242,11 @@ class SiteHealthDao:
     @staticmethod
     async def get_heartbeat_logs_asc(db: AsyncSession, site_id: int, days: int = 7, limit: int = 5000,
                                      start: str | None = None, end: str | None = None) -> list[SiteHealthHeartbeatLog]:
-        """某采集点心跳履历（升序，离线区间推导用，支持起止时间筛选；start/end 与 days 互斥）。"""
+        """某采集点心跳履历（升序，离线区间推导用，支持起止时间筛选；start/end 与 days 互斥）。
+
+        超出 limit 时保留**最新**的记录（先倒序取再反转），截断只丢最老的数据——
+        旧的「升序+limit」写法会把最近的履历丢掉，导致近期断线区间推导不出来。
+        """
         cutoff = None if (start or end) else (datetime.now() - timedelta(days=days))
         query = select(SiteHealthHeartbeatLog).where(SiteHealthHeartbeatLog.site_id == site_id)
         if cutoff:
@@ -252,6 +256,8 @@ class SiteHealthDao:
         if end:
             query = query.where(SiteHealthHeartbeatLog.report_time <= end)
         result = await db.execute(
-            query.order_by(SiteHealthHeartbeatLog.report_time.asc()).limit(limit)
+            query.order_by(desc(SiteHealthHeartbeatLog.report_time)).limit(limit)
         )
-        return result.scalars().all()
+        rows = list(result.scalars().all())
+        rows.reverse()
+        return rows
