@@ -55,6 +55,7 @@ class PlcDeviceQueryModel(PlcDeviceModel):
     """
     # 🔧 Day9/P1-14：查询场景默认不按状态过滤（基类 default='0' 会让停用设备从列表/详情/克隆静默消失）
     status: Optional[str] = Field(default=None, description='状态（0启用 1停用，查询默认全部）')
+    host_pc_ips: Optional[str] = Field(default=None, max_length=2000, description='采集节点标识列表（逗号分隔，用于按栋批量过滤）')
 
 
 class PlcDevicePageQueryModel(PlcDeviceQueryModel):

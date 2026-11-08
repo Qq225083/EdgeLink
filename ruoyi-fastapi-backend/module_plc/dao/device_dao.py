@@ -4,6 +4,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.vo import PageModel
+from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey
 from module_plc.entity.do.device_do import PlcDevice
 from module_plc.entity.vo.device_vo import PlcDeviceModel, PlcDevicePageQueryModel
 from utils.page_util import PageUtil
@@ -100,6 +101,11 @@ class DeviceDao:
         :param is_page: 是否开启分页
         :return: PLC设备列表信息对象
         """
+        host_pc_ips = [
+            item.strip()
+            for item in (query_object.host_pc_ips or '').split(',')
+            if item.strip()
+        ]
         query = (
             select(PlcDevice)
             .where(
@@ -111,6 +117,8 @@ class DeviceDao:
                 PlcDevice.plc_brand == query_object.plc_brand if query_object.plc_brand else True,
                 # 按采集节点（Node-RED PC 的 IP:端口）过滤 —— PLC 页左右分栏用
                 PlcDevice.host_pc_ip == query_object.host_pc_ip if query_object.host_pc_ip else True,
+                # 按栋过滤时，前端会传入该栋下全部采集节点标识
+                PlcDevice.host_pc_ip.in_(host_pc_ips) if host_pc_ips else True,
             )
             .order_by(PlcDevice.id)
         )
@@ -129,6 +137,29 @@ class DeviceDao:
             .group_by(PlcDevice.host_pc_ip)
         )
         return [{'hostPcIp': r[0], 'count': r[1]} for r in result.all()]
+
+    @classmethod
+    async def get_node_options(cls, db: AsyncSession) -> list[dict]:
+        """PLC 页左侧采集点选项（仅采集配置登记点，不含既存监控单独登记点）。"""
+        result = await db.execute(
+            select(EdgeBootstrapKey)
+            .where(EdgeBootstrapKey.enabled == 1)
+            .order_by(EdgeBootstrapKey.id)
+        )
+        return [
+            {
+                'id': row.id,
+                'nodeName': row.node_name or row.node_key,
+                'nodeKey': row.node_key,
+                'hostPcIp': row.host_pc_ip,
+                'industIp': row.indust_ip,
+                'building': row.building,
+                'floor': row.floor,
+                'processStage': row.process_stage,
+            }
+            for row in result.scalars().all()
+            if row.host_pc_ip
+        ]
 
     @classmethod
     async def add_device_dao(cls, db: AsyncSession, device: PlcDeviceModel) -> PlcDevice:

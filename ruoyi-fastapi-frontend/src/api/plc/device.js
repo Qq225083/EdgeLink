@@ -17,6 +17,14 @@ export function countDeviceByNode() {
   })
 }
 
+// 查询 PLC 页采集点选项（仅采集配置登记点，不含既存监控单独登记点）
+export function listDeviceNodeOptions() {
+  return request({
+    url: '/plc/device/node-options',
+    method: 'get'
+  })
+}
+
 // 查询PLC设备详细（含点位列表）
 export function getDevice(deviceId) {
   return request({

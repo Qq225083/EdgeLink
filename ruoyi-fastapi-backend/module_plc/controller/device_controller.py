@@ -65,6 +65,21 @@ async def count_devices_by_node(
 
 
 @device_controller.get(
+    '/node-options',
+    summary='获取 PLC 页采集点选项',
+    description='仅返回采集配置登记点（bootstrap-key），不返回既存监控单独登记点',
+    response_model=DataResponseModel[list],
+    dependencies=[UserInterfaceAuthDependency('plc:device:list')],
+)
+async def get_plc_device_node_options(
+    request: Request,
+    query_db: Annotated[AsyncSession, DBSessionDependency()],
+) -> Response:
+    rows = await DeviceService.get_node_options_services(query_db)
+    return ResponseUtil.success(data=rows)
+
+
+@device_controller.get(
     '/{device_id}',
     summary='获取PLC设备详情',
     description='获取指定PLC设备的详细信息，包含该设备下所有未删除的采集点位',

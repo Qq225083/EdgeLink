@@ -45,6 +45,11 @@
           <span>{{ scope.row.industIp || '--' }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="栋别" align="center" prop="building" width="100" :show-overflow-tooltip="true">
+        <template slot-scope="scope">
+          <span>{{ scope.row.building || '未配置' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="密钥" align="center" prop="secretKey" width="180">
         <template slot-scope="scope">
           <span>{{ maskSecret(scope.row.secretKey) }}</span>
@@ -87,6 +92,15 @@
         </el-form-item>
         <el-form-item label="工业网IP" prop="industIp">
           <el-input v-model="form.industIp" placeholder="采集点工业网卡IP，如：192.168.1.10" />
+        </el-form-item>
+        <el-form-item label="栋别" prop="building">
+          <el-input v-model="form.building" placeholder="必填，如：A栋" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="楼层" prop="floor">
+          <el-input v-model="form.floor" placeholder="如：3F" maxlength="50" />
+        </el-form-item>
+        <el-form-item label="工程" prop="processStage">
+          <el-input v-model="form.processStage" placeholder="如：冲压工程" maxlength="50" />
         </el-form-item>
         <el-form-item label="状态" prop="enabled">
           <el-radio-group v-model="form.enabled">
@@ -158,6 +172,9 @@ export default {
         ],
         industIp: [
           { pattern: /^((25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)$/, message: "IP地址格式不正确", trigger: "blur" }
+        ],
+        building: [
+          { required: true, message: "栋别不能为空", trigger: "blur" }
         ]
       }
     };
@@ -201,6 +218,9 @@ export default {
         nodeName: null,
         hostPcIp: null,
         industIp: null,
+        building: null,
+        floor: null,
+        processStage: null,
         enabled: 1
       };
       this.title = "新增边缘节点";

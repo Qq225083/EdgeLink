@@ -41,7 +41,7 @@
           <el-row :gutter="20">
             <el-col :span="8">
               <el-form-item label="栋别" prop="building">
-                <el-input v-model="form.building" placeholder="如 A栋" maxlength="50" />
+                <el-input v-model="form.building" placeholder="必填，如 A栋" maxlength="50" />
               </el-form-item>
             </el-col>
             <el-col :span="8">

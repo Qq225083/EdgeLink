@@ -226,6 +226,11 @@ class DeviceService:
         return await DeviceDao.count_by_node(query_db)
 
     @classmethod
+    async def get_node_options_services(cls, query_db: AsyncSession) -> list[dict]:
+        """PLC 页采集点选项（bootstrap-key 采集配置登记点）。"""
+        return await DeviceDao.get_node_options(query_db)
+
+    @classmethod
     async def add_device_services(
         cls, query_db: AsyncSession, page_object: PlcDeviceModel
     ) -> CrudResponseModel:

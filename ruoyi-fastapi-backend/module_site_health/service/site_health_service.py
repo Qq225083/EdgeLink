@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.vo import PageModel
@@ -118,6 +118,9 @@ class SiteHealthService:
                 message=f'办公网IP+端口已被采集点（ID: {existing.id}，{existing.site_name}）占用'
             )
 
+        old_host = site.office_ip + (f':{site.node_port}' if site.node_port else '')
+        new_host = office_ip + (f':{model.node_port}' if model.node_port else '')
+
         site.office_ip = office_ip
         site.indust_ip = indust_ip
         site.site_name = site_name
@@ -128,6 +131,37 @@ class SiteHealthService:
         site.teams_webhook = model.teams_webhook.strip() if model.teams_webhook else None
         site.remark = model.remark.strip() if model.remark else None
         site.node_port = model.node_port
+
+        # 只要办公网IP+端口能匹配到 bootstrap-key 采集点，就同步回 PLC 页使用的数据源（不区分 source）
+        from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey
+        from module_plc.entity.do.device_do import PlcDevice
+
+        key_result = await db.execute(
+            select(EdgeBootstrapKey).where(EdgeBootstrapKey.host_pc_ip == old_host)
+        )
+        key = key_result.scalars().first()
+        if key:
+            if new_host != old_host:
+                conflict = await db.execute(
+                    select(EdgeBootstrapKey).where(
+                        EdgeBootstrapKey.host_pc_ip == new_host,
+                        EdgeBootstrapKey.id != key.id,
+                    )
+                )
+                if conflict.scalars().first():
+                    raise ServiceException(message=f'节点地址已被占用：{new_host}')
+            key.node_name = site_name
+            key.host_pc_ip = new_host
+            key.indust_ip = indust_ip
+            key.building = site.building
+            key.floor = site.floor
+            key.process_stage = site.process_stage
+        if new_host != old_host:
+            await db.execute(
+                sa_update(PlcDevice)
+                .where(PlcDevice.host_pc_ip == old_host, PlcDevice.del_flag == '0')
+                .values(host_pc_ip=new_host)
+            )
         await db.commit()
 
     @classmethod

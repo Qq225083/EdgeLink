@@ -1,54 +1,60 @@
 <template>
   <div class="app-container">
     <el-row :gutter="16">
-      <!-- 左侧：采集点面板（点选过滤右侧 PLC；选中后才可添加） -->
+      <!-- 左侧：栋别面板（点栋看整栋 PLC；点具体采集点后才可添加） -->
       <el-col :span="5">
         <el-card shadow="never" class="node-panel">
           <div slot="header" class="node-panel-header">
             <span><i class="el-icon-monitor" /> 采集点</span>
             <el-button type="text" size="mini" icon="el-icon-plus" @click="goSiteRegister">登记</el-button>
           </div>
-          <el-input v-model="nodeKeyword" size="mini" placeholder="搜索名称 / IP" prefix-icon="el-icon-search" clearable class="node-search" />
+          <el-input v-model="nodeKeyword" size="mini" placeholder="搜索栋别 / 名称 / IP" prefix-icon="el-icon-search" clearable class="node-search" />
           <div class="node-list">
-          <div
-            class="node-item"
-            :class="{ active: selectedNode === null }"
-            @click="selectNode(null)"
-          >
-            <i class="el-icon-menu" /> 全部
-            <span class="node-count">{{ totalAll }}</span>
-          </div>
-          <!-- 采集点树：栋 → 楼层 → 工程 → 采集点（未登记栋/楼/工程的落入「未分组」） -->
-          <el-tree
-            ref="nodeTree"
-            :data="nodeTree"
-            :props="treeProps"
-            node-key="key"
-            :filter-node-method="filterNode"
-            :highlight-current="true"
-            :expand-on-click-node="true"
-            :default-expanded-keys="['ungrouped']"
-            @node-click="onTreeClick"
-          >
-            <span slot-scope="{ data }" class="tree-node">
-              <template v-if="data.isLeaf">
-                <el-tooltip placement="right" :content="healthTip(data.hostPcIp)">
-                  <span class="health-dot inline" :class="healthClass(data.hostPcIp)" @click.stop="goSiteHealth"></span>
+            <el-button
+              size="mini"
+              class="building-button"
+              :type="selectedBuilding === null && selectedNode === null ? 'primary' : 'default'"
+              @click="selectBuilding(null)"
+            >
+              <span class="building-name"><i class="el-icon-menu" /> 全部</span>
+              <span class="building-count">{{ totalAll }} 台</span>
+            </el-button>
+            <!-- 栋别按钮：点击后右侧显示该栋所有采集点的 PLC；缺栋别的落入「未配置」 -->
+            <el-button
+              v-for="group in filteredBuildingGroups"
+              :key="group.key"
+              size="mini"
+              class="building-button"
+              :type="selectedBuilding === group.key ? 'primary' : 'default'"
+              @click="selectBuilding(group)"
+            >
+              <span class="building-name" :title="group.label">{{ group.label }}</span>
+              <span class="building-count">{{ group.count }} 台</span>
+            </el-button>
+            <div v-if="selectedBuildingGroup" class="building-node-list">
+              <div class="building-node-title">当前栋采集点（新增 PLC 前请选择）</div>
+              <div
+                v-for="node in selectedBuildingGroup.nodes"
+                :key="node.hostPcIp"
+                class="node-item node-chip"
+                :class="{ active: selectedNode === node.hostPcIp }"
+                @click="selectNode(node.hostPcIp)"
+              >
+                <el-tooltip placement="right" :content="healthTip(node.hostPcIp)">
+                  <span class="health-dot inline" :class="healthClass(node.hostPcIp)" @click.stop="goSiteHealth"></span>
                 </el-tooltip>
-                <span class="tree-label" :title="data.hostPcIp">{{ data.label }}</span>
-                <span class="node-count">{{ data.count }}</span>
-              </template>
-              <span v-else class="tree-group">{{ data.label }}（{{ data.count }}）</span>
-            </span>
-          </el-tree>
-          <div v-if="!nodeOptions.length" class="node-empty">还没有采集点，先点右上角「登记」</div>
+                <span class="node-name" :title="node.hostPcIp">{{ node.nodeName || node.hostPcIp }}</span>
+                <span class="node-count">{{ node.count }}</span>
+              </div>
+            </div>
+            <div v-if="!nodeOptions.length" class="node-empty">还没有采集点，先点右上角「登记」</div>
           </div>
         </el-card>
       </el-col>
 
       <!-- 右侧：原有查询 + 列表 -->
       <el-col :span="19">
-    <!-- 当前过滤范围指示（树收起后也能一眼看清当前在看哪个采集点） -->
+    <!-- 当前过滤范围指示（常显当前栋/采集点） -->
     <div class="scope-bar">
       <i class="el-icon-location-outline" /> 当前：{{ scopeLabel }}
     </div>
@@ -571,7 +577,7 @@
 </template>
 
 <script>
-import { listDevice, getDevice, addDevice, updateDevice, delDevice, disableDevice, cloneDevice, toggleDeviceStatus, getProtocolCompat, getDriverSchema, countDeviceByNode } from "@/api/plc/device";
+import { listDevice, getDevice, addDevice, updateDevice, delDevice, disableDevice, cloneDevice, toggleDeviceStatus, getProtocolCompat, getDriverSchema, countDeviceByNode, listDeviceNodeOptions } from "@/api/plc/device";
 import { listTag, getTag, addTag, updateTag, delTag, disableTag, downloadTagTemplate, importTags, toggleTagStatus } from "@/api/plc/tag";
 import { download } from "@/utils/request";
 import { listSite } from "@/api/plc/siteHealth";
@@ -591,8 +597,8 @@ export default {
       nodeKeyword: '',      // 左侧面板采集点搜索关键字
       siteHealthMap: {},    // 采集点健康状态（site-health 只读联动，key=IP 或 IP:端口）
       healthTimer: null,    // 健康状态 30s 轮询定时器
-      treeProps: { label: 'label', children: 'children' },  // 采集点树字段映射
-      selectedNode: null,   // 左侧选中的采集点（null=全部；选中后才可新增 PLC）
+      selectedBuilding: null, // 左侧选中的栋别（null=全部）
+      selectedNode: null,   // 左侧选中的采集点（null=全部/整栋；选中后才可新增 PLC）
       total: 0,
       deviceList: [],
       title: "",
@@ -607,6 +613,7 @@ export default {
         status: null,
         plcBrand: null,
         hostPcIp: null,
+        hostPcIps: null,
       },
       form: {},
       fxFrameDisabled: false,
@@ -700,65 +707,69 @@ export default {
     };
   },
   computed: {
-    // 「全部」徽标：各采集点 PLC 数之和
+    // 「全部」徽标：只统计左侧可见采集点内的 PLC，排除未登记/已停用采集点上的孤儿归属
     totalAll() {
+      const visible = {};
+      (this.nodeOptions || []).forEach(n => { if (n.hostPcIp) visible[n.hostPcIp] = true; });
       var sum = 0;
-      Object.keys(this.nodeCounts || {}).forEach(k => { sum += this.nodeCounts[k] || 0; });
+      Object.keys(this.nodeCounts || {}).forEach(k => {
+        if (visible[k]) sum += this.nodeCounts[k] || 0;
+      });
       return sum;
     },
-    // 采集点树（栋 → 楼层 → 工程 → 采集点；缺登记情报的落「未分组」）
-    // 当前过滤范围指示（右侧顶部常显，树收起也清楚当前采集点）
+    // 当前过滤范围指示（右侧顶部常显）
     scopeLabel() {
-      if (!this.selectedNode) return `全部采集点（共 ${this.totalAll} 台设备）`;
-      const n = (this.nodeOptions || []).find(x => x.hostPcIp === this.selectedNode);
-      const name = n ? (n.nodeName || n.nodeKey) : this.selectedNode;
-      const count = this.nodeCounts[this.selectedNode] || 0;
-      const h = this.healthOf(this.selectedNode);
-      const loc = h && (h.building || h.floor || h.processStage)
-        ? [h.building, h.floor, h.processStage].filter(Boolean).join('/') + ' · '
-        : '';
-      return `${loc}${name}（${this.selectedNode}，${count} 台设备）`;
-    },
-    nodeTree() {
-      const grouped = {};   // building -> floor -> process -> leaves[]
-      const ungrouped = [];
-      (this.nodeOptions || []).forEach(n => {
-        const h = this.healthOf(n.hostPcIp);
-        const leaf = {
-          key: 'leaf:' + n.hostPcIp,
-          label: (n.nodeName || n.nodeKey || n.hostPcIp),
-          isLeaf: true,
-          hostPcIp: n.hostPcIp,
-          count: this.nodeCounts[n.hostPcIp] || 0
-        };
-        const b = (h && h.building) || '';
-        const f = (h && h.floor) || '';
-        const p = (h && h.processStage) || '';
-        if (!b && !f && !p) { ungrouped.push(leaf); return; }
-        const bk = b || '未分栋', fk = f || '未分层', pk = p || '未分工程';
-        if (!grouped[bk]) grouped[bk] = {};
-        if (!grouped[bk][fk]) grouped[bk][fk] = {};
-        if (!grouped[bk][fk][pk]) grouped[bk][fk][pk] = [];
-        grouped[bk][fk][pk].push(leaf);
-      });
-      const sum = arr => arr.reduce((s, x) => s + (x.count || 0), 0);
-      const tree = [];
-      Object.keys(grouped).sort().forEach(b => {
-        const floors = [];
-        Object.keys(grouped[b]).sort().forEach(f => {
-          const procs = [];
-          Object.keys(grouped[b][f]).sort().forEach(p => {
-            const leaves = grouped[b][f][p];
-            procs.push({ key: `g:${b}/${f}/${p}`, label: p, count: sum(leaves), children: leaves });
-          });
-          floors.push({ key: `g:${b}/${f}`, label: f, count: sum(procs), children: procs });
-        });
-        tree.push({ key: `g:${b}`, label: b, count: sum(floors), children: floors });
-      });
-      if (ungrouped.length) {
-        tree.push({ key: 'ungrouped', label: '未分组（缺栋/楼/工程情报）', count: sum(ungrouped), children: ungrouped });
+      if (this.selectedNode) {
+        const n = (this.nodeOptions || []).find(x => x.hostPcIp === this.selectedNode);
+        const name = n ? (n.nodeName || n.nodeKey) : this.selectedNode;
+        const count = this.nodeCounts[this.selectedNode] || 0;
+        const building = n ? this.buildingNameOf(n) : '未配置';
+        return `${building} · ${name}（${this.selectedNode}，${count} 台设备）`;
       }
-      return tree;
+      if (this.selectedBuildingGroup) {
+        const group = this.selectedBuildingGroup;
+        return `${group.label}（${group.count} 台设备 / ${group.nodes.length} 个采集点）`;
+      }
+      return `全部采集点（共 ${this.totalAll} 台设备）`;
+    },
+    // 栋别按钮（缺栋别的采集点统一归入「未配置」，按钮数量为该栋 PLC 总数）
+    buildingGroups() {
+      const grouped = {};
+      (this.nodeOptions || []).forEach(n => {
+        const building = this.buildingNameOf(n);
+        if (!grouped[building]) {
+          grouped[building] = { key: building, label: building, count: 0, nodes: [] };
+        }
+        const count = this.nodeCounts[n.hostPcIp] || 0;
+        grouped[building].count += count;
+        grouped[building].nodes.push({
+          id: n.id,
+          nodeName: n.nodeName,
+          hostPcIp: n.hostPcIp,
+          industIp: n.industIp,
+          building: building,
+          count: count
+        });
+      });
+      return Object.keys(grouped)
+        .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+        .map(key => grouped[key]);
+    },
+    filteredBuildingGroups() {
+      const keyword = (this.nodeKeyword || '').trim().toLowerCase();
+      if (!keyword) return this.buildingGroups;
+      return this.buildingGroups.filter(group => {
+        if ((group.label || '').toLowerCase().indexOf(keyword) >= 0) return true;
+        return group.nodes.some(node => {
+          const name = (node.nodeName || '').toLowerCase();
+          const ip = (node.hostPcIp || '').toLowerCase();
+          return name.indexOf(keyword) >= 0 || ip.indexOf(keyword) >= 0;
+        });
+      });
+    },
+    selectedBuildingGroup() {
+      if (!this.selectedBuilding) return null;
+      return this.buildingGroups.find(group => group.key === this.selectedBuilding) || null;
     },
     brandList() {
       var cfg = this.brandConfig || {};
@@ -864,15 +875,9 @@ export default {
       return this.tagForm && ['INT32', 'UINT32', 'FLOAT', 'DOUBLE'].indexOf(this.tagForm.dataType) >= 0;
     },
   },
-  watch: {
-    // 搜索关键字 → 树过滤
-    nodeKeyword(val) {
-      if (this.$refs.nodeTree) this.$refs.nodeTree.filter((val || '').trim().toLowerCase());
-    }
-  },
   created() {
-    this.getList();
-    this.loadNodeOptions();
+    // 先加载可见采集点，再按这些采集点拉取「全部」PLC，避免把未登记节点上的孤儿设备计入总数
+    this.loadNodeOptions().then(() => this.selectBuilding(null));
     this.loadNodeCounts();
     // 健康状态联动（只读 site-health 列表），30s 轮询
     this.loadSiteHealth();
@@ -898,15 +903,19 @@ export default {
     }.bind(this));
   },
   methods: {
-    /** 加载采集点选项（仅采集配置来源；存量登记点不参与生成/设备绑定） */
+    /** 加载采集点选项（bootstrap-key 采集配置来源；既存监控单独登记点不参与 PLC 绑定） */
     loadNodeOptions() {
-      return listSite({ pageNum: 1, pageSize: 1000, source: 'config' }).then(res => {
-        this.nodeOptions = (res.rows || []).map(s => ({
+      return listDeviceNodeOptions().then(res => {
+        this.nodeOptions = (res.data || []).map(s => ({
           id: s.id,
-          nodeName: s.siteName,
-          hostPcIp: s.officeIp + (s.nodePort ? ':' + s.nodePort : ''),
-          industIp: s.industIp
-        }));
+          nodeName: s.nodeName || s.nodeKey,
+          nodeKey: s.nodeKey,
+          hostPcIp: s.hostPcIp,
+          industIp: s.industIp,
+          building: s.building,
+          floor: s.floor,
+          processStage: s.processStage
+        })).filter(s => s.hostPcIp);
       }).catch(() => { this.nodeOptions = []; });
     },
     /** 采集点变化时：工业内网IP自动继承该采集点登记的工业网卡IP（industIp），不再手填 */
@@ -958,23 +967,42 @@ export default {
     goSiteHealth() {
       this.$router.push('/edgelink/site-health/monitor');
     },
-    /** 树过滤：叶子按名称/IP 匹配，分组节点自动保留（el-tree 保留匹配项的祖先） */
-    filterNode(value, data) {
-      if (!value) return true;
-      if (!data.isLeaf) return true;
-      const name = (data.label || '').toLowerCase();
-      const ip = (data.hostPcIp || '').toLowerCase();
-      return name.indexOf(value) >= 0 || ip.indexOf(value) >= 0;
+    /** 采集点所属栋别：优先用登记接口字段，健康表兜底，空值归入未配置 */
+    buildingNameOf(node) {
+      const h = node ? this.healthOf(node.hostPcIp) : null;
+      const raw = (node && node.building) || (h && h.building) || '未配置';
+      const text = String(raw).trim();
+      return text || '未配置';
     },
-    /** 树点击：叶子=采集点过滤右侧列表；分组节点只展开/收起 */
-    onTreeClick(data) {
-      if (data.isLeaf) this.selectNode(data.hostPcIp);
+    /** 当前可见采集点 host 列表（全部按钮也只覆盖这些节点，排除孤儿归属） */
+    visibleHostPcIps() {
+      return (this.nodeOptions || []).map(n => n.hostPcIp).filter(Boolean);
     },
-    /** 左侧采集点选择：过滤右侧 PLC 列表 */
+    /** 栋别按钮：整栋过滤右侧 PLC 列表 */
+    selectBuilding(group) {
+      this.queryParams.pageNum = 1;
+      if (!group) {
+        const hostIps = this.visibleHostPcIps();
+        this.selectedBuilding = null;
+        this.selectedNode = null;
+        this.queryParams.hostPcIp = undefined;
+        this.queryParams.hostPcIps = hostIps.length ? hostIps.join(',') : '__empty__';
+      } else {
+        this.selectedBuilding = group.key;
+        this.selectedNode = null;
+        this.queryParams.hostPcIp = undefined;
+        this.queryParams.hostPcIps = group.nodes.map(node => node.hostPcIp).join(',') || '__empty__';
+      }
+      this.getList();
+    },
+    /** 具体采集点选择：过滤右侧 PLC 列表，并作为新增 PLC 的归属 */
     selectNode(hostPcIp) {
+      const node = (this.nodeOptions || []).find(x => x.hostPcIp === hostPcIp);
+      this.selectedBuilding = node ? this.buildingNameOf(node) : null;
       this.selectedNode = hostPcIp;
       this.queryParams.pageNum = 1;
       this.queryParams.hostPcIp = hostPcIp || undefined;
+      this.queryParams.hostPcIps = undefined;
       this.getList();
     },
     /** 跳转采集点登记页 */
@@ -1669,28 +1697,50 @@ export default {
 .node-item .node-text {
   padding-left: 10px;
 }
-/* 采集点树 */
-.tree-node {
+/* 栋别按钮 */
+.building-button {
+  width: 100%;
+  margin: 0 0 6px 0 !important;
   display: flex;
   align-items: center;
-  width: 100%;
+  justify-content: space-between;
+  text-align: left;
   font-size: 13px;
 }
-.tree-node .tree-label {
+.building-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tree-node .node-count {
+.building-count {
+  margin-left: 8px;
+  font-weight: bold;
+}
+.building-node-list {
+  margin: 8px 0 4px;
+  padding-top: 8px;
+  border-top: 1px dashed #dcdfe6;
+}
+.building-node-title {
+  color: #909399;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.node-chip {
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  background: #fafafa;
+}
+.node-chip .node-name {
+  flex: 1;
+  padding-right: 0;
+}
+.node-chip .node-count {
   position: static;
   transform: none;
   margin-left: 6px;
-}
-.tree-group {
-  font-weight: bold;
-  color: #303133;
-  font-size: 13px;
 }
 .node-item {
   position: relative;

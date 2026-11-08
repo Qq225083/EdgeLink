@@ -9,7 +9,7 @@ from typing import Annotated, Optional
 from fastapi import Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.annotation.log_annotation import Log
@@ -21,6 +21,7 @@ from common.router import APIRouterPro
 from common.vo import CrudResponseModel, DataResponseModel, PageModel
 from exceptions.exception import ServiceException
 from module_plc.entity.do.bootstrap_key_do import EdgeBootstrapKey, hash_bootstrap_secret
+from module_plc.entity.do.device_do import PlcDevice
 from module_plc.mqtt.mqtt_consumer import get_notifier
 from utils.log_util import logger
 from utils.page_util import PageUtil
@@ -44,6 +45,21 @@ class BootstrapKeyModel(BaseModel):
     floor: Optional[str] = Field(default=None, description='楼层')
     process_stage: Optional[str] = Field(default=None, description='工程')
     enabled: Optional[int] = Field(default=1, description='是否启用（0停用 1启用）')
+
+
+def _require_building(building: Optional[str]) -> str:
+    """采集点登记/编辑统一要求栋别必填，避免 PLC 页无法按栋分组。"""
+    value = (building or '').strip()
+    if not value:
+        raise ServiceException(message='栋别不能为空')
+    return value
+
+
+def _split_host_pc_ip(host_pc_ip: str) -> tuple[str, Optional[int]]:
+    ip, sep, port_text = (host_pc_ip or '').rpartition(':')
+    if sep and port_text.isdigit():
+        return ip, int(port_text)
+    return host_pc_ip, None
 
 
 class BootstrapKeyPageQueryModel(BaseModel):
@@ -114,6 +130,7 @@ async def add_bootstrap_key(
     # 🔧 Day7/P1-6：禁止空 host_pc_ip（空 host 的 NODE_STATUS 会广播误伤全部节点）
     if not model.host_pc_ip or not model.host_pc_ip.strip():
         raise ServiceException(message='节点地址（IP:端口）不能为空，kill switch 定向依赖该字段')
+    model.building = _require_building(model.building)
 
     # 生成随机密钥（只存哈希；明文随响应返回一次，请提示用户保存）
     secret_key = secrets.token_hex(16)
@@ -201,17 +218,22 @@ async def update_bootstrap_key(
     if result.scalar_one_or_none():
         raise ServiceException(message=f'节点标识已存在：{model.node_key}')
 
-    # 检查 host_pc_ip 唯一性（排除自身，非空时）
-    if model.host_pc_ip:
-        result = await query_db.execute(
-            select(EdgeBootstrapKey).where(
-                EdgeBootstrapKey.host_pc_ip == model.host_pc_ip,
-                EdgeBootstrapKey.id != model.id,
-            )
+    model.host_pc_ip = (model.host_pc_ip or '').strip()
+    if not model.host_pc_ip:
+        raise ServiceException(message='节点地址（IP:端口）不能为空，kill switch 定向依赖该字段')
+    # 检查 host_pc_ip 唯一性（排除自身）
+    result = await query_db.execute(
+        select(EdgeBootstrapKey).where(
+            EdgeBootstrapKey.host_pc_ip == model.host_pc_ip,
+            EdgeBootstrapKey.id != model.id,
         )
-        if result.scalar_one_or_none():
-            raise ServiceException(message=f'节点地址已被占用：{model.host_pc_ip}，一台 PC 的一个端口只能绑定一个节点')
+    )
+    if result.scalar_one_or_none():
+        raise ServiceException(message=f'节点地址已被占用：{model.host_pc_ip}，一台 PC 的一个端口只能绑定一个节点')
 
+    old_host = entity.host_pc_ip
+    new_host = model.host_pc_ip
+    model.building = _require_building(model.building)
     entity.node_key = model.node_key
     entity.node_name = model.node_name
     entity.host_pc_ip = model.host_pc_ip
@@ -220,6 +242,45 @@ async def update_bootstrap_key(
     entity.floor = model.floor
     entity.process_stage = model.process_stage
     entity.enabled = model.enabled
+
+    # 反向同步到存量监控匹配行，保证 PLC 页、节点管理、存量监控看到同一份位置/名称/IP
+    from module_site_health.entity.do.site_health_do import SiteHealthSite
+
+    old_office_ip, old_node_port = _split_host_pc_ip(old_host)
+    new_office_ip, new_node_port = _split_host_pc_ip(new_host)
+    site_query = select(SiteHealthSite).where(
+        SiteHealthSite.office_ip == old_office_ip,
+    )
+    if old_node_port is None:
+        site_query = site_query.where(SiteHealthSite.node_port.is_(None))
+    else:
+        site_query = site_query.where(SiteHealthSite.node_port == old_node_port)
+    site = (await query_db.execute(site_query)).scalars().first()
+    if site:
+        if new_host != old_host:
+            site_conflict_query = select(SiteHealthSite).where(
+                SiteHealthSite.office_ip == new_office_ip,
+                SiteHealthSite.id != site.id,
+            )
+            if new_node_port is None:
+                site_conflict_query = site_conflict_query.where(SiteHealthSite.node_port.is_(None))
+            else:
+                site_conflict_query = site_conflict_query.where(SiteHealthSite.node_port == new_node_port)
+            if (await query_db.execute(site_conflict_query)).scalars().first():
+                raise ServiceException(message=f'办公网IP+端口已被其他采集点占用：{new_host}')
+        site.office_ip = new_office_ip
+        site.node_port = new_node_port
+        site.indust_ip = model.indust_ip
+        site.site_name = model.node_name or model.node_key
+        site.building = model.building
+        site.floor = model.floor
+        site.process_stage = model.process_stage
+    if new_host != old_host:
+        await query_db.execute(
+            sa_update(PlcDevice)
+            .where(PlcDevice.host_pc_ip == old_host, PlcDevice.del_flag == '0')
+            .values(host_pc_ip=new_host)
+        )
     await query_db.commit()
     return ResponseUtil.success(msg='编辑成功')
 
