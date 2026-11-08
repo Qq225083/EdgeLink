@@ -1,8 +1,8 @@
 """生成器黄金快照对拍（防生成器回归）
 
 原理：用一组固定的典型输入（MC 多块 / FX 八进制亚秒 / Modbus / PG 双目标 / api_key / 基础设施）
-构建完整 flows，与 scripts/golden/flowgen_golden.json 逐字节比对。
-生成器任何一处改动导致产物变化 → diff 失败并打印差异位置，强制人工确认"这次变化是故意的"。
+构建完整 flows，与 scripts/golden/flowgen_golden.json 做 canonical 深比较。
+编辑器坐标、分组尺寸、credential 等显式噪音不参与比对，真实逻辑差异仍会失败并打印 diff。
 
 用法：
   正常校验：APP_ENV=dev .venv/Scripts/python.exe scripts/test_flowgen_golden.py
@@ -18,7 +18,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from module_flowgen.entity.vo.flowgen_vo import FlowGenerateModel, PgTargetModel
-from module_flowgen.service import flow_builders as fb
+from module_flowgen.service.deploy_service import _canon_norm
 from module_flowgen.service.generator_service import GENERATOR_VERSION, FlowGeneratorService
 
 GOLDEN_PATH = Path(__file__).resolve().parent / 'golden' / 'flowgen_golden.json'
@@ -56,10 +56,11 @@ def build_canonical_flows() -> list:
     gen = FlowGeneratorService
     flows: list = []
 
-    # 设备1：MC Q 系列，多块读（连续 INT16 + FLOAT 前缀块 + BIT 连读）
+    # 设备1：MC Q 系列，多块读（连续 INT16 + UINT16/FLOAT 前缀块 + BIT 连读）
     tags1 = [
         make_tag(1, 100), make_tag(2, 101), make_tag(3, 102),
         make_tag(4, 110, dt='FLOAT'), make_tag(5, 112, dt='FLOAT'),
+        make_tag(9, 120, dt='UINT16'),
         make_tag(6, 200, reg='M', dt='BIT', bit_offset=3),
         make_tag(7, 200, reg='M', dt='BIT', bit_offset=4),
     ]
@@ -70,11 +71,12 @@ def build_canonical_flows() -> list:
     flows += gen._build_device_tab(model, 66, dev2, [make_tag(8, 17, dev=102, reg='X', dt='BIT', bit_offset=0)],
                                    api_key='test-key', pg_targets=pg_targets)
 
-    # 设备3：Modbus TCP 支路
+    # 设备3：Modbus TCP 支路（HR/IR/CR/DI 四类 FC 全覆盖）
     dev3 = make_device(id=109, device_name='汇川H5U', plc_port=502, driver_code='modbus_tcp',
                        protocol_params={'unitId': 3})
     tags3 = [make_tag(20, 0, dev=109, reg='HR'), make_tag(21, 1, dev=109, reg='HR'),
-             make_tag(22, 10, dev=109, reg='HR'), make_tag(23, 0, dev=109, reg='CR', dt='BOOL')]
+             make_tag(22, 10, dev=109, reg='HR'), make_tag(23, 0, dev=109, reg='CR', dt='BOOL'),
+             make_tag(24, 0, dev=109, reg='IR'), make_tag(25, 4, dev=109, reg='DI', dt='BOOL')]
     flows += gen._build_device_tab_modbus(model, 66, dev3, tags3, api_key='test-key', pg_targets=pg_targets)
 
     # 基础设施 tab（与 generate() 同路径：排最前、共享配置、flows 上传、心跳支路）
@@ -82,26 +84,32 @@ def build_canonical_flows() -> list:
     return flows
 
 
+def _canonical(flows: list) -> list:
+    return sorted((_canon_norm(node) for node in flows), key=lambda node: node.get('id', ''))
+
+
 def main() -> int:
     flows = build_canonical_flows()
-    current = json.dumps(flows, ensure_ascii=False, indent=2, sort_keys=True)
 
     if os.environ.get('UPDATE_GOLDEN') == '1':
         GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        GOLDEN_PATH.write_text(current, encoding='utf-8')
+        GOLDEN_PATH.write_text(json.dumps(flows, ensure_ascii=False, indent=2, sort_keys=True), encoding='utf-8')
         print(f'[UPDATE] 黄金快照已重录：{GOLDEN_PATH}（{len(flows)} 节点）')
         return 0
 
     if not GOLDEN_PATH.exists():
         print(f'[FAIL] 快照不存在：{GOLDEN_PATH}（先 UPDATE_GOLDEN=1 录制）')
         return 1
-    golden = GOLDEN_PATH.read_text(encoding='utf-8')
+    current = _canonical(flows)
+    golden = _canonical(json.loads(GOLDEN_PATH.read_text(encoding='utf-8')))
     if current == golden:
-        print(f'[OK] 黄金快照一致（{len(flows)} 节点，生成器行为无回归）')
+        print(f'[OK] canonical 黄金快照一致（{len(flows)} 节点，生成器行为无回归）')
         return 0
 
-    diff = list(difflib.unified_diff(golden.splitlines(), current.splitlines(), 'golden', 'current', n=2))
-    print(f'[FAIL] 生成产物与黄金快照不一致（diff 共 {len(diff)} 行，前 60 行）：')
+    golden_text = json.dumps(golden, ensure_ascii=False, indent=2, sort_keys=True)
+    current_text = json.dumps(current, ensure_ascii=False, indent=2, sort_keys=True)
+    diff = list(difflib.unified_diff(golden_text.splitlines(), current_text.splitlines(), 'golden', 'current', n=2))
+    print(f'[FAIL] 生成产物与 canonical 黄金快照不一致（diff 共 {len(diff)} 行，前 60 行）：')
     print('\n'.join(diff[:60]))
     print('\n若此次变化为有意修改：UPDATE_GOLDEN=1 重录快照，并在提交说明里写明原因。')
     return 1

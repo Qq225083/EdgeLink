@@ -70,7 +70,7 @@ def make_mc_connection(node_id: str, z: str, name: str, device: dict) -> dict:
         'PLCModuleNo': '1023',
         'network': str(device.get('network_no') or 0),
         'timeout': str(device.get('comm_timeout_ms') or 3000),
-        # FX 系列 X/Y 是八进制编址，连接级正确处理（V12 怪癖④在生成版不存在）
+        # 保留节点配置兼容；1.2.1 不消费此选项，FX 八进制换算由 MC driver 在读地址和 key 中完成
         'octalInputOutput': bool(device.get('octal_input_output')),
     }
 
@@ -480,35 +480,19 @@ def make_pg_node(node_id: str, z: str, name: str, config_id: str, x: int = 1470,
 # ==================== JSONata 装配表达式 ====================
 
 
-def tag_ref_expr(tag: dict, octal_xy: bool) -> str:
-    """点位在块输出 JSON 对象中的取值表达式 $lookup(payload, "<key>")。
-
-    key 规则（读 read.js 确认）：非 BIT = 寄存器类型+地址（如 D100）；
-    BIT = 类型+地址+'.'+十六进制位号（如 D100.A）；
-    FX 的 X/Y 八进制模式下地址按十六进制大写表示。
-    """
-    reg_type = tag['register_type']
-    addr = tag['register_address']
-    data_type = (tag.get('data_type') or '').upper()
-    if data_type in ('BIT', 'BOOL'):
-        bit = int(tag.get('bit_offset') or 0)
-        key = f'{reg_type}{addr}.{bit:X}'
-    elif octal_xy and reg_type in ('X', 'Y'):
-        key = f'{reg_type}{int(str(addr), 8):X}'
-    else:
-        key = f'{reg_type}{addr}'
-    return f'$lookup(payload, {_jstr(key)})'
-
-
 def comm_expr(multi_block: bool) -> str:
-    """设备级通信状态（每轮一次，评审 C3）：任一块 BAD 即离线。
+    """设备级通信状态（每轮一次，评审 C3）：无 BAD、契约非空且上游无 problem 才在线。
 
     注意取 payload.values：本规则在契约装配（规则1）之后执行，payload 已是契约对象。
     """
-    return '($count(payload.values[quality="BAD"]) = 0) ? "true" : "false"'
+    return (
+        '((payload != null) and ($count(payload.values) > 0) and '
+        '($count(payload.values[quality="BAD"]) = 0) and '
+        '(($exists(problem) ? $boolean(problem) : false) = false)) ? "true" : "false"'
+    )
 
 
-def block_assemble_expr(tags: list, octal_xy: bool) -> str:
+def block_assemble_expr(tags: list, extract) -> str:
     """块内契约装配：把块输出对象转为该块点位的 values 数组（含 transform_type 供 PG 用）。
 
     点位级缺失语义（OPT-04）：$lookup 查不到 key 时 raw/eng 置 null、quality=UNCERTAIN
@@ -516,7 +500,7 @@ def block_assemble_expr(tags: list, octal_xy: bool) -> str:
     """
     items = []
     for tag in tags:
-        raw = tag_ref_expr(tag, octal_xy)
+        raw = extract(tag)
         tt = tag.get('transform_type') or 'none'
         if tt in ('linear', 'slope_offset'):
             a = tag.get('transform_slope_a') or 1
@@ -617,6 +601,9 @@ def final_assemble_expr(node_id: int, device: dict, multi_block: bool) -> str:
         f'"host_pc_ip": {_jstr(device.get("host_pc_ip") or "")}, '
         f'"ts": {TS_EXPR}, '
         f'"value_count": $count($vals), '
+        f'"good_count": $count($vals[quality="GOOD"]), '
+        f'"bad_count": $count($vals[quality="BAD"]), '
+        f'"uncertain_count": $count($vals[quality="UNCERTAIN"]), '
         f'"values": {strip}, '
         f'"quality": ($count($vals[quality="BAD"]) > 0 ? "BAD" : "GOOD")'
         '})'
@@ -727,18 +714,14 @@ def make_comm_stat_node(node_id: str, z: str, name: str, backend_host: str, back
 
 
 def make_reconnect_change(node_id: str, z: str, wires: list) -> dict:
-    """断线重连指令：把消息改写为 topic=reinitialize，回接 MC Read 输入触发连接池重建。
-
-    依据（connection_pool.js 作者注释）：物理断连后旧连接对象 connect() 无法恢复，
-    必须 reinitialize（销毁重建）。自动重连对物理断连无效，由此支路兜底。
-    """
+    """断线重连指令：read.js 识别 topic=connect，连接池在未连接时幂等重建 TCP。"""
     return {
         'id': node_id,
         'type': 'change',
         'z': z,
         'name': '重连指令',
         'rules': [
-            {'t': 'set', 'p': 'topic', 'pt': 'msg', 'to': 'reinitialize', 'tot': 'str'},
+            {'t': 'set', 'p': 'topic', 'pt': 'msg', 'to': 'connect', 'tot': 'str'},
             {'t': 'set', 'p': 'payload', 'pt': 'msg', 'to': '', 'tot': 'str'},
         ],
         'action': '', 'property': '', 'from': '', 'to': '', 'reg': False,
@@ -748,15 +731,6 @@ def make_reconnect_change(node_id: str, z: str, wires: list) -> dict:
 
 
 # ==================== Modbus（node-red-contrib-modbus） ====================
-
-# 寄存器类型 → 功能码
-MODBUS_FC_MAP = {
-    'HR': 'HoldingRegister',
-    'IR': 'InputRegister',
-    'CR': 'Coil',
-    'COIL': 'Coil',
-    'DISCRETE': 'Input',
-}
 
 
 def make_modbus_client(node_id: str, name: str, device: dict) -> dict:

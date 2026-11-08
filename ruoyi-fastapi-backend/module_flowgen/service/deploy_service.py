@@ -6,7 +6,7 @@
 2. drift_status   —— 漂移检测：只在生成范围内比对（用户自有节点不算漂移），并读出心跳回执的运行版本；
 3. 版本留痕      —— 部署/巡检时读 GET /nodes，把关键节点包版本写进 deploy_msg（错配可见化）。
 
-前提：边缘 Node-RED Admin API 可达（adminAuth 未启用；启用后需加 token，暂不支持）。
+前提：边缘 Node-RED Admin API 可达；启用 adminAuth 时从 NODERED_ADMIN_TOKEN 读取 Bearer token。
 """
 import hashlib
 import json
@@ -17,11 +17,13 @@ import httpx
 from sqlalchemy import delete, desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config.env import AppConfig
 from exceptions.exception import ServiceException
 from module_flowgen.dao.flowgen_dao import FlowgenDao
 from module_flowgen.entity.do.flowgen_do import PlcFlowCanvasSnapshot, PlcFlowDeployLog, PlcFlowRelease
 from module_plc.entity.do.monitor_do import NoderedNode
 from module_site_health.entity.do.site_health_do import SiteHealthSite
+from utils.sensitive_util import redact_flows
 
 # 版本留痕关注的节点包
 _WATCH_MODULES = (
@@ -48,6 +50,7 @@ _TIMEOUT = httpx.Timeout(connect=5.0, read=90.0, write=90.0, pool=5.0)  # 大画
 
 # 画布快照每现场保留份数
 _KEEP_SNAPSHOTS = 20
+_GEN_MARKER_FIELDS = ('edgelink_gen', 'site_id', 'device_id', 'gen_version')
 
 
 def _edge_base(site: SiteHealthSite) -> str:
@@ -55,17 +58,23 @@ def _edge_base(site: SiteHealthSite) -> str:
     return f'http://{site.office_ip}:{port}'
 
 
+def _edge_client() -> httpx.AsyncClient:
+    token = (AppConfig.nodered_admin_token or '').strip()
+    headers = {'Authorization': f'Bearer {token}'} if token else None
+    return httpx.AsyncClient(timeout=_TIMEOUT, headers=headers)
+
+
 def _canon_norm(v):
     """递归归一化（漂移比对用）：
     - 剔除编辑器部署时自动补充的元数据：g（分组归属）、*FieldType（类型标注）、x/y（画布坐标）；
     - 空串/None/缺省 视为相等；布尔与 'true'/'false' 字符串互认；数字与数字字符串互认；
     - postgreSQLConfig 的 user/password 不入比对（该包明文存储，属环境凭证而非生成内容）；
-    - __PWRD__（credential 占位符）剔除。"""
+    - __PWRD__（credential 占位符）与生成归属标记剔除。"""
     if isinstance(v, dict):
         ntype = v.get('type')
         out = {}
         for k, x in v.items():
-            if k in ('g', 'x', 'y') or k.endswith('FieldType') or x == '__PWRD__':
+            if k in ('g', 'x', 'y') or k in _GEN_MARKER_FIELDS or k.endswith('FieldType') or x == '__PWRD__':
                 continue
             if ntype == 'group' and k in ('w', 'h'):
                 continue  # 编辑器部署时自动重算分组尺寸
@@ -137,6 +146,37 @@ def _is_gen_tab(label: str, prefixes: set, exact: set) -> bool:
     return label.startswith('GEN_')  # 历史残留清理（早期无前缀识别版本）
 
 
+def _payload_site_ids(payload_flows: list) -> set:
+    return {
+        n.get('site_id') for n in payload_flows
+        if n.get('edgelink_gen') is True and n.get('site_id') is not None
+    }
+
+
+def _is_generated_for_site(node: dict, site_ids: set) -> bool:
+    return node.get('edgelink_gen') is True and node.get('site_id') in site_ids
+
+
+def _preserve_pg_credentials(live_flows: list, payload_flows: list) -> list:
+    """仅在部署内存副本中回填同 id PG 凭证；不修改 release payload 或数据库。"""
+    live_configs = {
+        n.get('id'): n for n in live_flows
+        if n.get('type') == 'postgreSQLConfig'
+    }
+    result = []
+    for node in payload_flows:
+        current = dict(node)
+        if current.get('type') == 'postgreSQLConfig' and not current.get('user') and not current.get('password'):
+            previous = live_configs.get(current.get('id'))
+            if previous:
+                if previous.get('user'):
+                    current['user'] = previous['user']
+                if previous.get('password'):
+                    current['password'] = previous['password']
+        result.append(current)
+    return result
+
+
 def _scoped_match(live_flows: list, payload_flows: list) -> bool:
     """只在生成范围内比对：payload 内每个节点 id 在边缘侧逐节点一致 + 边缘无残留的生成标签页。
     用户自有标签页/节点不参与比对（合并部署语义下它们理应原样保留）。"""
@@ -144,6 +184,9 @@ def _scoped_match(live_flows: list, payload_flows: list) -> bool:
     live_by_id = {n['id']: n for n in live_flows}
     live_subset = [live_by_id[i] for i in payload_by_id if i in live_by_id]
     if _canon_hash(live_subset) != _canon_hash(list(payload_by_id.values())):
+        return False
+    site_ids = _payload_site_ids(payload_flows)
+    if any(_is_generated_for_site(n, site_ids) and n.get('id') not in payload_by_id for n in live_flows):
         return False
     prefixes, exact = _gen_tab_matchers(payload_flows)
     payload_tabs = {n.get('label', '') for n in payload_flows if n.get('type') == 'tab'}
@@ -155,11 +198,13 @@ def _scoped_match(live_flows: list, payload_flows: list) -> bool:
 
 
 def _merge_flows(live_flows: list, payload_flows: list, known_gen_ids: set) -> tuple[list, int]:
-    """合并部署：摘掉边缘上旧的生成范围（认门规则：确定性 id ∈ 已知生成集 ∪ 历史 GEN_ 前缀标签页），
-    其余用户程序原样保留，再追加新 payload。返回 (合并结果, 移除节点数)。
-
-    id 认门使标签页前缀可自定义；GEN_ 前缀规则仅用于清理早期版本的残留。"""
-    live_gen_tab_ids = {
+    """合并部署：按现场 marker 清理生成节点，并用历史 id/GEN_ 规则兼容未标记旧产物。"""
+    site_ids = _payload_site_ids(payload_flows)
+    marked_tab_ids = {
+        n['id'] for n in live_flows
+        if n.get('type') == 'tab' and _is_generated_for_site(n, site_ids)
+    }
+    live_gen_tab_ids = marked_tab_ids | {
         n['id'] for n in live_flows
         if n.get('type') == 'tab' and (n.get('id') in known_gen_ids or str(n.get('label', '')).startswith('GEN_'))
     }
@@ -168,6 +213,9 @@ def _merge_flows(live_flows: list, payload_flows: list, known_gen_ids: set) -> t
     removed = 0
     for n in live_flows:
         node_id = n.get('id', '')
+        if _is_generated_for_site(n, site_ids):
+            removed += 1
+            continue
         if n.get('type') == 'tab' and node_id in live_gen_tab_ids:
             removed += 1
             continue
@@ -177,7 +225,6 @@ def _merge_flows(live_flows: list, payload_flows: list, known_gen_ids: set) -> t
         if node_id in payload_ids:
             removed += 1
             continue
-        # 全局 config 节点（无 z）：仅当 id 是已知生成产物才摘除（覆盖"设备被删"的残留场景）
         if not n.get('z') and node_id in known_gen_ids:
             removed += 1
             continue
@@ -238,6 +285,13 @@ def _required_modules(flows: list) -> dict:
     return {m: sorted(t) for m, t in need.items()}
 
 
+async def _known_gen_ids(db: AsyncSession, site_id: int, payload_flows: list) -> set:
+    known = {n['id'] for n in payload_flows}
+    for payload in await FlowgenDao.get_release_payloads(db, site_id):
+        known |= {n['id'] for n in json.loads(payload)}
+    return known
+
+
 class FlowDeployService:
     """部署与漂移检测服务"""
 
@@ -270,14 +324,14 @@ class FlowDeployService:
             'modules': '',
         }
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with _edge_client() as client:
                 data = await _get_json(client, f'{base}/flows')
                 flows, _rev = _parse_flows_response(data)
                 result['online'] = True
                 result['edgeNodeCount'] = len(flows)
                 result['modules'] = await _read_module_versions(client, base)
                 if latest:
-                    result['match'] = _scoped_match(flows, json.loads(latest.payload))
+                    result['match'] = _scoped_match(redact_flows(flows), redact_flows(json.loads(latest.payload)))
         except (httpx.HTTPError, ValueError):
             pass
         return result
@@ -293,33 +347,31 @@ class FlowDeployService:
         payload_flows = json.loads(release.payload)
         result = {'online': False, 'edge': base, 'replace': [], 'remove': [], 'add': [], 'keep': []}
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with _edge_client() as client:
                 live_flows, _rev = _parse_flows_response(await _get_json(client, f'{base}/flows'))
         except (httpx.HTTPError, ValueError):
             return result
         result['online'] = True
 
-        latest = await FlowgenDao.get_latest_release(db, release.site_id)
-        known_gen_ids = {n['id'] for n in payload_flows}
-        if latest:
-            known_gen_ids |= {n['id'] for n in json.loads(latest.payload)}
+        known_gen_ids = await _known_gen_ids(db, release.site_id, payload_flows)
         payload_ids = {n['id'] for n in payload_flows}
         payload_tab_labels = {n['id']: n.get('label', '') for n in payload_flows if n.get('type') == 'tab'}
         live_ids = {n.get('id') for n in live_flows}
 
+        site_ids = _payload_site_ids(payload_flows)
         prefixes, exact = _gen_tab_matchers(payload_flows)
         for n in live_flows:
             if n.get('type') != 'tab':
                 continue
             label = str(n.get('label', ''))
-            is_gen = n.get('id') in known_gen_ids or _is_gen_tab(label, prefixes, exact)
+            is_gen = _is_generated_for_site(n, site_ids) or n.get('id') in known_gen_ids or _is_gen_tab(label, prefixes, exact)
             if is_gen:
                 (result['replace'] if n['id'] in payload_ids else result['remove']).append(label)
             else:
                 result['keep'].append(label)
         result['add'] = [label for tid, label in payload_tab_labels.items() if tid not in live_ids]
         # 生成区漂移：边缘生成范围与该版本内容不一致（手改了生成页 / 边缘跑的是别的版本）→ 前端红字警告
-        result['genDrift'] = not _scoped_match(live_flows, payload_flows)
+        result['genDrift'] = not _scoped_match(redact_flows(live_flows), redact_flows(payload_flows))
         return result
 
     @classmethod
@@ -331,7 +383,7 @@ class FlowDeployService:
         base = _edge_base(site)
         if flows is None:
             try:
-                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                async with _edge_client() as client:
                     flows, rev = _parse_flows_response(await _get_json(client, f'{base}/flows'))
             except (httpx.HTTPError, ValueError):
                 raise ServiceException(message=f'边缘不可达（{base}），无法备份画布')
@@ -373,8 +425,9 @@ class FlowDeployService:
         rev_before = rev_after = ''
         removed = 0
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with _edge_client() as client:
                 live_flows, rev_before = _parse_flows_response(await _get_json(client, f'{base}/flows'))
+                flows = _preserve_pg_credentials(live_flows, flows)
                 # 部署前置校验：边缘必须装有本版本用到的节点包，缺包直接拒绝部署并指引安装
                 required = _required_modules(flows)
                 if required:
@@ -389,11 +442,8 @@ class FlowDeployService:
                 if full_replace:
                     body_obj = {'flows': flows}
                 else:
-                    # 已知生成 id = 本次 payload + 最新版本 payload（覆盖"设备被删"的残留 config 节点）
-                    latest = await FlowgenDao.get_latest_release(db, release.site_id)
-                    known_gen_ids = {n['id'] for n in flows}
-                    if latest:
-                        known_gen_ids |= {n['id'] for n in json.loads(latest.payload)}
+                    # 首次 marker 部署同时用全部历史 id 兜底，之后以现场 marker 清理旧生成节点
+                    known_gen_ids = await _known_gen_ids(db, release.site_id, flows)
                     merged, removed = _merge_flows(live_flows, flows, known_gen_ids)
                     body_obj = {'flows': merged}
                 # v2 安全部署：带 rev，部署期间画布被他人改动则 409 拒绝而不是互相覆盖

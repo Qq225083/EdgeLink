@@ -1,23 +1,31 @@
 [
   {
     "disabled": false,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "faa68bb2aefd738d",
     "info": "**基础设施页**：监控 Key / MQTT / PG 凭证、心跳上报、flows.json 上传都在这里。  \n- 首次部署后按画布下方注释完成凭证录入（生成时已填写的自动下发，跳过）  \n- 详细使用说明见本页下方注释节点",
     "label": "基础设施",
+    "site_id": 66,
     "type": "tab"
   },
   {
     "basePath": "",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "https": false,
     "id": "722a7b2203fa1e7c",
     "info": "存量监控服务器（共享配置）：后端地址/端口 + 监控 Key（credential）。  \nKey 只在这里录一次，site-health 与 flows 上传共用；重新部署不丢失。",
     "name": "存量监控服务器",
     "port": 9099,
     "server": "127.0.0.1",
+    "site_id": 66,
     "type": "site-health-server"
   },
   {
     "basePath": "",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "https": false,
     "id": "40cda85d3f9f4fec",
     "info": "采集点健康度：定期向后端上报本采集点运行指标（CPU/内存/流量等）。Key 在共享配置「存量监控服务器」上。",
@@ -26,6 +34,7 @@
     "port": 9099,
     "server": "127.0.0.1",
     "serverRef": "722a7b2203fa1e7c",
+    "site_id": 66,
     "type": "site-health",
     "wires": [],
     "x": 200,
@@ -33,11 +42,14 @@
     "z": "faa68bb2aefd738d"
   },
   {
+    "edgelink_gen": true,
     "flowsPath": "",
+    "gen_version": "1.1.1",
     "id": "6677f9bbb1956bad",
     "info": "flows.json 上传：点节点按钮把当前边缘画布快照传回后端留档（出问题时供监控页下载对照）。",
     "name": "flows.json 上传",
     "serverRef": "722a7b2203fa1e7c",
+    "site_id": 66,
     "type": "site-flows-upload",
     "wires": [],
     "x": 200,
@@ -55,12 +67,15 @@
     "closePayload": "",
     "closeQos": "0",
     "closeTopic": "",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "2c9f3174e86707b9",
     "info": "MQTT broker 配置：数据/告警上报通道。账号密码由部署凭证下发或在编辑器录入（credential）。",
     "keepalive": "60",
     "name": "MQTT broker",
     "port": "1883",
     "protocolVersion": "4",
+    "site_id": 66,
     "type": "mqtt-broker",
     "usetls": false,
     "willPayload": "",
@@ -69,26 +84,34 @@
   },
   {
     "database": "ruoyi_pg",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "host": "127.0.0.1",
     "id": "c81f9ac546e101e3",
     "info": "采集库·目标1（PG 连接配置）：ruoyi_pg 库。注意该包账号密码为明文字段。",
     "name": "采集库·目标1",
     "port": 5432,
+    "site_id": 66,
     "ssl": false,
     "type": "postgreSQLConfig"
   },
   {
     "database": "ruoyi_pg",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "host": "127.0.0.1",
     "id": "0fcd1932b7dc1dca",
     "info": "采集库·目标2（PG 连接配置）：ruoyi_pg 库。注意该包账号密码为明文字段。",
     "name": "采集库·目标2",
     "port": 5432,
+    "site_id": 66,
     "ssl": false,
     "type": "postgreSQLConfig"
   },
   {
     "crontab": "",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "093d912aa0c75062",
     "info": "心跳触发：启动 5s 后第一次，之后每 30s 一次。",
     "name": "心跳",
@@ -102,6 +125,7 @@
       }
     ],
     "repeat": "30",
+    "site_id": 66,
     "topic": "",
     "type": "inject",
     "wires": [
@@ -115,6 +139,8 @@
   },
   {
     "authType": "",
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -133,6 +159,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/heartbeat-edge?host_pc_ip=10.81.8.34&flow_version=__FLOWVER__",
@@ -144,6 +171,8 @@
     "z": "faa68bb2aefd738d"
   },
   {
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 250,
     "id": "92a4f6f30b19a365",
     "name": "基础设施 · 监控与上传",
@@ -153,6 +182,7 @@
       "093d912aa0c75062",
       "963c78da47700bd8"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#f4f0fa",
@@ -165,9 +195,12 @@
     "z": "faa68bb2aefd738d"
   },
   {
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "956c3a0a2bb8dd90",
     "info": "",
     "name": "流程版本 __FLOWVER__ · 生成器 v1.1.1 · EdgeLink 生成器产物\n════════════ 部署后必做（仅首次）════════════\n①「存量监控服务器」配置节点 → 录入监控 Key（site-health 与 flows 上传共用，只录一次）\n②「MQTT broker」配置节点 → 录入用户名/密码（生成时已填则跳过）\n③「采集库·目标N」配置节点 → 录入 PG 用户名/密码（生成时已填则跳过；该包密码为明文字段，注意 flows.json 保管）\n（credential 按节点 id 保留，之后重新生成部署不会丢失）\n════════════ 验证（2 分钟）════════════\n· 发布页横幅应显示「边缘在线 · 与最新版一致」\n· 节点监控页本节点 1-2 分钟内转在线（心跳 30s + 离线阈值 90s）\n· PG 支路：成功计数应持续增长；失败看「PG错误·目标N」调试侧栏的报错原文\n════════════ 定制逻辑（重要纪律）════════════\n· 不要修改任何生成页面！手改会在下次部署被覆盖（部署弹窗会红字警告；可先在发布页备份画布快照）\n· 阈值判断/转发等逻辑：新建自己的标签页（勿用 GEN_/EL_ 前缀），\n  用 link in 连各设备页的「数据出口」，或订阅 MQTT：edgelink/gen/data/<节点ID>/<设备ID>\n· 数据出口每轮输出完整契约报文（payload.values[] 带 eng_value/quality）；\n  断线时 quality=BAD、值为 null，逻辑里务必先过滤 quality=\"GOOD\"\n════════════ 排障入口 ════════════\n· SQL调试·目标N：每轮实际执行的 INSERT 语句\n· PG错误·目标N：PG 返回的报错原文（字段不存在/认证失败等）\n· 调试节点可点节点按钮临时关停，不影响采集",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 130,
@@ -175,10 +208,14 @@
     "z": "faa68bb2aefd738d"
   },
   {
+    "device_id": 101,
     "disabled": false,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "95abb4a859728a59",
-    "info": "📦 冲压线1 | PLC 192.168.1.10:5007 | 周期 1000ms | 点位 7 | 块读 3 | 空洞容忍 8字 | 固定周期  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：inject 每 1000ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）  \n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）  \n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；  \n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、  \n   通信状态上报（任一块 BAD 即报离线）、数据出口·冲压线1（link out）  \n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连限速15s → reinitialize 指令回接首个 MC Read  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·冲压线1」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "info": "📦 冲压线1 | PLC 192.168.1.10:5007 | 周期 1000ms | 点位 8 | 块读 4 | 空洞容忍 8字 | 固定周期  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：inject 每 1000ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）  \n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）  \n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；  \n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、  \n   通信状态上报（无 BAD、契约非空且无 problem 才在线）、数据出口·冲压线1（link out）  \n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连心跳每30s发送 topic=connect 到首个 MC Read（连接池幂等恢复）  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·冲压线1」拿每轮数据，勿改本页——下次部署会被覆盖",
     "label": "GEN_采集_冲压线1",
+    "site_id": 66,
     "type": "tab"
   },
   {
@@ -186,7 +223,10 @@
     "PLCModuleNo": "1023",
     "PLCStation": "0",
     "ascii": false,
+    "device_id": 101,
+    "edgelink_gen": true,
     "frame": "3E",
+    "gen_version": "1.1.1",
     "host": "192.168.1.10",
     "id": "3349324cf28e9993",
     "name": "冲压线1 连接",
@@ -195,12 +235,16 @@
     "plcType": "Q",
     "port": "5007",
     "protocol": "TCP",
+    "site_id": 66,
     "timeout": "3000",
     "type": "MC Protocol Connection",
     "z": "95abb4a859728a59"
   },
   {
     "crontab": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "1b8f31cc96d55264",
     "info": "轮询触发器：每 1000ms 触发一轮采集。",
     "name": "[冲压线1] 轮询",
@@ -214,29 +258,35 @@
       }
     ],
     "repeat": "1.0",
+    "site_id": 66,
     "topic": "",
     "type": "inject",
     "wires": [
       [
         "fa0ecbdd4e838f9e",
         "42f427f922d9ca87",
-        "aa79641af6f05522"
+        "aa79641af6f05522",
+        "bf9578d31971d5d1"
       ]
     ],
     "x": 140,
-    "y": 250,
+    "y": 305,
     "z": "95abb4a859728a59"
   },
   {
     "address": "D100,3",
     "addressType": "str",
     "connection": "3349324cf28e9993",
+    "device_id": 101,
+    "edgelink_gen": true,
     "errorHandling": "output2",
+    "gen_version": "1.1.1",
     "id": "fa0ecbdd4e838f9e",
-    "info": "读取 PLC 寄存器块 D100,3（3 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警 + 重连）。",
+    "info": "读取 PLC 寄存器块 D100,3（3 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。  \n输入 topic=connect 时只执行幂等重连，不发起读取。",
     "name": "[冲压线1] 读 D100,3",
     "outputFormat": "0",
     "outputs": 2,
+    "site_id": 66,
     "topic": "",
     "type": "MC Read",
     "wires": [
@@ -245,8 +295,7 @@
       ],
       [
         "473f3a849db85543",
-        "27fde6454168262d",
-        "5b8ffb7c39f45223"
+        "27fde6454168262d"
       ]
     ],
     "x": 380,
@@ -255,7 +304,10 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "81f75af09bae1054",
     "info": "块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。",
     "name": "块内装配",
@@ -277,6 +329,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -290,7 +343,10 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "473f3a849db85543",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。",
     "name": "块0失败标BAD",
@@ -312,6 +368,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -327,12 +384,16 @@
     "address": "DFLOAT110,2",
     "addressType": "str",
     "connection": "3349324cf28e9993",
+    "device_id": 101,
+    "edgelink_gen": true,
     "errorHandling": "output2",
+    "gen_version": "1.1.1",
     "id": "42f427f922d9ca87",
-    "info": "读取 PLC 寄存器块 DFLOAT110,2（2 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警 + 重连）。",
+    "info": "读取 PLC 寄存器块 DFLOAT110,2（2 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。  \n输入 topic=connect 时只执行幂等重连，不发起读取。",
     "name": "[冲压线1] 读 DFLOAT110,2",
     "outputFormat": "0",
     "outputs": 2,
+    "site_id": 66,
     "topic": "",
     "type": "MC Read",
     "wires": [
@@ -341,8 +402,7 @@
       ],
       [
         "0a360b8e6600ec46",
-        "27fde6454168262d",
-        "5b8ffb7c39f45223"
+        "27fde6454168262d"
       ]
     ],
     "x": 380,
@@ -351,7 +411,10 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "f06eaa6af2a971d8",
     "info": "块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。",
     "name": "块内装配",
@@ -373,6 +436,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -386,7 +450,10 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "0a360b8e6600ec46",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。",
     "name": "块1失败标BAD",
@@ -408,6 +475,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -420,15 +488,19 @@
     "z": "95abb4a859728a59"
   },
   {
-    "address": "M200.3,2",
+    "address": "DUINT120,1",
     "addressType": "str",
     "connection": "3349324cf28e9993",
+    "device_id": 101,
+    "edgelink_gen": true,
     "errorHandling": "output2",
+    "gen_version": "1.1.1",
     "id": "aa79641af6f05522",
-    "info": "读取 PLC 寄存器块 M200.3,2（2 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警 + 重连）。",
-    "name": "[冲压线1] 读 M200.3,2",
+    "info": "读取 PLC 寄存器块 DUINT120,1（1 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。  \n输入 topic=connect 时只执行幂等重连，不发起读取。",
+    "name": "[冲压线1] 读 DUINT120,1",
     "outputFormat": "0",
     "outputs": 2,
+    "site_id": 66,
     "topic": "",
     "type": "MC Read",
     "wires": [
@@ -437,8 +509,7 @@
       ],
       [
         "b5e61efe10cdf977",
-        "27fde6454168262d",
-        "5b8ffb7c39f45223"
+        "27fde6454168262d"
       ]
     ],
     "x": 380,
@@ -447,7 +518,10 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "c9c629e823721675",
     "info": "块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。",
     "name": "块内装配",
@@ -458,7 +532,7 @@
         "p": "payload",
         "pt": "msg",
         "t": "set",
-        "to": "[{\"tag_id\": 6, \"tag_address\": \"200\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"M200.3\"); $exists($v) ? $v : null), \"register_type\": \"M\", \"eng_value\": ($w := $lookup(payload, \"M200.3\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"M200.3\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}, {\"tag_id\": 7, \"tag_address\": \"200\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"M200.4\"); $exists($v) ? $v : null), \"register_type\": \"M\", \"eng_value\": ($w := $lookup(payload, \"M200.4\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"M200.4\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "to": "[{\"tag_id\": 9, \"tag_address\": \"120\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"D120\"); $exists($v) ? $v : null), \"register_type\": \"D\", \"eng_value\": ($w := $lookup(payload, \"D120\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"D120\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
         "tot": "jsonata"
       },
       {
@@ -469,6 +543,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -482,10 +557,120 @@
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "b5e61efe10cdf977",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。",
     "name": "块2失败标BAD",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 9, \"tag_address\": \"120\", \"tag_name\": \"\", \"raw_value\": null, \"register_type\": \"D\", \"eng_value\": null, \"unit\": \"\", \"quality\": \"BAD\", \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block02",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "1205f2eb7aa64c3e"
+      ]
+    ],
+    "x": 620,
+    "y": 408,
+    "z": "95abb4a859728a59"
+  },
+  {
+    "address": "M203,2",
+    "addressType": "str",
+    "connection": "3349324cf28e9993",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "errorHandling": "output2",
+    "gen_version": "1.1.1",
+    "id": "bf9578d31971d5d1",
+    "info": "读取 PLC 寄存器块 M203,2（2 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。  \n输入 topic=connect 时只执行幂等重连，不发起读取。",
+    "name": "[冲压线1] 读 M203,2",
+    "outputFormat": "0",
+    "outputs": 2,
+    "site_id": 66,
+    "topic": "",
+    "type": "MC Read",
+    "wires": [
+      [
+        "6fefd6d23ea10558"
+      ],
+      [
+        "99698c007010d887",
+        "27fde6454168262d"
+      ]
+    ],
+    "x": 380,
+    "y": 470,
+    "z": "95abb4a859728a59"
+  },
+  {
+    "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "6fefd6d23ea10558",
+    "info": "块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。",
+    "name": "块内装配",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 6, \"tag_address\": \"200\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"M203\"); $exists($v) ? $v : null), \"register_type\": \"M\", \"eng_value\": ($w := $lookup(payload, \"M203\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"M203\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}, {\"tag_id\": 7, \"tag_address\": \"200\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"M204\"); $exists($v) ? $v : null), \"register_type\": \"M\", \"eng_value\": ($w := $lookup(payload, \"M204\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"M204\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block03",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "1205f2eb7aa64c3e"
+      ]
+    ],
+    "x": 620,
+    "y": 470,
+    "z": "95abb4a859728a59"
+  },
+  {
+    "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "99698c007010d887",
+    "info": "失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。",
+    "name": "块3失败标BAD",
     "property": "",
     "reg": false,
     "rules": [
@@ -500,10 +685,11 @@
         "p": "topic",
         "pt": "msg",
         "t": "set",
-        "to": "block02",
+        "to": "block03",
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -512,11 +698,14 @@
       ]
     ],
     "x": 620,
-    "y": 408,
+    "y": 518,
     "z": "95abb4a859728a59"
   },
   {
     "authType": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -526,7 +715,7 @@
       }
     ],
     "id": "595758c5d49271db",
-    "info": "通信状态上报：每轮一次上报本设备在线状态（任一块 BAD 即离线），供运行监控页展示。",
+    "info": "通信状态上报：每轮一次上报本设备在线状态（无 BAD、契约非空且无 problem 才在线），供运行监控页展示。",
     "insecureHTTPParser": false,
     "method": "POST",
     "name": "通信状态上报",
@@ -535,6 +724,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/device-comm-edge?node_id=66&device_id=101&success={{comm}}",
@@ -542,15 +732,18 @@
       []
     ],
     "x": 620,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "accumulate": false,
     "build": "object",
-    "count": "3",
+    "count": "4",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "1205f2eb7aa64c3e",
-    "info": "多块合并：按 topic=blockNN 把 3 个块拼回一个对象；超时兜底防卡死（正常时坏块由\"失败标BAD\"补齐）。",
+    "info": "多块合并：按 topic=blockNN 把 4 个块拼回一个对象；超时兜底防卡死（正常时坏块由\"失败标BAD\"补齐）。",
     "joiner": "\\n",
     "joinerType": "str",
     "key": "topic",
@@ -563,6 +756,7 @@
     "reduceInit": "",
     "reduceInitType": "",
     "reduceRight": false,
+    "site_id": 66,
     "timeout": "6",
     "type": "join",
     "wires": [
@@ -571,14 +765,17 @@
       ]
     ],
     "x": 860,
-    "y": 250,
+    "y": 305,
     "z": "95abb4a859728a59"
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "1a4a74afb0435b93",
-    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/ts）。  \n同时生成：changeKey（变化触发指纹）、comm（通信状态）、pg_sql_i（各目标的 INSERT 语句）。",
+    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count/ts）。  \n同时生成：changeKey（变化触发指纹）、comm（通信状态）、pg_sql_i（各目标的 INSERT 语句）。",
     "name": "契约装配",
     "property": "",
     "reg": false,
@@ -594,14 +791,14 @@
         "p": "payload",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := $reduce($sort($keys(payload)), function($acc, $k){$append($acc, $lookup(payload, $k))}, []); {\"node_id\": 66, \"device_id\": 101, \"device_name\": \"冲压线1\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
+        "to": "($vals := $reduce($sort($keys(payload)), function($acc, $k){$append($acc, $lookup(payload, $k))}, []); {\"node_id\": 66, \"device_id\": 101, \"device_name\": \"冲压线1\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"good_count\": $count($vals[quality=\"GOOD\"]), \"bad_count\": $count($vals[quality=\"BAD\"]), \"uncertain_count\": $count($vals[quality=\"UNCERTAIN\"]), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
         "tot": "jsonata"
       },
       {
         "p": "comm",
         "pt": "msg",
         "t": "set",
-        "to": "($count(payload.values[quality=\"BAD\"]) = 0) ? \"true\" : \"false\"",
+        "to": "((payload != null) and ($count(payload.values) > 0) and ($count(payload.values[quality=\"BAD\"]) = 0) and (($exists(problem) ? $boolean(problem) : false) = false)) ? \"true\" : \"false\"",
         "tot": "jsonata"
       },
       {
@@ -619,6 +816,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -627,11 +825,14 @@
       ]
     ],
     "x": 1080,
-    "y": 250,
+    "y": 305,
     "z": "95abb4a859728a59"
   },
   {
     "checkall": "true",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "87d7df94e66984a5",
     "info": "空轮过滤：value_count>0 才放行。四路输出：MQTT 上报 / PG 写库 / 通信状态上报 / 数据出口。",
     "name": "有值才报",
@@ -646,6 +847,7 @@
         "vt": "num"
       }
     ],
+    "site_id": 66,
     "type": "switch",
     "wires": [
       [
@@ -657,43 +859,54 @@
       ]
     ],
     "x": 1300,
-    "y": 250,
+    "y": 305,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "557cc6f0386bfea1",
     "info": "数据出口（link out）：定制逻辑的消费接口。  \n新建自己的标签页，用 link in 连它，每轮拿到完整报文。勿改本页——重新部署会被覆盖。",
     "links": [],
     "mode": "link",
     "name": "数据出口·冲压线1",
+    "site_id": 66,
     "type": "link out",
     "wires": [],
     "x": 2010,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "38234a77a2621836",
     "info": "实时数据上报到 MQTT broker。断线时本节点缓冲有限，Broker 长期离线会丢实时数据（历史数据看 PG）。",
     "name": "MQTT 上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/data/66/101",
     "type": "mqtt out",
     "userProps": "",
     "wires": [],
     "x": 1780,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "75b577643b7ccf61",
     "info": "PG SQL·目标1：从契约装配取 pg_sql_0 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标1",
@@ -715,6 +928,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -724,16 +938,20 @@
       ]
     ],
     "x": 1080,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "d48c101f7fa95ff5",
     "info": "SQL调试·目标1：调试侧栏显示每轮实际执行的 INSERT 语句。可点节点按钮关停，不影响采集。",
     "name": "SQL调试·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -742,10 +960,13 @@
     "type": "debug",
     "wires": [],
     "x": 1300,
-    "y": 600,
+    "y": 710,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "e4512f10df615fbc",
     "info": "写采集历史·目标1：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标1」。",
     "name": "写采集历史·目标1",
@@ -753,6 +974,7 @@
     "postgreSQLConfig": "c81f9ac546e101e3",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -761,11 +983,14 @@
       ]
     ],
     "x": 1300,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "authType": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -784,6 +1009,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -791,11 +1017,14 @@
       []
     ],
     "x": 1520,
-    "y": 560,
+    "y": 670,
     "z": "95abb4a859728a59"
   },
   {
     "authType": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -814,6 +1043,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -821,16 +1051,20 @@
       []
     ],
     "x": 1300,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "abc252975c6219f8",
     "info": "PG异常·目标1：捕获写库异常 → 失败计数；报错原文看「PG错误·目标1」调试侧栏。",
     "name": "PG异常·目标1",
     "scope": [
       "e4512f10df615fbc"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -840,16 +1074,20 @@
       ]
     ],
     "x": 1080,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "5911811d0cc08611",
     "info": "PG错误·目标1：调试侧栏显示 PG 报错原文（字段不存在/认证失败等）。",
     "name": "PG错误·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -858,12 +1096,15 @@
     "type": "debug",
     "wires": [],
     "x": 1300,
-    "y": 780,
+    "y": 890,
     "z": "95abb4a859728a59"
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "f055b6d4e426fbfa",
     "info": "PG SQL·目标2：从契约装配取 pg_sql_1 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标2",
@@ -885,6 +1126,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -894,16 +1136,20 @@
       ]
     ],
     "x": 1080,
-    "y": 640,
+    "y": 750,
     "z": "95abb4a859728a59"
   },
   {
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "edfa8d819afb4860",
     "info": "SQL调试·目标2：调试侧栏显示每轮实际执行的 INSERT 语句。可点节点按钮关停，不影响采集。",
     "name": "SQL调试·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -912,10 +1158,13 @@
     "type": "debug",
     "wires": [],
     "x": 1300,
-    "y": 680,
+    "y": 790,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "f253502764a90644",
     "info": "写采集历史·目标2：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标2」。",
     "name": "写采集历史·目标2",
@@ -923,6 +1172,7 @@
     "postgreSQLConfig": "0fcd1932b7dc1dca",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -931,11 +1181,14 @@
       ]
     ],
     "x": 1300,
-    "y": 640,
+    "y": 750,
     "z": "95abb4a859728a59"
   },
   {
     "authType": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -954,6 +1207,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -961,11 +1215,14 @@
       []
     ],
     "x": 1520,
-    "y": 640,
+    "y": 750,
     "z": "95abb4a859728a59"
   },
   {
     "authType": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -984,6 +1241,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -991,16 +1249,20 @@
       []
     ],
     "x": 1300,
-    "y": 820,
+    "y": 930,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "4b72a3b2fef50dfb",
     "info": "PG异常·目标2：捕获写库异常 → 失败计数；报错原文看「PG错误·目标2」调试侧栏。",
     "name": "PG异常·目标2",
     "scope": [
       "f253502764a90644"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -1010,16 +1272,20 @@
       ]
     ],
     "x": 1080,
-    "y": 820,
+    "y": 930,
     "z": "95abb4a859728a59"
   },
   {
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "0fc9b40d592ece46",
     "info": "PG错误·目标2：调试侧栏显示 PG 报错原文（字段不存在/认证失败等）。",
     "name": "PG错误·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -1028,12 +1294,15 @@
     "type": "debug",
     "wires": [],
     "x": 1300,
-    "y": 860,
+    "y": 970,
     "z": "95abb4a859728a59"
   },
   {
     "allowrate": false,
+    "device_id": 101,
     "drop": true,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "27fde6454168262d",
     "info": "告警限速：30 秒最多 1 条（防洪）。持续断线时告警间隔最长 30s。",
     "name": "告警限速",
@@ -1045,6 +1314,7 @@
     "randomUnits": "seconds",
     "rate": "1",
     "rateUnits": "second",
+    "site_id": 66,
     "timeout": "5",
     "timeoutUnits": "seconds",
     "type": "delay",
@@ -1054,40 +1324,47 @@
       ]
     ],
     "x": 460,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
-    "allowrate": false,
-    "drop": true,
-    "id": "5b8ffb7c39f45223",
-    "info": "重连限速：15 秒最多 1 次重连指令（防抖动反复重连）。",
-    "name": "重连限速",
-    "nbRateUnits": "15",
-    "outputs": 1,
-    "pauseType": "rate",
-    "randomFirst": "1",
-    "randomLast": "5",
-    "randomUnits": "seconds",
-    "rate": "1",
-    "rateUnits": "second",
-    "timeout": "5",
-    "timeoutUnits": "seconds",
-    "type": "delay",
+    "crontab": "",
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "id": "d9431aa7f7b2d98c",
+    "info": "重连心跳：每 30 秒触发一次。连接池自身不会自动重连，由此支路主动恢复。",
+    "name": "重连心跳",
+    "once": false,
+    "onceDelay": 0.1,
+    "payload": "",
+    "payloadType": "date",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30.0",
+    "site_id": 66,
+    "topic": "",
+    "type": "inject",
     "wires": [
       [
         "cdb4a55926ca2744"
       ]
     ],
     "x": 460,
-    "y": 788,
+    "y": 898,
     "z": "95abb4a859728a59"
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "cdb4a55926ca2744",
-    "info": "断线重连：收到错误脚后发送 topic=reinitialize 指令，回接首个 MC Read 重建 TCP 连接。",
+    "info": "重连指令：发送 topic=connect 到首个 MC Read；连接池共享且 connect 幂等，无需逐块重复连接。",
     "name": "重连指令",
     "property": "",
     "reg": false,
@@ -1096,7 +1373,7 @@
         "p": "topic",
         "pt": "msg",
         "t": "set",
-        "to": "reinitialize",
+        "to": "connect",
         "tot": "str"
       },
       {
@@ -1107,6 +1384,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1115,12 +1393,15 @@
       ]
     ],
     "x": 660,
-    "y": 788,
+    "y": 898,
     "z": "95abb4a859728a59"
   },
   {
     "action": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "2b4b1e6899cba95a",
     "info": "告警时间戳：给告警报文补上 ts。",
     "name": "告警时间戳",
@@ -1135,6 +1416,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1143,17 +1425,21 @@
       ]
     ],
     "x": 660,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
     "field": "payload",
     "fieldType": "msg",
     "format": "handlebars",
+    "gen_version": "1.1.1",
     "id": "20b187037652098b",
     "info": "告警报文：PLC_OFFLINE 结构化告警（alert_type/node_id/device_id/ts）。",
     "name": "告警报文",
     "output": "str",
+    "site_id": 66,
     "syntax": "mustache",
     "template": "{\"alert_type\":\"PLC_OFFLINE\",\"node_id\":66,\"device_id\":101,\"device_name\":\"冲压线1\",\"host_pc_ip\":\"10.81.8.34\",\"msg\":\"采集失败或支路异常\",\"ts\":\"{{ts}}\"}",
     "type": "template",
@@ -1163,29 +1449,36 @@
       ]
     ],
     "x": 860,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 101,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "bf9a27a60616d487",
     "info": "告警上报：MQTT topic = alarm/plc_offline/<设备ID>。",
     "name": "告警上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/alarm/plc_offline/101",
     "type": "mqtt out",
     "userProps": "",
     "wires": [],
     "x": 1060,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "a6ceb8755d4f49e9",
     "info": "支路异常兜底：捕获本页所有未处理异常 → 告警链。PG 支路有专属 catch，不在此列。",
     "name": "支路异常",
@@ -1197,14 +1490,18 @@
       "fa0ecbdd4e838f9e",
       "42f427f922d9ca87",
       "aa79641af6f05522",
+      "bf9578d31971d5d1",
       "81f75af09bae1054",
       "f06eaa6af2a971d8",
       "c9c629e823721675",
+      "6fefd6d23ea10558",
       "473f3a849db85543",
       "0a360b8e6600ec46",
       "b5e61efe10cdf977",
+      "99698c007010d887",
       "1205f2eb7aa64c3e"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -1213,11 +1510,14 @@
       ]
     ],
     "x": 140,
-    "y": 740,
+    "y": 850,
     "z": "95abb4a859728a59"
   },
   {
-    "h": 398,
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "h": 508,
     "id": "095ed0f529dc0cd6",
     "name": "采集与装配",
     "nodes": [
@@ -1225,16 +1525,20 @@
       "fa0ecbdd4e838f9e",
       "42f427f922d9ca87",
       "aa79641af6f05522",
+      "bf9578d31971d5d1",
       "81f75af09bae1054",
       "f06eaa6af2a971d8",
       "c9c629e823721675",
+      "6fefd6d23ea10558",
       "473f3a849db85543",
       "0a360b8e6600ec46",
       "b5e61efe10cdf977",
+      "99698c007010d887",
       "1205f2eb7aa64c3e",
       "1a4a74afb0435b93",
       "87d7df94e66984a5"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e8f4fd",
@@ -1247,6 +1551,9 @@
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 430,
     "id": "5ccd5d7a2fdca0bd",
     "name": "上报与计数",
@@ -1269,6 +1576,7 @@
       "38234a77a2621836",
       "557cc6f0386bfea1"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e9f7e8",
@@ -1277,10 +1585,13 @@
     "type": "group",
     "w": 1640,
     "x": 570,
-    "y": 515,
+    "y": 625,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 178,
     "id": "e83b61fe0bd766d0",
     "name": "告警与异常",
@@ -1290,9 +1601,10 @@
       "2b4b1e6899cba95a",
       "20b187037652098b",
       "bf9a27a60616d487",
-      "5b8ffb7c39f45223",
+      "d9431aa7f7b2d98c",
       "cdb4a55926ca2744"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#fdecea",
@@ -1301,13 +1613,17 @@
     "type": "group",
     "w": 1170,
     "x": 90,
-    "y": 695,
+    "y": 805,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "0b954faf960385dc",
     "info": "",
-    "name": "📦 冲压线1 | PLC 192.168.1.10:5007 | 周期 1000ms | 点位 7 | 块读 3 | 空洞容忍 8字 | 固定周期\n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署",
+    "name": "📦 冲压线1 | PLC 192.168.1.10:5007 | 周期 1000ms | 点位 8 | 块读 4 | 空洞容忍 8字 | 固定周期\n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
@@ -1315,20 +1631,28 @@
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 101,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "967c321e8f93cc85",
     "info": "",
-    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：inject 每 1000ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）\n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）\n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；\n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、\n   通信状态上报（任一块 BAD 即报离线）、数据出口·冲压线1（link out）\n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连限速15s → reinitialize 指令回接首个 MC Read\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·冲压线1」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：inject 每 1000ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）\n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）\n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；\n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、\n   通信状态上报（无 BAD、契约非空且无 problem 才在线）、数据出口·冲压线1（link out）\n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连心跳每30s发送 topic=connect 到首个 MC Read（连接池幂等恢复）\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·冲压线1」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
-    "y": 880,
+    "y": 990,
     "z": "95abb4a859728a59"
   },
   {
+    "device_id": 102,
     "disabled": false,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "b7bd5458119239dc",
-    "info": "📦 老FX | PLC 192.168.1.10:5007 | 周期 200ms | 点位 1 | 块读 1 | 空洞容忍 8字 | 变化触发  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：inject 每 200ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）  \n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）  \n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；  \n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、  \n   通信状态上报（任一块 BAD 即报离线）、数据出口·老FX（link out）  \n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连限速15s → reinitialize 指令回接首个 MC Read  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·老FX」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "info": "📦 老FX | PLC 192.168.1.10:5007 | 周期 200ms | 点位 1 | 块读 1 | 空洞容忍 8字 | 变化触发  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：inject 每 200ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）  \n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）  \n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；  \n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、  \n   通信状态上报（无 BAD、契约非空且无 problem 才在线）、数据出口·老FX（link out）  \n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连心跳每30s发送 topic=connect 到首个 MC Read（连接池幂等恢复）  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·老FX」拿每轮数据，勿改本页——下次部署会被覆盖",
     "label": "GEN_采集_老FX",
+    "site_id": 66,
     "type": "tab"
   },
   {
@@ -1336,7 +1660,10 @@
     "PLCModuleNo": "1023",
     "PLCStation": "0",
     "ascii": false,
+    "device_id": 102,
+    "edgelink_gen": true,
     "frame": "3E",
+    "gen_version": "1.1.1",
     "host": "192.168.1.10",
     "id": "5344621cd08607cd",
     "name": "老FX 连接",
@@ -1345,12 +1672,16 @@
     "plcType": "FX",
     "port": "5007",
     "protocol": "TCP",
+    "site_id": 66,
     "timeout": "3000",
     "type": "MC Protocol Connection",
     "z": "b7bd5458119239dc"
   },
   {
     "crontab": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "c39744ccb1f2e4bd",
     "info": "轮询触发器：每 200ms 触发一轮采集。  \n亚秒模式：一次性触发，由下方\"节奏\" delay 自循环接力（周期=管道耗时+延迟，自带背压）。",
     "name": "[老FX] 启动",
@@ -1364,6 +1695,7 @@
       }
     ],
     "repeat": "",
+    "site_id": 66,
     "topic": "",
     "type": "inject",
     "wires": [
@@ -1377,7 +1709,10 @@
   },
   {
     "allowrate": false,
+    "device_id": 102,
     "drop": false,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "bdf740384fac3c0f",
     "info": "节奏器（亚秒自循环）：每 200ms 放行一轮，回接自契约装配。",
     "name": "节奏 200ms",
@@ -1389,6 +1724,7 @@
     "randomUnits": "seconds",
     "rate": "1",
     "rateUnits": "second",
+    "site_id": 66,
     "timeout": "200",
     "timeoutUnits": "milliseconds",
     "type": "delay",
@@ -1402,15 +1738,19 @@
     "z": "b7bd5458119239dc"
   },
   {
-    "address": "X17.0",
+    "address": "XF",
     "addressType": "str",
     "connection": "5344621cd08607cd",
+    "device_id": 102,
+    "edgelink_gen": true,
     "errorHandling": "output2",
+    "gen_version": "1.1.1",
     "id": "1bb1f503225a4bbc",
-    "info": "读取 PLC 寄存器块 X17.0（1 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警 + 重连）。",
-    "name": "[老FX] 读 X17.0",
+    "info": "读取 PLC 寄存器块 XF（1 个点位）。  \n输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。  \n输入 topic=connect 时只执行幂等重连，不发起读取。",
+    "name": "[老FX] 读 XF",
     "outputFormat": "0",
     "outputs": 2,
+    "site_id": 66,
     "topic": "",
     "type": "MC Read",
     "wires": [
@@ -1419,8 +1759,7 @@
       ],
       [
         "7007519baeed0e3c",
-        "ee45281fd517f5bd",
-        "dfb5524228ee28cc"
+        "ee45281fd517f5bd"
       ]
     ],
     "x": 380,
@@ -1429,7 +1768,10 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "4c21cfe84a83c15a",
     "info": "块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。",
     "name": "块内装配",
@@ -1440,10 +1782,11 @@
         "p": "payload",
         "pt": "msg",
         "t": "set",
-        "to": "[{\"tag_id\": 8, \"tag_address\": \"17\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"X17.0\"); $exists($v) ? $v : null), \"register_type\": \"X\", \"eng_value\": ($w := $lookup(payload, \"X17.0\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"X17.0\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "to": "[{\"tag_id\": 8, \"tag_address\": \"17\", \"tag_name\": \"\", \"raw_value\": ($v := $lookup(payload, \"XF\"); $exists($v) ? $v : null), \"register_type\": \"X\", \"eng_value\": ($w := $lookup(payload, \"XF\"); $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists($lookup(payload, \"XF\")) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1457,7 +1800,10 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "7007519baeed0e3c",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。",
     "name": "块0失败标BAD",
@@ -1472,6 +1818,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1485,6 +1832,9 @@
   },
   {
     "authType": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -1494,7 +1844,7 @@
       }
     ],
     "id": "7dc429e264ae5c32",
-    "info": "通信状态上报：每轮一次上报本设备在线状态（任一块 BAD 即离线），供运行监控页展示。",
+    "info": "通信状态上报：每轮一次上报本设备在线状态（无 BAD、契约非空且无 problem 才在线），供运行监控页展示。",
     "insecureHTTPParser": false,
     "method": "POST",
     "name": "通信状态上报",
@@ -1503,6 +1853,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/device-comm-edge?node_id=66&device_id=102&success={{comm}}",
@@ -1515,9 +1866,12 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "44e6cb3527c78f13",
-    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/ts）。  \n同时生成：changeKey（变化触发指纹）、comm（通信状态）、pg_sql_i（各目标的 INSERT 语句）。",
+    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count/ts）。  \n同时生成：changeKey（变化触发指纹）、comm（通信状态）、pg_sql_i（各目标的 INSERT 语句）。",
     "name": "契约装配",
     "property": "",
     "reg": false,
@@ -1533,7 +1887,7 @@
         "p": "payload",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := payload; {\"node_id\": 66, \"device_id\": 102, \"device_name\": \"老FX\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
+        "to": "($vals := payload; {\"node_id\": 66, \"device_id\": 102, \"device_name\": \"老FX\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"good_count\": $count($vals[quality=\"GOOD\"]), \"bad_count\": $count($vals[quality=\"BAD\"]), \"uncertain_count\": $count($vals[quality=\"UNCERTAIN\"]), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
         "tot": "jsonata"
       },
       {
@@ -1547,7 +1901,7 @@
         "p": "comm",
         "pt": "msg",
         "t": "set",
-        "to": "($count(payload.values[quality=\"BAD\"]) = 0) ? \"true\" : \"false\"",
+        "to": "((payload != null) and ($count(payload.values) > 0) and ($count(payload.values[quality=\"BAD\"]) = 0) and (($exists(problem) ? $boolean(problem) : false) = false)) ? \"true\" : \"false\"",
         "tot": "jsonata"
       },
       {
@@ -1565,6 +1919,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1578,13 +1933,17 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
     "func": "rbe",
     "gap": "",
+    "gen_version": "1.1.1",
     "id": "83f81f1f9f439e99",
     "info": "变化触发：监视 changeKey（不含 ts 的数值指纹），值没变整轮静默。  \n注意：不能监视 payload——含 ts 每轮必变，会永远放行。",
     "inout": "out",
     "name": "有变化才报",
     "property": "changeKey",
+    "site_id": 66,
     "start": "",
     "type": "rbe",
     "wires": [
@@ -1598,6 +1957,9 @@
   },
   {
     "checkall": "true",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "269f49061267eaa3",
     "info": "空轮过滤：value_count>0 才放行。四路输出：MQTT 上报 / PG 写库 / 通信状态上报 / 数据出口。",
     "name": "有值才报",
@@ -1612,6 +1974,7 @@
         "vt": "num"
       }
     ],
+    "site_id": 66,
     "type": "switch",
     "wires": [
       [
@@ -1627,11 +1990,15 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "1c9a60656d58f546",
     "info": "数据出口（link out）：定制逻辑的消费接口。  \n新建自己的标签页，用 link in 连它，每轮拿到完整报文。勿改本页——重新部署会被覆盖。",
     "links": [],
     "mode": "link",
     "name": "数据出口·老FX",
+    "site_id": 66,
     "type": "link out",
     "wires": [],
     "x": 2010,
@@ -1642,13 +2009,17 @@
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "a4097c35e7086d70",
     "info": "实时数据上报到 MQTT broker。断线时本节点缓冲有限，Broker 长期离线会丢实时数据（历史数据看 PG）。",
     "name": "MQTT 上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/data/66/102",
     "type": "mqtt out",
     "userProps": "",
@@ -1659,7 +2030,10 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "3d38c7f23619ec0d",
     "info": "PG SQL·目标1：从契约装配取 pg_sql_0 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标1",
@@ -1681,6 +2055,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1697,9 +2072,13 @@
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "b07a6b5e6c77c1ed",
     "info": "SQL调试·目标1：调试侧栏显示每轮实际执行的 INSERT 语句。可点节点按钮关停，不影响采集。",
     "name": "SQL调试·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -1712,6 +2091,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "dce523b54a5d9b9b",
     "info": "写采集历史·目标1：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标1」。",
     "name": "写采集历史·目标1",
@@ -1719,6 +2101,7 @@
     "postgreSQLConfig": "c81f9ac546e101e3",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -1732,6 +2115,9 @@
   },
   {
     "authType": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -1750,6 +2136,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -1762,6 +2149,9 @@
   },
   {
     "authType": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -1780,6 +2170,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -1791,12 +2182,16 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "2893633f2da87af4",
     "info": "PG异常·目标1：捕获写库异常 → 失败计数；报错原文看「PG错误·目标1」调试侧栏。",
     "name": "PG异常·目标1",
     "scope": [
       "dce523b54a5d9b9b"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -1813,9 +2208,13 @@
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "1823540d77ade11e",
     "info": "PG错误·目标1：调试侧栏显示 PG 报错原文（字段不存在/认证失败等）。",
     "name": "PG错误·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -1829,7 +2228,10 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "855f6e6351208c69",
     "info": "PG SQL·目标2：从契约装配取 pg_sql_1 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标2",
@@ -1851,6 +2253,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -1867,9 +2270,13 @@
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "22c014243f3721bd",
     "info": "SQL调试·目标2：调试侧栏显示每轮实际执行的 INSERT 语句。可点节点按钮关停，不影响采集。",
     "name": "SQL调试·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -1882,6 +2289,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "cdcb7d839787f436",
     "info": "写采集历史·目标2：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标2」。",
     "name": "写采集历史·目标2",
@@ -1889,6 +2299,7 @@
     "postgreSQLConfig": "0fcd1932b7dc1dca",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -1902,6 +2313,9 @@
   },
   {
     "authType": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -1920,6 +2334,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -1932,6 +2347,9 @@
   },
   {
     "authType": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -1950,6 +2368,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -1961,12 +2380,16 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "983f0e046528c461",
     "info": "PG异常·目标2：捕获写库异常 → 失败计数；报错原文看「PG错误·目标2」调试侧栏。",
     "name": "PG异常·目标2",
     "scope": [
       "cdcb7d839787f436"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -1983,9 +2406,13 @@
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "35970983481da86b",
     "info": "PG错误·目标2：调试侧栏显示 PG 报错原文（字段不存在/认证失败等）。",
     "name": "PG错误·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -1999,7 +2426,10 @@
   },
   {
     "allowrate": false,
+    "device_id": 102,
     "drop": true,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "ee45281fd517f5bd",
     "info": "告警限速：30 秒最多 1 条（防洪）。持续断线时告警间隔最长 30s。",
     "name": "告警限速",
@@ -2011,6 +2441,7 @@
     "randomUnits": "seconds",
     "rate": "1",
     "rateUnits": "second",
+    "site_id": 66,
     "timeout": "5",
     "timeoutUnits": "seconds",
     "type": "delay",
@@ -2024,22 +2455,26 @@
     "z": "b7bd5458119239dc"
   },
   {
-    "allowrate": false,
-    "drop": true,
-    "id": "dfb5524228ee28cc",
-    "info": "重连限速：15 秒最多 1 次重连指令（防抖动反复重连）。",
-    "name": "重连限速",
-    "nbRateUnits": "15",
-    "outputs": 1,
-    "pauseType": "rate",
-    "randomFirst": "1",
-    "randomLast": "5",
-    "randomUnits": "seconds",
-    "rate": "1",
-    "rateUnits": "second",
-    "timeout": "5",
-    "timeoutUnits": "seconds",
-    "type": "delay",
+    "crontab": "",
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "id": "44a698b3b4332a95",
+    "info": "重连心跳：每 30 秒触发一次。连接池自身不会自动重连，由此支路主动恢复。",
+    "name": "重连心跳",
+    "once": false,
+    "onceDelay": 0.1,
+    "payload": "",
+    "payloadType": "date",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "30.0",
+    "site_id": 66,
+    "topic": "",
+    "type": "inject",
     "wires": [
       [
         "053f7d2f479ef1ad"
@@ -2051,9 +2486,12 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "053f7d2f479ef1ad",
-    "info": "断线重连：收到错误脚后发送 topic=reinitialize 指令，回接首个 MC Read 重建 TCP 连接。",
+    "info": "重连指令：发送 topic=connect 到首个 MC Read；连接池共享且 connect 幂等，无需逐块重复连接。",
     "name": "重连指令",
     "property": "",
     "reg": false,
@@ -2062,7 +2500,7 @@
         "p": "topic",
         "pt": "msg",
         "t": "set",
-        "to": "reinitialize",
+        "to": "connect",
         "tot": "str"
       },
       {
@@ -2073,6 +2511,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2086,7 +2525,10 @@
   },
   {
     "action": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "91b36014ef46c23b",
     "info": "告警时间戳：给告警报文补上 ts。",
     "name": "告警时间戳",
@@ -2101,6 +2543,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2113,13 +2556,17 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
     "field": "payload",
     "fieldType": "msg",
     "format": "handlebars",
+    "gen_version": "1.1.1",
     "id": "68871cca87d565da",
     "info": "告警报文：PLC_OFFLINE 结构化告警（alert_type/node_id/device_id/ts）。",
     "name": "告警报文",
     "output": "str",
+    "site_id": 66,
     "syntax": "mustache",
     "template": "{\"alert_type\":\"PLC_OFFLINE\",\"node_id\":66,\"device_id\":102,\"device_name\":\"老FX\",\"host_pc_ip\":\"10.81.8.34\",\"msg\":\"采集失败或支路异常\",\"ts\":\"{{ts}}\"}",
     "type": "template",
@@ -2136,13 +2583,17 @@
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 102,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "481b879b9c9a5742",
     "info": "告警上报：MQTT topic = alarm/plc_offline/<设备ID>。",
     "name": "告警上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/alarm/plc_offline/102",
     "type": "mqtt out",
     "userProps": "",
@@ -2152,6 +2603,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "5d713d399f14fe8f",
     "info": "支路异常兜底：捕获本页所有未处理异常 → 告警链。PG 支路有专属 catch，不在此列。",
     "name": "支路异常",
@@ -2165,6 +2619,7 @@
       "7007519baeed0e3c",
       "83f81f1f9f439e99"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -2177,6 +2632,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 178,
     "id": "6ac16306d8689421",
     "name": "采集与装配",
@@ -2190,6 +2648,7 @@
       "83f81f1f9f439e99",
       "269f49061267eaa3"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e8f4fd",
@@ -2202,6 +2661,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 430,
     "id": "dd5eb7620b377ae5",
     "name": "上报与计数",
@@ -2224,6 +2686,7 @@
       "a4097c35e7086d70",
       "1c9a60656d58f546"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e9f7e8",
@@ -2236,6 +2699,9 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 178,
     "id": "53bea3b5b9126b96",
     "name": "告警与异常",
@@ -2245,9 +2711,10 @@
       "91b36014ef46c23b",
       "68871cca87d565da",
       "481b879b9c9a5742",
-      "dfb5524228ee28cc",
+      "44a698b3b4332a95",
       "053f7d2f479ef1ad"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#fdecea",
@@ -2260,9 +2727,13 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "f56bac36fcebab87",
     "info": "",
     "name": "📦 老FX | PLC 192.168.1.10:5007 | 周期 200ms | 点位 1 | 块读 1 | 空洞容忍 8字 | 变化触发\n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
@@ -2270,9 +2741,13 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 102,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "53534eb5420ea719",
     "info": "",
-    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：inject 每 200ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）\n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）\n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；\n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、\n   通信状态上报（任一块 BAD 即报离线）、数据出口·老FX（link out）\n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连限速15s → reinitialize 指令回接首个 MC Read\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·老FX」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：inject 每 200ms 触发一轮（变化触发模式先过 rbe，值没变整条静默）\n② 块读：每个 MC Read 按地址串读一块寄存器（如 D100,4 = D100~D103 共 4 字；含空洞时多读回来再丢弃）\n③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；\n   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、\n   通信状态上报（无 BAD、契约非空且无 problem 才在线）、数据出口·老FX（link out）\n⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连心跳每30s发送 topic=connect 到首个 MC Read（连接池幂等恢复）\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·老FX」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
@@ -2280,10 +2755,14 @@
     "z": "b7bd5458119239dc"
   },
   {
+    "device_id": 109,
     "disabled": false,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "63c973a16d799648",
-    "info": "📦 汇川H5U | Modbus 192.168.1.10:502 从站3 | 周期 1000ms | 点位 4 | 块读 2 | 空洞容忍 8字 | 固定周期  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：modbus-read 自走时，每 1000ms 读一块（rate/rateUnit 原生毫秒支持）  \n② 失败分流：「读取失败?」三路判定——null/empty → 失败标BAD（造一块全 BAD 空值，保证 join 收得齐），else → 块内装配  \n③ 块内装配：把原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报、PG 写库（SQL调试/PG错误 观察口）、通信状态上报、数据出口·汇川H5U  \n⑦ 告警与异常（下方红区）：读取失败 → 限速30s → MQTT 告警；重连由 modbus-client 内建（reconnectOnTimeout）  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·汇川H5U」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "info": "📦 汇川H5U | Modbus 192.168.1.10:502 从站3 | 周期 1000ms | 点位 6 | 块读 4 | 空洞容忍 8字 | 固定周期  \n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署  \n  \n【支路说明】这个页面是怎么工作的  \n① 轮询：modbus-read 自走时，每 1000ms 读一块（rate/rateUnit 原生毫秒支持）  \n② 失败分流：「读取失败?」三路判定——null/empty → 失败标BAD（造一块全 BAD 空值，保证 join 收得齐），else → 块内装配  \n③ 块内装配：把原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）  \n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）  \n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态  \n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报、PG 写库（SQL调试/PG错误 观察口）、通信状态上报、数据出口·汇川H5U  \n⑦ 告警与异常（下方红区）：读取失败 → 限速30s → MQTT 告警；重连由 modbus-client 内建（reconnectOnTimeout）  \n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·汇川H5U」拿每轮数据，勿改本页——下次部署会被覆盖",
     "label": "GEN_采集_汇川H5U",
+    "site_id": 66,
     "type": "tab"
   },
   {
@@ -2291,7 +2770,10 @@
     "clientTimeout": 3000,
     "clienttype": "tcp",
     "commandDelay": 100,
+    "device_id": 109,
+    "edgelink_gen": true,
     "failMsgEnabled": true,
+    "gen_version": "1.1.1",
     "id": "f3c281f3cabc300c",
     "name": "汇川H5U 连接",
     "queueLogEnabled": false,
@@ -2305,6 +2787,7 @@
     "serialPort": "/dev/ttyUSB",
     "serialStopbits": "1",
     "serialType": "RTU-BUFFERD",
+    "site_id": 66,
     "stateLogEnabled": false,
     "tcpHost": "192.168.1.10",
     "tcpPort": "502",
@@ -2316,7 +2799,10 @@
     "adr": "0",
     "dataType": "HoldingRegister",
     "delayOnStart": false,
+    "device_id": 109,
+    "edgelink_gen": true,
     "emptyMsgOnFail": true,
+    "gen_version": "1.1.1",
     "id": "145033115013fe5a",
     "info": "modbus-read 自走时轮询：读 HoldingRegister 起始 0 共 11 个（3 个点位）。  \nemptyMsgOnFail 已开启：失败时输出空消息 → 「读取失败?」分流。重连由 modbus-client 内建（reconnectOnTimeout）。",
     "ioFile": "",
@@ -2325,6 +2811,7 @@
     "rate": "1",
     "rateUnit": "s",
     "server": "f3c281f3cabc300c",
+    "site_id": 66,
     "startDelayTime": "",
     "topic": "",
     "type": "modbus-read",
@@ -2342,6 +2829,9 @@
   },
   {
     "checkall": "true",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "7a3109295a864900",
     "info": "读取失败?三路分流：null → BAD，empty → BAD，else → 块内装配。",
     "name": "读取失败?",
@@ -2360,6 +2850,7 @@
         "t": "else"
       }
     ],
+    "site_id": 66,
     "type": "switch",
     "wires": [
       [
@@ -2378,7 +2869,10 @@
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "c51e02d11d6ebacd",
     "info": "块内装配：原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）。",
     "name": "块内装配",
@@ -2400,6 +2894,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2413,7 +2908,10 @@
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "d89ea7926fde4a49",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值，保证 join 收得齐块数；同时触发告警链。",
     "name": "块0失败标BAD",
@@ -2435,6 +2933,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2451,7 +2950,10 @@
     "adr": "0",
     "dataType": "Coil",
     "delayOnStart": false,
+    "device_id": 109,
+    "edgelink_gen": true,
     "emptyMsgOnFail": true,
+    "gen_version": "1.1.1",
     "id": "ebb4ae19064b3546",
     "info": "modbus-read 自走时轮询：读 Coil 起始 0 共 1 个（1 个点位）。  \nemptyMsgOnFail 已开启：失败时输出空消息 → 「读取失败?」分流。重连由 modbus-client 内建（reconnectOnTimeout）。",
     "ioFile": "",
@@ -2460,6 +2962,7 @@
     "rate": "1",
     "rateUnit": "s",
     "server": "f3c281f3cabc300c",
+    "site_id": 66,
     "startDelayTime": "",
     "topic": "",
     "type": "modbus-read",
@@ -2477,6 +2980,9 @@
   },
   {
     "checkall": "true",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "e3d1b2f7edb3c913",
     "info": "读取失败?三路分流：null → BAD，empty → BAD，else → 块内装配。",
     "name": "读取失败?",
@@ -2495,6 +3001,7 @@
         "t": "else"
       }
     ],
+    "site_id": 66,
     "type": "switch",
     "wires": [
       [
@@ -2513,7 +3020,10 @@
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "9f00123a35adb233",
     "info": "块内装配：原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）。",
     "name": "块内装配",
@@ -2535,6 +3045,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2548,7 +3059,10 @@
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "d8f749713b75eadb",
     "info": "失败标BAD：该块读取失败时造一块全 BAD 空值，保证 join 收得齐块数；同时触发告警链。",
     "name": "块1失败标BAD",
@@ -2570,6 +3084,7 @@
         "tot": "str"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2583,11 +3098,316 @@
     "z": "63c973a16d799648"
   },
   {
+    "adr": "0",
+    "dataType": "InputRegister",
+    "delayOnStart": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "emptyMsgOnFail": true,
+    "gen_version": "1.1.1",
+    "id": "c4936e1ec772122e",
+    "info": "modbus-read 自走时轮询：读 InputRegister 起始 0 共 1 个（1 个点位）。  \nemptyMsgOnFail 已开启：失败时输出空消息 → 「读取失败?」分流。重连由 modbus-client 内建（reconnectOnTimeout）。",
+    "ioFile": "",
+    "name": "[汇川H5U] 读 InputRegister 0+1",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "server": "f3c281f3cabc300c",
+    "site_id": 66,
+    "startDelayTime": "",
+    "topic": "",
+    "type": "modbus-read",
+    "unitid": "3",
+    "useIOFile": false,
+    "useIOForPayload": false,
+    "wires": [
+      [
+        "195e19972594c91c"
+      ]
+    ],
+    "x": 380,
+    "y": 360,
+    "z": "63c973a16d799648"
+  },
+  {
+    "checkall": "true",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "id": "195e19972594c91c",
+    "info": "读取失败?三路分流：null → BAD，empty → BAD，else → 块内装配。",
+    "name": "读取失败?",
+    "outputs": 3,
+    "property": "payload",
+    "propertyType": "msg",
+    "repair": false,
+    "rules": [
+      {
+        "t": "null"
+      },
+      {
+        "t": "empty"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "site_id": 66,
+    "type": "switch",
+    "wires": [
+      [
+        "55ec72cede3620dd"
+      ],
+      [
+        "55ec72cede3620dd"
+      ],
+      [
+        "d1fd1fc39a230be7"
+      ]
+    ],
+    "x": 580,
+    "y": 360,
+    "z": "63c973a16d799648"
+  },
+  {
+    "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "d1fd1fc39a230be7",
+    "info": "块内装配：原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）。",
+    "name": "块内装配",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 24, \"tag_address\": \"0\", \"tag_name\": \"\", \"raw_value\": ($v := payload[0]; $exists($v) ? $v : null), \"register_type\": \"IR\", \"eng_value\": ($w := payload[0]; $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists(payload[0]) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block02",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "087a77b35591ff08"
+      ]
+    ],
+    "x": 800,
+    "y": 360,
+    "z": "63c973a16d799648"
+  },
+  {
+    "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "55ec72cede3620dd",
+    "info": "失败标BAD：该块读取失败时造一块全 BAD 空值，保证 join 收得齐块数；同时触发告警链。",
+    "name": "块2失败标BAD",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 24, \"tag_address\": \"0\", \"tag_name\": \"\", \"raw_value\": null, \"register_type\": \"IR\", \"eng_value\": null, \"unit\": \"\", \"quality\": \"BAD\", \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block02",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "087a77b35591ff08",
+        "01684e1cd736091b"
+      ]
+    ],
+    "x": 800,
+    "y": 408,
+    "z": "63c973a16d799648"
+  },
+  {
+    "adr": "4",
+    "dataType": "Input",
+    "delayOnStart": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "emptyMsgOnFail": true,
+    "gen_version": "1.1.1",
+    "id": "beccaa85e6823c64",
+    "info": "modbus-read 自走时轮询：读 Input 起始 4 共 1 个（1 个点位）。  \nemptyMsgOnFail 已开启：失败时输出空消息 → 「读取失败?」分流。重连由 modbus-client 内建（reconnectOnTimeout）。",
+    "ioFile": "",
+    "name": "[汇川H5U] 读 Input 4+1",
+    "quantity": "1",
+    "rate": "1",
+    "rateUnit": "s",
+    "server": "f3c281f3cabc300c",
+    "site_id": 66,
+    "startDelayTime": "",
+    "topic": "",
+    "type": "modbus-read",
+    "unitid": "3",
+    "useIOFile": false,
+    "useIOForPayload": false,
+    "wires": [
+      [
+        "ed3dc0350454d8a0"
+      ]
+    ],
+    "x": 380,
+    "y": 470,
+    "z": "63c973a16d799648"
+  },
+  {
+    "checkall": "true",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "id": "ed3dc0350454d8a0",
+    "info": "读取失败?三路分流：null → BAD，empty → BAD，else → 块内装配。",
+    "name": "读取失败?",
+    "outputs": 3,
+    "property": "payload",
+    "propertyType": "msg",
+    "repair": false,
+    "rules": [
+      {
+        "t": "null"
+      },
+      {
+        "t": "empty"
+      },
+      {
+        "t": "else"
+      }
+    ],
+    "site_id": 66,
+    "type": "switch",
+    "wires": [
+      [
+        "393a76b153bd5dce"
+      ],
+      [
+        "393a76b153bd5dce"
+      ],
+      [
+        "a4afa97d7777b66c"
+      ]
+    ],
+    "x": 580,
+    "y": 470,
+    "z": "63c973a16d799648"
+  },
+  {
+    "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "a4afa97d7777b66c",
+    "info": "块内装配：原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）。",
+    "name": "块内装配",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 25, \"tag_address\": \"4\", \"tag_name\": \"\", \"raw_value\": ($v := payload[0]; $exists($v) ? $v : null), \"register_type\": \"DI\", \"eng_value\": ($w := payload[0]; $exists($w) ? $w : null), \"unit\": \"\", \"quality\": ($exists(payload[0]) ? \"GOOD\" : \"UNCERTAIN\"), \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block03",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "087a77b35591ff08"
+      ]
+    ],
+    "x": 800,
+    "y": 470,
+    "z": "63c973a16d799648"
+  },
+  {
+    "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "from": "",
+    "gen_version": "1.1.1",
+    "id": "393a76b153bd5dce",
+    "info": "失败标BAD：该块读取失败时造一块全 BAD 空值，保证 join 收得齐块数；同时触发告警链。",
+    "name": "块3失败标BAD",
+    "property": "",
+    "reg": false,
+    "rules": [
+      {
+        "p": "payload",
+        "pt": "msg",
+        "t": "set",
+        "to": "[{\"tag_id\": 25, \"tag_address\": \"4\", \"tag_name\": \"\", \"raw_value\": null, \"register_type\": \"DI\", \"eng_value\": null, \"unit\": \"\", \"quality\": \"BAD\", \"transform_type\": \"none\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000')}]",
+        "tot": "jsonata"
+      },
+      {
+        "p": "topic",
+        "pt": "msg",
+        "t": "set",
+        "to": "block03",
+        "tot": "str"
+      }
+    ],
+    "site_id": 66,
+    "to": "",
+    "type": "change",
+    "wires": [
+      [
+        "087a77b35591ff08",
+        "01684e1cd736091b"
+      ]
+    ],
+    "x": 800,
+    "y": 518,
+    "z": "63c973a16d799648"
+  },
+  {
     "accumulate": false,
     "build": "object",
-    "count": "2",
+    "count": "4",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "087a77b35591ff08",
-    "info": "多块合并：按 topic=blockNN 把 2 个块拼回一个对象；超时兜底防卡死。",
+    "info": "多块合并：按 topic=blockNN 把 4 个块拼回一个对象；超时兜底防卡死。",
     "joiner": "\\n",
     "joinerType": "str",
     "key": "topic",
@@ -2600,6 +3420,7 @@
     "reduceInit": "",
     "reduceInitType": "",
     "reduceRight": false,
+    "site_id": 66,
     "timeout": "6",
     "type": "join",
     "wires": [
@@ -2608,11 +3429,14 @@
       ]
     ],
     "x": 1020,
-    "y": 195,
+    "y": 305,
     "z": "63c973a16d799648"
   },
   {
     "authType": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -2622,7 +3446,7 @@
       }
     ],
     "id": "e7ac3b9c6bab234b",
-    "info": "通信状态上报：每轮一次上报本设备在线状态（任一块 BAD 即离线）。",
+    "info": "通信状态上报：每轮一次上报本设备在线状态（无 BAD、契约非空且无 problem 才在线）。",
     "insecureHTTPParser": false,
     "method": "POST",
     "name": "通信状态上报",
@@ -2631,6 +3455,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/device-comm-edge?node_id=66&device_id=109&success={{comm}}",
@@ -2638,14 +3463,17 @@
       []
     ],
     "x": 800,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "a64445333cc1abd7",
-    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/ts），并生成 PG SQL 与通信状态。",
+    "info": "契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count/ts），并生成 PG SQL 与通信状态。",
     "name": "契约装配",
     "property": "",
     "reg": false,
@@ -2661,14 +3489,14 @@
         "p": "payload",
         "pt": "msg",
         "t": "set",
-        "to": "($vals := $reduce($sort($keys(payload)), function($acc, $k){$append($acc, $lookup(payload, $k))}, []); {\"node_id\": 66, \"device_id\": 109, \"device_name\": \"汇川H5U\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
+        "to": "($vals := $reduce($sort($keys(payload)), function($acc, $k){$append($acc, $lookup(payload, $k))}, []); {\"node_id\": 66, \"device_id\": 109, \"device_name\": \"汇川H5U\", \"host_pc_ip\": \"10.81.8.34\", \"ts\": $fromMillis($millis(),'[Y0001]-[M01]-[D01]T[H01]:[m01]:[s01].[f001]Z','+0000'), \"value_count\": $count($vals), \"good_count\": $count($vals[quality=\"GOOD\"]), \"bad_count\": $count($vals[quality=\"BAD\"]), \"uncertain_count\": $count($vals[quality=\"UNCERTAIN\"]), \"values\": $map($vals, function($v){{\"tag_id\": $v.tag_id, \"tag_address\": $v.tag_address, \"tag_name\": $v.tag_name, \"raw_value\": $v.raw_value, \"register_type\": $v.register_type, \"eng_value\": $v.eng_value, \"unit\": $v.unit, \"quality\": $v.quality, \"ts\": $v.ts}}), \"quality\": ($count($vals[quality=\"BAD\"]) > 0 ? \"BAD\" : \"GOOD\")})",
         "tot": "jsonata"
       },
       {
         "p": "comm",
         "pt": "msg",
         "t": "set",
-        "to": "($count(payload.values[quality=\"BAD\"]) = 0) ? \"true\" : \"false\"",
+        "to": "((payload != null) and ($count(payload.values) > 0) and ($count(payload.values[quality=\"BAD\"]) = 0) and (($exists(problem) ? $boolean(problem) : false) = false)) ? \"true\" : \"false\"",
         "tot": "jsonata"
       },
       {
@@ -2686,6 +3514,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2694,11 +3523,14 @@
       ]
     ],
     "x": 1240,
-    "y": 195,
+    "y": 305,
     "z": "63c973a16d799648"
   },
   {
     "checkall": "true",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "9a6c87d2f5f7cf77",
     "info": "空轮过滤：value_count>0 才放行。四路输出：MQTT 上报 / PG 写库 / 通信状态上报 / 数据出口。",
     "name": "有值才报",
@@ -2713,6 +3545,7 @@
         "vt": "num"
       }
     ],
+    "site_id": 66,
     "type": "switch",
     "wires": [
       [
@@ -2724,43 +3557,54 @@
       ]
     ],
     "x": 1460,
-    "y": 195,
+    "y": 305,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "ad88c4a4fa47ccab",
     "info": "数据出口（link out）：定制逻辑的消费接口。新建自己的标签页用 link in 连接，勿改本页。",
     "links": [],
     "mode": "link",
     "name": "数据出口·汇川H5U",
+    "site_id": 66,
     "type": "link out",
     "wires": [],
     "x": 2130,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "80d61789bb59f5dc",
     "info": "实时数据上报到 MQTT broker。",
     "name": "MQTT 上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/data/66/109",
     "type": "mqtt out",
     "userProps": "",
     "wires": [],
     "x": 1900,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "797bd4603b974b22",
     "info": "PG SQL·目标1：取 pg_sql_0 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标1",
@@ -2782,6 +3626,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2791,16 +3636,20 @@
       ]
     ],
     "x": 1240,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "11247b8579836d97",
     "info": "SQL调试·目标1：调试侧栏显示每轮实际执行的 INSERT。",
     "name": "SQL调试·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -2809,10 +3658,13 @@
     "type": "debug",
     "wires": [],
     "x": 1460,
-    "y": 490,
+    "y": 710,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "7c0ad50671358d85",
     "info": "写采集历史·目标1：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标1」。",
     "name": "写采集历史·目标1",
@@ -2820,6 +3672,7 @@
     "postgreSQLConfig": "c81f9ac546e101e3",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -2828,11 +3681,14 @@
       ]
     ],
     "x": 1460,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "authType": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -2851,6 +3707,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -2858,11 +3715,14 @@
       []
     ],
     "x": 1680,
-    "y": 450,
+    "y": 670,
     "z": "63c973a16d799648"
   },
   {
     "authType": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -2881,6 +3741,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -2888,16 +3749,20 @@
       []
     ],
     "x": 1460,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "c249b4fe662fd03b",
     "info": "PG异常·目标1：捕获写库异常 → 失败计数；报错原文看「PG错误·目标1」。",
     "name": "PG异常·目标1",
     "scope": [
       "7c0ad50671358d85"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -2907,16 +3772,20 @@
       ]
     ],
     "x": 1240,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "d7961033eab43838",
     "info": "PG错误·目标1：调试侧栏显示 PG 报错原文。",
     "name": "PG错误·目标1",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -2925,12 +3794,15 @@
     "type": "debug",
     "wires": [],
     "x": 1460,
-    "y": 670,
+    "y": 890,
     "z": "63c973a16d799648"
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "c766944aca4bc384",
     "info": "PG SQL·目标2：取 pg_sql_1 作为执行 SQL（msg.topic），保留 pg_rows 供计数。",
     "name": "PG SQL·目标2",
@@ -2952,6 +3824,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -2961,16 +3834,20 @@
       ]
     ],
     "x": 1240,
-    "y": 530,
+    "y": 750,
     "z": "63c973a16d799648"
   },
   {
     "active": true,
     "complete": "topic",
     "console": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "785fadf7765e6031",
     "info": "SQL调试·目标2：调试侧栏显示每轮实际执行的 INSERT。",
     "name": "SQL调试·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -2979,10 +3856,13 @@
     "type": "debug",
     "wires": [],
     "x": 1460,
-    "y": 570,
+    "y": 790,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "d23bb5cd2fe49df4",
     "info": "写采集历史·目标2：执行 INSERT 写入 PG。凭证在配置节点「采集库·目标2」。",
     "name": "写采集历史·目标2",
@@ -2990,6 +3870,7 @@
     "postgreSQLConfig": "0fcd1932b7dc1dca",
     "query": "{{{msg.topic}}}",
     "rowsPerMsg": 1,
+    "site_id": 66,
     "split": false,
     "type": "postgresql",
     "wires": [
@@ -2998,11 +3879,14 @@
       ]
     ],
     "x": 1460,
-    "y": 530,
+    "y": 750,
     "z": "63c973a16d799648"
   },
   {
     "authType": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -3021,6 +3905,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&ok={{pg_rows}}",
@@ -3028,11 +3913,14 @@
       []
     ],
     "x": 1680,
-    "y": 530,
+    "y": 750,
     "z": "63c973a16d799648"
   },
   {
     "authType": "",
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "headers": [
       {
         "keyType": "other",
@@ -3051,6 +3939,7 @@
     "proxy": "",
     "ret": "obj",
     "senderr": false,
+    "site_id": 66,
     "tls": "",
     "type": "http request",
     "url": "http://127.0.0.1:9099/monitor/pg-stat-edge?node_id=66&fail={{pg_rows}}",
@@ -3058,16 +3947,20 @@
       []
     ],
     "x": 1460,
-    "y": 710,
+    "y": 930,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "5ab64fef0eeb855b",
     "info": "PG异常·目标2：捕获写库异常 → 失败计数；报错原文看「PG错误·目标2」。",
     "name": "PG异常·目标2",
     "scope": [
       "d23bb5cd2fe49df4"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -3077,16 +3970,20 @@
       ]
     ],
     "x": 1240,
-    "y": 710,
+    "y": 930,
     "z": "63c973a16d799648"
   },
   {
     "active": true,
     "complete": "error.message",
     "console": false,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "62dbadb2d82e11bb",
     "info": "PG错误·目标2：调试侧栏显示 PG 报错原文。",
     "name": "PG错误·目标2",
+    "site_id": 66,
     "statusType": "auto",
     "statusVal": "",
     "targetType": "msg",
@@ -3095,12 +3992,15 @@
     "type": "debug",
     "wires": [],
     "x": 1460,
-    "y": 750,
+    "y": 970,
     "z": "63c973a16d799648"
   },
   {
     "allowrate": false,
+    "device_id": 109,
     "drop": true,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "01684e1cd736091b",
     "info": "告警限速：30 秒最多 1 条（防洪）。",
     "name": "告警限速",
@@ -3112,6 +4012,7 @@
     "randomUnits": "seconds",
     "rate": "1",
     "rateUnits": "second",
+    "site_id": 66,
     "timeout": "5",
     "timeoutUnits": "seconds",
     "type": "delay",
@@ -3121,12 +4022,15 @@
       ]
     ],
     "x": 460,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
     "action": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "from": "",
+    "gen_version": "1.1.1",
     "id": "adaddffd8bc54749",
     "info": "告警时间戳：给告警报文补上 ts。",
     "name": "告警时间戳",
@@ -3141,6 +4045,7 @@
         "tot": "jsonata"
       }
     ],
+    "site_id": 66,
     "to": "",
     "type": "change",
     "wires": [
@@ -3149,17 +4054,21 @@
       ]
     ],
     "x": 660,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
     "field": "payload",
     "fieldType": "msg",
     "format": "handlebars",
+    "gen_version": "1.1.1",
     "id": "a16ea468e9ca3783",
     "info": "告警报文：PLC_OFFLINE 结构化告警。",
     "name": "告警报文",
     "output": "str",
+    "site_id": 66,
     "syntax": "mustache",
     "template": "{\"alert_type\":\"PLC_OFFLINE\",\"node_id\":66,\"device_id\":109,\"device_name\":\"汇川H5U\",\"host_pc_ip\":\"10.81.8.34\",\"msg\":\"采集失败或支路异常\",\"ts\":\"{{ts}}\"}",
     "type": "template",
@@ -3169,46 +4078,62 @@
       ]
     ],
     "x": 860,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
     "broker": "2c9f3174e86707b9",
     "contentType": "",
     "correl": "",
+    "device_id": 109,
+    "edgelink_gen": true,
     "expiry": "",
+    "gen_version": "1.1.1",
     "id": "6a896e7ca7cf20e1",
     "info": "告警上报：MQTT topic = alarm/plc_offline/<设备ID>。",
     "name": "告警上报",
     "qos": "1",
     "respTopic": "",
     "retain": "false",
+    "site_id": 66,
     "topic": "edgelink/gen/alarm/plc_offline/109",
     "type": "mqtt out",
     "userProps": "",
     "wires": [],
     "x": 1060,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "0693d54b72b49aa3",
     "info": "支路异常兜底：捕获本页所有未处理异常 → 告警链。",
     "name": "支路异常",
     "scope": [
       "145033115013fe5a",
       "ebb4ae19064b3546",
+      "c4936e1ec772122e",
+      "beccaa85e6823c64",
       "7a3109295a864900",
       "e3d1b2f7edb3c913",
+      "195e19972594c91c",
+      "ed3dc0350454d8a0",
       "c51e02d11d6ebacd",
       "9f00123a35adb233",
+      "d1fd1fc39a230be7",
+      "a4afa97d7777b66c",
       "d89ea7926fde4a49",
       "d8f749713b75eadb",
+      "55ec72cede3620dd",
+      "393a76b153bd5dce",
       "a64445333cc1abd7",
       "9a6c87d2f5f7cf77",
       "80d61789bb59f5dc",
       "087a77b35591ff08"
     ],
+    "site_id": 66,
     "type": "catch",
     "uncaught": false,
     "wires": [
@@ -3217,26 +4142,38 @@
       ]
     ],
     "x": 140,
-    "y": 630,
+    "y": 850,
     "z": "63c973a16d799648"
   },
   {
-    "h": 288,
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
+    "h": 508,
     "id": "88ea762ba4d866bb",
     "name": "采集与装配",
     "nodes": [
       "145033115013fe5a",
       "ebb4ae19064b3546",
+      "c4936e1ec772122e",
+      "beccaa85e6823c64",
       "7a3109295a864900",
       "e3d1b2f7edb3c913",
+      "195e19972594c91c",
+      "ed3dc0350454d8a0",
       "c51e02d11d6ebacd",
       "9f00123a35adb233",
+      "d1fd1fc39a230be7",
+      "a4afa97d7777b66c",
       "d89ea7926fde4a49",
       "d8f749713b75eadb",
+      "55ec72cede3620dd",
+      "393a76b153bd5dce",
       "087a77b35591ff08",
       "a64445333cc1abd7",
       "9a6c87d2f5f7cf77"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e8f4fd",
@@ -3249,6 +4186,9 @@
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 430,
     "id": "b48b9eca448242bd",
     "name": "上报与计数",
@@ -3271,6 +4211,7 @@
       "80d61789bb59f5dc",
       "ad88c4a4fa47ccab"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#e9f7e8",
@@ -3279,10 +4220,13 @@
     "type": "group",
     "w": 1580,
     "x": 750,
-    "y": 405,
+    "y": 625,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "h": 130,
     "id": "b5aba99fc7ca8cf7",
     "name": "告警与异常",
@@ -3293,6 +4237,7 @@
       "a16ea468e9ca3783",
       "6a896e7ca7cf20e1"
     ],
+    "site_id": 66,
     "style": {
       "color": "#303133",
       "fill": "#fdecea",
@@ -3301,13 +4246,17 @@
     "type": "group",
     "w": 1170,
     "x": 90,
-    "y": 585,
+    "y": 805,
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "8758e62511bb06c3",
     "info": "",
-    "name": "📦 汇川H5U | Modbus 192.168.1.10:502 从站3 | 周期 1000ms | 点位 4 | 块读 2 | 空洞容忍 8字 | 固定周期\n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署",
+    "name": "📦 汇川H5U | Modbus 192.168.1.10:502 从站3 | 周期 1000ms | 点位 6 | 块读 4 | 空洞容忍 8字 | 固定周期\n流程版本 __FLOWVER__ · EdgeLink 生成器产物 · 画布只读，配置变更请到后台重新生成部署",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
@@ -3315,13 +4264,17 @@
     "z": "63c973a16d799648"
   },
   {
+    "device_id": 109,
+    "edgelink_gen": true,
+    "gen_version": "1.1.1",
     "id": "ca4df0562663d6b2",
     "info": "",
-    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：modbus-read 自走时，每 1000ms 读一块（rate/rateUnit 原生毫秒支持）\n② 失败分流：「读取失败?」三路判定——null/empty → 失败标BAD（造一块全 BAD 空值，保证 join 收得齐），else → 块内装配\n③ 块内装配：把原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报、PG 写库（SQL调试/PG错误 观察口）、通信状态上报、数据出口·汇川H5U\n⑦ 告警与异常（下方红区）：读取失败 → 限速30s → MQTT 告警；重连由 modbus-client 内建（reconnectOnTimeout）\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·汇川H5U」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "name": "【支路说明】这个页面是怎么工作的\n① 轮询：modbus-read 自走时，每 1000ms 读一块（rate/rateUnit 原生毫秒支持）\n② 失败分流：「读取失败?」三路判定——null/empty → 失败标BAD（造一块全 BAD 空值，保证 join 收得齐），else → 块内装配\n③ 块内装配：把原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）\n④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态\n⑥ 有值才报：空轮过滤后四路输出——MQTT 上报、PG 写库（SQL调试/PG错误 观察口）、通信状态上报、数据出口·汇川H5U\n⑦ 告警与异常（下方红区）：读取失败 → 限速30s → MQTT 告警；重连由 modbus-client 内建（reconnectOnTimeout）\n【定制逻辑】新建自己的标签页，用 link in 连「数据出口·汇川H5U」拿每轮数据，勿改本页——下次部署会被覆盖",
+    "site_id": 66,
     "type": "comment",
     "wires": [],
     "x": 380,
-    "y": 770,
+    "y": 990,
     "z": "63c973a16d799648"
   }
 ]

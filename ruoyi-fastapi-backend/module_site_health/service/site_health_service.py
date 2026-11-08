@@ -26,6 +26,7 @@ from module_site_health.entity.vo.site_health_vo import (
 from utils.common_util import CamelCaseUtil
 from utils.log_util import logger
 from utils.page_util import PageUtil
+from utils.sensitive_util import redact_flows_json
 
 
 class SiteHealthService:
@@ -379,7 +380,7 @@ class SiteHealthService:
         if not upload:
             raise ServiceException(message='上传记录不存在')
         filename = f'flows-site{site_id}-{upload.created_at.strftime("%Y%m%d%H%M%S")}.json'
-        return upload.content, filename
+        return redact_flows_json(upload.content), filename
 
     # ==================== 查询 ====================
 

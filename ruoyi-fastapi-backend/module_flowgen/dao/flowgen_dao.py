@@ -57,6 +57,16 @@ class FlowgenDao:
         return result.scalars().first()
 
     @staticmethod
+    async def get_release_payloads(db: AsyncSession, site_id: int) -> list[str]:
+        """取现场全部历史 payload，用于首次 marker 部署时清理历代生成节点。"""
+        result = await db.execute(
+            select(PlcFlowRelease.payload)
+            .where(PlcFlowRelease.site_id == site_id)
+            .order_by(PlcFlowRelease.id)
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
     async def get_max_version(db: AsyncSession, site_id: int) -> int:
         """取某现场当前最大版本号（无记录返回 0）。"""
         result = await db.execute(select(func.max(PlcFlowRelease.version)).where(PlcFlowRelease.site_id == site_id))

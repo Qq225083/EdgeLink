@@ -30,6 +30,7 @@ from module_site_health.entity.vo.site_health_vo import (
 from module_site_health.dao.site_health_dao import SiteHealthDao
 from module_site_health.service.site_health_service import SiteHealthService
 from utils.response_util import ResponseUtil
+from utils.sensitive_util import redact_response_data
 
 # 管理端接口：需 JWT（PreAuth）+ 接口权限
 site_health_controller = APIRouterPro(
@@ -221,7 +222,7 @@ async def get_site_offline_intervals(
     query_db: Annotated[AsyncSession, DBSessionDependency()] = None,
 ) -> Response:
     result = await SiteHealthService.get_offline_intervals(query_db, site_id, days=days, start=start, end=end, min_sec=min_sec)
-    return ResponseUtil.success(data=result)
+    return ResponseUtil.success(data=redact_response_data(result))
 
 
 @site_health_controller.get(

@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from exceptions.exception import ServiceException
 from module_flowgen.dao.flowgen_dao import FlowgenDao
+from module_flowgen.drivers.mc import MC_DRIVER, MCDriver
+from module_flowgen.drivers.modbus import MODBUS_DRIVER, ModbusDriver
 from module_flowgen.entity.do.flowgen_do import PlcFlowRelease
 from module_flowgen.entity.vo.flowgen_vo import FlowGenerateModel
 from module_flowgen.service import flow_builders as fb
@@ -27,13 +29,6 @@ from module_plc.entity.do.driver_do import PlcDriver
 from module_plc.entity.do.monitor_do import NoderedNode
 from module_plc.entity.do.tag_do import PlcTag
 from module_site_health.entity.do.site_health_do import SiteHealthSite
-
-# 各数据类型占用寄存器字数（块读合并用）
-_WORDS_PER_TYPE = {'INT16': 1, 'UINT16': 1, 'INT32': 2, 'UINT32': 2, 'FLOAT': 2, 'DOUBLE': 4}
-# MC 库类型名前缀（多字类型地址串用，探针实证：DFLOAT100,2 返回解析后数组）
-_MC_TYPE_PREFIX = {'INT32': 'DINT', 'UINT32': 'DWORD', 'FLOAT': 'FLOAT', 'DOUBLE': 'REAL'}
-# 单块寄存器数上限（MC 3E 一帧上限 960 字，保守取半）
-_BLOCK_MAX_REGS = 480
 # 部署性能警戒值（社区实测 500+ 节点部署 20-30s）
 _NODE_COUNT_WARN = 500
 
@@ -101,7 +96,7 @@ class FlowGeneratorService:
     def _validate_inputs(cls, devices: list, tags: list) -> None:
         """生成前前置校验：收集全部问题一次性报错（而非第一个就 ValueError 500）。"""
         errors: list[str] = []
-        valid_types = set(_WORDS_PER_TYPE) | {'BIT', 'BOOL'}
+        devices_by_id = {d.id: d for d in devices}
 
         for d in devices:
             if not d.plc_ip:
@@ -112,22 +107,18 @@ class FlowGeneratorService:
                 errors.append(f'设备[{d.device_name}](id={d.id}) PLC 端口非数字：「{d.plc_port}」')
 
         for t in tags:
-            addr = (t.register_address or '').strip()
-            try:
-                int(addr)
-            except (TypeError, ValueError):
-                errors.append(f'点位[{t.tag_name}](id={t.id}) 寄存器地址非数字：「{t.register_address}」')
-            dt = (t.data_type or '').upper()
-            if dt not in valid_types:
-                errors.append(f'点位[{t.tag_name}](id={t.id}) 未知数据类型：「{t.data_type}」（支持 {"、".join(sorted(valid_types))}）')
-            if dt in ('BIT', 'BOOL') and t.bit_offset is None:
-                errors.append(f'点位[{t.tag_name}](id={t.id}) 位类型未填位偏移（0-15）')
+            device = devices_by_id.get(t.device_id)
+            driver = MODBUS_DRIVER if (device and device.driver_code == 'modbus_tcp') else MC_DRIVER
+            errors.extend(driver.validate(t, device))
 
-        # 多字类型的字节序/字序同设备一致性（块读合并假定一致，与 OPT-01 联动）
+        # 多字类型的字节序/字序同设备一致性（块读合并假定一致，与 OPT-01 联动；Modbus 过渡版拒绝多字）
         by_dev: dict[int, dict] = {}
         for t in tags:
+            device = devices_by_id.get(t.device_id)
+            if device and device.driver_code == 'modbus_tcp':
+                continue
             dt = (t.data_type or '').upper()
-            if _WORDS_PER_TYPE.get(dt, 1) > 1:
+            if MC_DRIVER.type_spec(dt)[1] > 1:
                 dev_set = by_dev.setdefault(t.device_id, {'bo': set(), 'wo': set(), 'name': t.tag_name})
                 dev_set['bo'].add(t.byte_order or '')
                 dev_set['wo'].add(t.word_order or '')
@@ -166,79 +157,19 @@ class FlowGeneratorService:
 
     @staticmethod
     def _merge_blocks(tags: list[dict], gap: int = 0) -> list[dict]:
-        """把点位按 寄存器类型分组 → 地址排序 → 连续（或间隙≤gap 字）同类型合并为块。
-
-        BIT/BOOL 不参与合并（单个一读，位号进地址串）。
-        gap>0 时允许块内带空洞（跳址点位的救命参数：多读几字丢弃，换少几百次请求）；
-        空洞计入块字数（受 _BLOCK_MAX_REGS 上限约束），装配只取登记点位。
-        返回 [{address, tags}]，address 即 MC Read 的地址串。
-        """
-        groups: dict[str, list[dict]] = {}
-        for tag in tags:
-            groups.setdefault(tag['register_type'], []).append(tag)
-
-        blocks = []
-        for reg_type, group in groups.items():
-            group.sort(key=lambda t: int(t['register_address']))
-            # BIT/BOOL：同寄存器类型内按 (字地址, 位号) 排序，连续位合并连读（M200.3,4 式，探针实证可用）
-            bit_tags = [t for t in group if (t.get('data_type') or '').upper() in ('BIT', 'BOOL')]
-            word_tags = [t for t in group if (t.get('data_type') or '').upper() not in ('BIT', 'BOOL')]
-            if bit_tags:
-                bit_tags.sort(key=lambda t: int(t['register_address']) * 16 + int(t.get('bit_offset') or 0))
-                cur_bits = None
-                for tag in bit_tags:
-                    bit_idx = int(tag['register_address']) * 16 + int(tag.get('bit_offset') or 0)
-                    if cur_bits and bit_idx == cur_bits['end_bit'] and cur_bits['count'] + 1 <= _BLOCK_MAX_REGS:
-                        cur_bits['tags'].append(tag)
-                        cur_bits['end_bit'] = bit_idx + 1
-                        cur_bits['count'] += 1
-                    else:
-                        cur_bits = {'start_addr': int(tag['register_address']), 'start_bit': int(tag.get('bit_offset') or 0),
-                                    'end_bit': bit_idx + 1, 'count': 1, 'tags': [tag]}
-                        blocks.append(cur_bits)
-            cur = None
-            for tag in word_tags:
-                data_type = (tag.get('data_type') or 'INT16').upper()
-                words = _WORDS_PER_TYPE.get(data_type, 1)
-                addr = int(tag['register_address'])
-                hole = addr - cur['end'] if cur else 0
-                if (
-                    cur
-                    and cur['data_type'] == data_type
-                    and 0 <= hole <= gap
-                    and cur['regs'] + hole + words <= _BLOCK_MAX_REGS
-                ):
-                    cur['tags'].append(tag)
-                    cur['end'] = addr + words
-                    cur['regs'] += hole + words
-                else:
-                    cur = {'data_type': data_type, 'start': addr, 'end': addr + words, 'regs': words, 'tags': [tag]}
-                    blocks.append(cur)
-        # 汇总块地址串
-        result = []
-        for b in blocks:
-            if 'address' in b:
-                result.append(b)  # 单个 BIT（A4 修复时已成型）
-            elif 'start_bit' in b:
-                # BIT 连读块：类型+字地址.起始位,位数（探针实证：M200.3,4 返回布尔数组）
-                addr = f'{b["tags"][0]["register_type"]}{b["start_addr"]}.{b["start_bit"]:X}'
-                if b['count'] > 1:
-                    addr += f',{b["count"]}'
-                result.append({'address': addr, 'tags': b['tags']})
-            else:
-                dt = b['data_type']
-                prefix = _MC_TYPE_PREFIX.get(dt, '')
-                start = b['start']
-                if prefix and _WORDS_PER_TYPE.get(dt, 1) > 1:
-                    # 多字类型：类型前缀地址串（OPT-01，探针实证 DFLOAT100,2 → 解析后数组）
-                    # 计数单位=条目数（非寄存器数）；含空洞时向上取整多读尾部，装配按地址取值不受影响
-                    items = -(-b['regs'] // _WORDS_PER_TYPE[dt])
-                    result.append({'address': f'{b["tags"][0]["register_type"]}{prefix}{start},{items}', 'tags': b['tags']})
-                else:
-                    result.append({'address': f'{b["tags"][0]["register_type"]}{start},{b["regs"]}', 'tags': b['tags']})
-        return result
+        return MC_DRIVER.plan_blocks(tags, gap)
 
     # ==================== 支路组装 ====================
+
+    @staticmethod
+    def _mark_generated(flows: list, site_id: int, device_id: int | None = None) -> list:
+        for node in flows:
+            node['edgelink_gen'] = True
+            node['site_id'] = site_id
+            if device_id is not None:
+                node['device_id'] = device_id
+            node['gen_version'] = GENERATOR_VERSION
+        return flows
 
     @staticmethod
     def _resolve_dev(device: PlcDevice) -> dict:
@@ -293,8 +224,8 @@ class FlowGeneratorService:
         catch_id = fb.nid(site_id, 'catch', device.id)
         broker_id = fb.nid(site_id, 'broker')
 
-        octal_xy = dev['octal_input_output']
-        blocks = cls._merge_blocks(tags, model.block_gap)
+        driver = MCDriver(octal_xy=dev['octal_input_output'], device=device)
+        blocks = driver.plan_blocks(tags, model.block_gap)
         multi = len(blocks) > 1
         # 亚秒轮询：inject 最低 1 秒，<1000ms 改用 delay 自循环（自背压：周期=管道耗时+延迟）
         sub_second = (device.scan_interval_ms or 1000) < 1000
@@ -304,7 +235,7 @@ class FlowGeneratorService:
         join_id = fb.nid(site_id, 'join', device.id)
         delay_id = fb.nid(site_id, 'delay', device.id)
         alarm_rl_id = fb.nid(site_id, 'alarmrl', device.id)
-        recon_rl_id = fb.nid(site_id, 'reconrl', device.id)
+        recon_inject_id = fb.nid(site_id, 'reconinj', device.id)
         recon_change_id = fb.nid(site_id, 'recon', device.id)
 
         trigger_change = (device.trigger_kind or 1) == 2
@@ -323,13 +254,13 @@ class FlowGeneratorService:
         # 通信状态在契约装配处每轮聚合上报一次（评审 C3：原为每块每轮一次，K 块 K 次 POST 且后写覆盖语义错）
         comm_http_id = fb.nid(site_id, 'comm', device.id)
         for i, block in enumerate(blocks):
-            read_wires = [[block_change_ids[i]], [block_bad_ids[i], alarm_rl_id, recon_rl_id]]
+            read_wires = [[block_change_ids[i]], [block_bad_ids[i], alarm_rl_id]]
             nodes.append(
                 fb.make_mc_read(
                     block_read_ids[i], tab_id, f'[{device.device_name}] 读 {block["address"]}', conn_id, block['address'], read_wires
                 )
             )
-            rules = [fb.rule_set_jsonata('payload', fb.block_assemble_expr(block['tags'], octal_xy))]
+            rules = [fb.rule_set_jsonata('payload', fb.block_assemble_expr(block['tags'], driver.extract))]
             if multi:
                 rules.append(fb.rule_set_str('topic', f'block{i:02d}'))
             nodes.append(fb.make_change(block_change_ids[i], tab_id, '块内装配', rules, [[join_id if multi else final_id]]))
@@ -359,7 +290,7 @@ class FlowGeneratorService:
             # changeKey 不含 ts：rbe 监视它才有意义（payload 里 ts 每轮必变，直接监视会永远放行）
             final_rules.append(fb.rule_set_jsonata('changeKey', fb.change_key_expr(multi)))
         if api_key:
-            # 设备级通信状态：每轮一次，任一块 BAD 即离线（评审 C3）
+            # 设备级通信状态：每轮一次；无 BAD、契约非空且无 problem 才在线（评审 C3）
             final_rules.append(fb.rule_set_jsonata('comm', fb.comm_expr(multi)))
         if model.enable_pg and pg_targets:
             # 多目标写库：每个目标一条 pg_sql_i（字段子集/模式/表各自独立）
@@ -413,8 +344,8 @@ class FlowGeneratorService:
 
         # 告警支路：MC Read 错误脚 + catch → 限速（30s/条，防洪）→ ts → template → mqtt
         nodes.append(fb.make_rate_limit(alarm_rl_id, tab_id, '告警限速', 30, [[alarm_change_id]]))
-        # 断线重连支路：错误脚 → 限速（15s/次）→ reinitialize 指令 → 回接首个 MC Read（连接池按设备共享，重建一次即可）
-        nodes.append(fb.make_rate_limit(recon_rl_id, tab_id, '重连限速', 15, [[recon_change_id]]))
+        # 断线恢复：连接池不自动重连，每 30s 向首个 MC Read 发送一次幂等 connect 指令
+        nodes.append(fb.make_inject(recon_inject_id, tab_id, '重连心跳', 30000, [[recon_change_id]]))
         nodes.append(fb.make_reconnect_change(recon_change_id, tab_id, [[block_read_ids[0]]]))
         nodes.append(fb.make_change(alarm_change_id, tab_id, '告警时间戳', [fb.rule_set_jsonata('ts', fb.TS_EXPR)], [[alarm_tpl_id]], x=570, y=160))
         nodes.append(fb.make_template(alarm_tpl_id, tab_id, '告警报文', fb.alarm_template_text(node_id, dev), [[alarm_mqtt_id]], x=790, y=160))
@@ -472,9 +403,9 @@ class FlowGeneratorService:
         coords[alarm_change_id] = (660, alarm_y)
         coords[alarm_tpl_id] = (860, alarm_y)
         coords[alarm_mqtt_id] = (1060, alarm_y)
-        coords[recon_rl_id] = (460, alarm_y + 48)
-        coords[recon_change_id] = (660, alarm_y + 48)
 
+        coords[recon_inject_id] = (460, alarm_y + 48)
+        coords[recon_change_id] = (660, alarm_y + 48)
         for n in nodes:
             if n['id'] in coords:
                 n['x'], n['y'] = coords[n['id']]
@@ -507,7 +438,7 @@ class FlowGeneratorService:
         )
         nodes.append(fb.make_group(fb.nid(site_id, 'grp2', device.id), tab_id, '上报与计数', g2, _bbox(g2), '#e9f7e8'))
 
-        g3 = [catch_id, alarm_rl_id, alarm_change_id, alarm_tpl_id, alarm_mqtt_id, recon_rl_id, recon_change_id]
+        g3 = [catch_id, alarm_rl_id, alarm_change_id, alarm_tpl_id, alarm_mqtt_id, recon_inject_id, recon_change_id]
         nodes.append(fb.make_group(fb.nid(site_id, 'grp3', device.id), tab_id, '告警与异常', g3, _bbox(g3), '#fdecea'))
 
         # 顶部信息注释（一行设备参数，对齐管道列）；底部使用说明（逐阶段工作原理教程）
@@ -525,10 +456,10 @@ class FlowGeneratorService:
             '③ 块内装配：把原始值按点位拆成 values[]（工程值换算 + quality=GOOD/UNCERTAIN）；\n'
             '   失败标BAD：该块读取失败时造一块全 BAD 空值，保证下游 join 永远收得齐块数，不会静默丢轮\n'
             '④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n'
-            '⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态\n'
+            '⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态\n'
             '⑥ 有值才报：空轮过滤后四路输出——MQTT 上报（实时数据）、PG 写库（SQL调试/PG错误 两个观察口）、\n'
-            '   通信状态上报（任一块 BAD 即报离线）、数据出口·' + device.device_name + '（link out）\n'
-            '⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连限速15s → reinitialize 指令回接首个 MC Read\n'
+            '   通信状态上报（无 BAD、契约非空且无 problem 才在线）、数据出口·' + device.device_name + '（link out）\n'
+            '⑦ 告警与异常（下方红区）：错误脚 → 限速30s → MQTT 告警；重连心跳每30s发送 topic=connect 到首个 MC Read（连接池幂等恢复）\n'
             '【定制逻辑】新建自己的标签页，用 link in 连「数据出口·' + device.device_name + '」拿每轮数据，勿改本页——下次部署会被覆盖'
         )
         nodes.append(fb.make_comment(fb.nid(site_id, 'note', device.id), tab_id, info_head, 380, 50))
@@ -540,7 +471,7 @@ class FlowGeneratorService:
             'inject': inject_id, 'delay': delay_id, 'join': join_id, 'final': final_id, 'rbe': rbe_id,
             'switch': switch_id, 'mqtt': mqtt_id, 'comm': comm_http_id, 'link': link_id,
             'alarm_rl': alarm_rl_id, 'alarm_change': alarm_change_id, 'alarm_tpl': alarm_tpl_id,
-            'alarm_mqtt': alarm_mqtt_id, 'recon_rl': recon_rl_id, 'recon': recon_change_id, 'catch': catch_id,
+            'alarm_mqtt': alarm_mqtt_id, 'catch': catch_id, 'recon_inject': recon_inject_id, 'recon': recon_change_id,
             'reads': block_read_ids, 'bchg': block_change_ids, 'bbad': block_bad_ids,
             'pgc': [fb.nid(site_id, 'pgc', device.id, ti) for ti in range(pg_n)],
             'pg': [fb.nid(site_id, 'pg', device.id, ti) for ti in range(pg_n)],
@@ -553,47 +484,14 @@ class FlowGeneratorService:
         cls._annotate(nodes, cls._mc_tab_infos(model, device, dev, ids, blocks, sub_second, multi, pg_targets or [], api_key, trigger_change))
         # 标签页级文档：选中 tab → 右侧信息栏（Markdown 渲染）展示完整说明
         nodes[0]['info'] = (info_head + '\n\n' + info_guide).replace('\n', '  \n')
-        return nodes
+        return cls._mark_generated(nodes, model.site_id, device.id)
 
     # ==================== Modbus 支路 ====================
 
     @staticmethod
     def _merge_blocks_modbus(tags: list[dict], warnings: list, device_name: str, gap: int = 0) -> list[dict]:
-        """Modbus 块读合并：按寄存器类型分组、地址排序、间隙≤gap 字合并（上限 120，含空洞）。
-
-        多字类型（INT32/FLOAT 等）需 buffer-parser 解码，过渡版不支持：跳过并告警。
-        """
-        single_word = []
-        for tag in tags:
-            dt = (tag.get('data_type') or 'INT16').upper()
-            if dt not in ('INT16', 'UINT16', 'BIT', 'BOOL'):
-                warnings.append(
-                    f'设备[{device_name}]点位[{tag["tag_name"]}]类型 {dt} 为跨寄存器类型，Modbus 支路暂不支持（需 buffer-parser），已跳过'
-                )
-                continue
-            single_word.append(tag)
-
-        groups: dict[str, list[dict]] = {}
-        for tag in single_word:
-            groups.setdefault(tag['register_type'], []).append(tag)
-
-        blocks = []
-        for group in groups.values():
-            group.sort(key=lambda t: int(t['register_address']))
-            cur = None
-            for tag in group:
-                addr = int(tag['register_address'])
-                hole = addr - cur['end'] if cur else 0
-                if cur and 0 <= hole <= gap and cur['regs'] + hole + 1 <= 120:
-                    cur['tags'].append(tag)
-                    cur['end'] = addr + 1
-                    cur['regs'] += hole + 1
-                else:
-                    cur = {'start': addr, 'end': addr + 1, 'regs': 1, 'tags': [tag]}
-                    blocks.append(cur)
-        for b in blocks:
-            b['fc'] = fb.MODBUS_FC_MAP.get(b['tags'][0]['register_type'], 'HoldingRegister')
-        return blocks
+        """Modbus 块读合并薄封装：实现统一收敛到 drivers/modbus.py。"""
+        return MODBUS_DRIVER.plan_blocks(tags, gap=gap, warnings=warnings, device_name=device_name)
 
     @classmethod
     def _build_device_tab_modbus(cls, model: FlowGenerateModel, node_id: int, device: PlcDevice, tags: list[dict],
@@ -619,7 +517,8 @@ class FlowGeneratorService:
         comm_http_id = fb.nid(site_id, 'comm', device.id)
         join_id = fb.nid(site_id, 'join', device.id)
 
-        blocks = cls._merge_blocks_modbus(tags, warnings, device.device_name, model.block_gap)
+        driver = ModbusDriver()
+        blocks = driver.plan_blocks(tags, model.block_gap, warnings=warnings, device_name=device.device_name)
         if not blocks:
             return []
         multi = len(blocks) > 1
@@ -673,7 +572,7 @@ class FlowGeneratorService:
         if trigger_change:
             final_rules.append(fb.rule_set_jsonata('changeKey', fb.change_key_expr(multi)))
         if api_key:
-            # 设备级通信状态：每轮一次，任一块 BAD 即离线（评审 C3）
+            # 设备级通信状态：每轮一次；无 BAD、契约非空且无 problem 才在线（评审 C3）
             final_rules.append(fb.rule_set_jsonata('comm', fb.comm_expr(multi)))
         if model.enable_pg and pg_targets:
             # 多目标写库：每个目标一条 pg_sql_i（字段子集/模式/表各自独立）
@@ -809,7 +708,7 @@ class FlowGeneratorService:
             '② 失败分流：「读取失败?」三路判定——null/empty → 失败标BAD（造一块全 BAD 空值，保证 join 收得齐），else → 块内装配\n'
             '③ 块内装配：把原始值按点位拆成 values[]（HR 字区 BIT 点位做位提取；CR/COIL 位区直接取值）\n'
             '④ join 合并：各块按 topic=blockNN 拼回一个对象（超时兜底防卡死）\n'
-            '⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality），顺带生成 PG SQL 与通信状态\n'
+            '⑤ 契约装配：拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count），顺带生成 PG SQL 与通信状态\n'
             '⑥ 有值才报：空轮过滤后四路输出——MQTT 上报、PG 写库（SQL调试/PG错误 观察口）、通信状态上报、数据出口·' + device.device_name + '\n'
             '⑦ 告警与异常（下方红区）：读取失败 → 限速30s → MQTT 告警；重连由 modbus-client 内建（reconnectOnTimeout）\n'
             '【定制逻辑】新建自己的标签页，用 link in 连「数据出口·' + device.device_name + '」拿每轮数据，勿改本页——下次部署会被覆盖'
@@ -836,7 +735,7 @@ class FlowGeneratorService:
         cls._annotate(nodes, cls._modbus_tab_infos(device, ids, blocks, multi, pg_targets or [], api_key, trigger_change))
         # 标签页级文档：选中 tab → 右侧信息栏（Markdown 渲染）展示完整说明
         nodes[0]['info'] = (info_head + '\n\n' + info_guide).replace('\n', '  \n')
-        return nodes
+        return cls._mark_generated(nodes, model.site_id, device.id)
 
     # ==================== 基础设施 tab ====================
 
@@ -913,7 +812,7 @@ class FlowGeneratorService:
             '- 首次部署后按画布下方注释完成凭证录入（生成时已填写的自动下发，跳过）\n'
             '- 详细使用说明见本页下方注释节点'
         ).replace('\n', '  \n')
-        return flows
+        return cls._mark_generated(flows, model.site_id)
 
     # ==================== 节点级文档（info，选中节点右侧信息栏可见） ====================
 
@@ -933,7 +832,7 @@ class FlowGeneratorService:
         infos = {
             ids['inject']: f'轮询触发器：每 {device.scan_interval_ms}ms 触发一轮采集。' +
                            ('\n亚秒模式：一次性触发，由下方"节奏" delay 自循环接力（周期=管道耗时+延迟，自带背压）。' if sub_second else ''),
-            ids['final']: '契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/ts）。\n'
+            ids['final']: '契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count/ts）。\n'
                           '同时生成：changeKey（变化触发指纹）、comm（通信状态）、pg_sql_i（各目标的 INSERT 语句）。',
             ids['switch']: '空轮过滤：value_count>0 才放行。四路输出：MQTT 上报 / PG 写库 / 通信状态上报 / 数据出口。',
             ids['mqtt']: '实时数据上报到 MQTT broker。断线时本节点缓冲有限，Broker 长期离线会丢实时数据（历史数据看 PG）。',
@@ -942,9 +841,9 @@ class FlowGeneratorService:
             ids['alarm_change']: '告警时间戳：给告警报文补上 ts。',
             ids['alarm_tpl']: '告警报文：PLC_OFFLINE 结构化告警（alert_type/node_id/device_id/ts）。',
             ids['alarm_mqtt']: '告警上报：MQTT topic = alarm/plc_offline/<设备ID>。',
-            ids['recon_rl']: '重连限速：15 秒最多 1 次重连指令（防抖动反复重连）。',
-            ids['recon']: '断线重连：收到错误脚后发送 topic=reinitialize 指令，回接首个 MC Read 重建 TCP 连接。',
             ids['catch']: '支路异常兜底：捕获本页所有未处理异常 → 告警链。PG 支路有专属 catch，不在此列。',
+            ids['recon_inject']: '重连心跳：每 30 秒触发一次。连接池自身不会自动重连，由此支路主动恢复。',
+            ids['recon']: '重连指令：发送 topic=connect 到首个 MC Read；连接池共享且 connect 幂等，无需逐块重复连接。',
         }
         if sub_second:
             infos[ids['delay']] = f'节奏器（亚秒自循环）：每 {device.scan_interval_ms}ms 放行一轮，回接自契约装配。'
@@ -953,11 +852,12 @@ class FlowGeneratorService:
         if trigger_change:
             infos[ids['rbe']] = '变化触发：监视 changeKey（不含 ts 的数值指纹），值没变整轮静默。\n注意：不能监视 payload——含 ts 每轮必变，会永远放行。'
         if api_key:
-            infos[ids['comm']] = '通信状态上报：每轮一次上报本设备在线状态（任一块 BAD 即离线），供运行监控页展示。'
+            infos[ids['comm']] = '通信状态上报：每轮一次上报本设备在线状态（无 BAD、契约非空且无 problem 才在线），供运行监控页展示。'
         for i, block in enumerate(blocks):
             infos[ids['reads'][i]] = (
                 f'读取 PLC 寄存器块 {block["address"]}（{len(block["tags"])} 个点位）。\n'
-                '输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警 + 重连）。'
+                '输出1=成功（payload 为 {地址: 值}），输出2=失败（→ 失败标BAD + 告警）。\n'
+                '输入 topic=connect 时只执行幂等重连，不发起读取。'
             )
             infos[ids['bchg'][i]] = '块内装配：原始值按点位拆成 values[]，做工程值换算（linear: raw*a+b），标 quality=GOOD/UNCERTAIN。'
             infos[ids['bbad'][i]] = '失败标BAD：该块读取失败时造一块全 BAD 空值（raw/eng=null），保证 join 收得齐块数，不静默丢轮。'
@@ -977,7 +877,7 @@ class FlowGeneratorService:
     def _modbus_tab_infos(device, ids: dict, blocks: list, multi: bool, pg_targets: list, api_key: str, trigger_change: bool) -> dict:
         """Modbus 支路每个关键节点的说明文本（按节点 id 索引）。"""
         infos = {
-            ids['final']: '契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/ts），并生成 PG SQL 与通信状态。',
+            ids['final']: '契约装配：把各块拼成北向报文（node_id/device_id/values[]/quality/good_count/bad_count/uncertain_count/ts），并生成 PG SQL 与通信状态。',
             ids['switch']: '空轮过滤：value_count>0 才放行。四路输出：MQTT 上报 / PG 写库 / 通信状态上报 / 数据出口。',
             ids['mqtt']: '实时数据上报到 MQTT broker。',
             ids['link']: '数据出口（link out）：定制逻辑的消费接口。新建自己的标签页用 link in 连接，勿改本页。',
@@ -992,7 +892,7 @@ class FlowGeneratorService:
         if trigger_change:
             infos[ids['rbe']] = '变化触发：监视 changeKey（不含 ts 的数值指纹），值没变整轮静默。'
         if api_key:
-            infos[ids['comm']] = '通信状态上报：每轮一次上报本设备在线状态（任一块 BAD 即离线）。'
+            infos[ids['comm']] = '通信状态上报：每轮一次上报本设备在线状态（无 BAD、契约非空且无 problem 才在线）。'
         for i, block in enumerate(blocks):
             infos[ids['reads'][i]] = (
                 f'modbus-read 自走时轮询：读 {block["fc"]} 起始 {block["start"]} 共 {block["regs"]} 个（{len(block["tags"])} 个点位）。\n'

@@ -27,6 +27,7 @@ UNIVERSAL_FIELDS = {
     'id', 'type', 'z', 'g', 'd', 'name', 'x', 'y', 'wires', 'outputs', 'inputs',
     'info', 'disabled', 'env', 'label', 'style', 'nodes', 'w', 'h', 'l',
 }
+EDGELINK_META_FIELDS = {'edgelink_gen', 'site_id', 'device_id', 'gen_version'}
 
 # 编辑器/工作区级类型（不进任何节点包，属 Node-RED 内建结构）
 BUILTIN_TYPES = {'tab', 'group', 'comment', 'subflow', 'subflow-env'}
@@ -198,7 +199,7 @@ def validate(flows: list, index: dict, switch_ops: set) -> list:
             continue
 
         allowed, src = index[ntype]
-        unknown = set(n.keys()) - allowed - UNIVERSAL_FIELDS
+        unknown = set(n.keys()) - allowed - UNIVERSAL_FIELDS - EDGELINK_META_FIELDS
         if unknown:
             problems.append(f'{label}: 字段不被节点包接受 {sorted(unknown)}（{Path(src).name}）')
 

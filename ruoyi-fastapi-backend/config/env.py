@@ -26,6 +26,8 @@ class AppSettings(BaseSettings):
     # Node-RED 监控上报 API Key（用于心跳/通信状态/PG写入上报的内网鉴权）
     # 生产环境必须配置，空值将在启动时触发校验失败
     monitor_api_key: str = Field(..., min_length=1, description='Node-RED 监控上报 API Key')
+    # Node-RED Admin API 静态 Bearer token（adminAuth.tokens）；空值表示边缘未启用认证
+    nodered_admin_token: str = Field(default='', description='Node-RED Admin API Bearer token')
     # MQTT Broker 配置（EMQX）——后端通知发布器专用账号（仅 publish edgelink/notify/#）
     mqtt_host: str = '127.0.0.1'
     mqtt_port: int = 1883

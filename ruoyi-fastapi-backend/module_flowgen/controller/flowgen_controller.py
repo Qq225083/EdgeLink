@@ -20,6 +20,7 @@ from module_flowgen.entity.vo.flowgen_vo import FlowGenerateModel, FlowReleasePa
 from module_flowgen.service.deploy_service import FlowDeployService
 from module_flowgen.service.generator_service import FlowGeneratorService
 from utils.response_util import ResponseUtil
+from utils.sensitive_util import redact_flows_json
 
 flowgen_controller = APIRouterPro(
     prefix='/plc/flowgen', order_num=210, tags=['流程生成与发布'], dependencies=[PreAuthDependency()]
@@ -79,7 +80,7 @@ async def get_release_detail(
             'siteId': release.site_id,
             'configVersion': release.config_version,
             'version': release.version,
-            'payload': release.payload,
+            'payload': redact_flows_json(release.payload),
             'sha256': release.sha256,
             'deviceCount': release.device_count,
             'nodeCount': release.node_count,
@@ -106,7 +107,7 @@ async def download_release(
         raise ServiceException(message='流程版本不存在')
     filename = f'flows_site{release.site_id}_v{release.version}.json'
     return Response(
-        content=release.payload,
+        content=redact_flows_json(release.payload),
         media_type='application/json',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
@@ -226,7 +227,7 @@ async def download_snapshot(
         raise ServiceException(message='快照不存在')
     filename = f'canvas_snapshot_site{snap.site_id}_{snap.id}.json'
     return Response(
-        content=snap.payload,
+        content=redact_flows_json(snap.payload),
         media_type='application/json',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )

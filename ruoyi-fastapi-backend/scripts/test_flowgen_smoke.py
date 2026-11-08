@@ -1,7 +1,7 @@
 """流程生成器冒烟测试（不连库，纯构建层验证）
 
 验证项：
-1. 块读合并正确（连续同类型合并 / 跨类型拆块 / BIT 单独一读）
+1. 块读合并正确（连续同类型合并 / 跨类型拆块 / 位设备与字设备位 key 契约）
 2. 生成 JSON 合法、节点 id 全局唯一、wires 引用的 id 都存在
 3. site-health 节点无 key 字段（credential 铁律）
 4. 同一输入两次生成 id 完全一致（确定性，credential 按 id 存活）
@@ -16,8 +16,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from module_flowgen.drivers.mc import MC_DRIVER, MCDriver
+from module_flowgen.drivers.modbus import MODBUS_DRIVER
 from module_flowgen.entity.vo.flowgen_vo import FlowGenerateModel
-from module_flowgen.service.generator_service import FlowGeneratorService
+from module_flowgen.service.generator_service import GENERATOR_VERSION, FlowGeneratorService
 
 
 def make_device(**kw):
@@ -52,12 +54,11 @@ def main():
     tags = [
         make_tag(1, 100), make_tag(2, 101), make_tag(3, 102),          # 连续 → 一块 D100,3
         make_tag(4, 110, dt='FLOAT'), make_tag(5, 112, dt='FLOAT'),   # FLOAT 占 2 字 → 一块 D110,4
-        make_tag(6, 200, reg='M', dt='BIT', bit_offset=3),            # BIT 单独
+        make_tag(6, 200, reg='M', dt='BIT', bit_offset=3),            # 位设备：M200 + 偏移 3 = M203
     ]
     blocks = FlowGeneratorService._merge_blocks(tags)
     addrs = sorted(b['address'] for b in blocks)
-    # 多字类型用类型前缀（DFLOAT110,2 = 2个float）；BIT 单点 M200.3
-    assert addrs == ['D100,3', 'DFLOAT110,2', 'M200.3'], f'块合并错误: {addrs}'
+    assert addrs == ['D100,3', 'DFLOAT110,2', 'M203'], f'块合并错误: {addrs}'
     print('[OK] 块读合并:', addrs)
 
     # ---- 空洞合并（跳址点位救命参数） ----
@@ -82,8 +83,103 @@ def main():
           make_tag(34, 200, reg='M', dt='BIT', bit_offset=9)]
     b3 = FlowGeneratorService._merge_blocks(t3)
     addrs3 = sorted(b['address'] for b in b3)
-    assert addrs3 == ['M200.3,2', 'M200.9'], f'BIT 连读合并错误: {addrs3}'
+    assert addrs3 == ['M203,2', 'M209'], f'BIT 连读合并错误: {addrs3}'
     print('[OK] 多字类型前缀 + BIT 连读合并:', addrs3)
+
+    # ---- P0-1：位设备按全局位号，字设备 BIT 才使用 .bit ----
+    probe_path = Path(__file__).resolve().parent / 'mc_contract_probe.expected.json'
+    probe = json.loads(probe_path.read_text(encoding='utf-8'))
+    probe_keys = {case['address']: case['outputKeys'] for case in probe['cases']}
+    contract_cases = [
+        ([make_tag(80, 200, reg='M', dt='BIT', bit_offset=0)], 'M200', ['M200']),
+        ([make_tag(81, 200, reg='M', dt='BIT', bit_offset=0),
+          make_tag(82, 201, reg='M', dt='BIT', bit_offset=0),
+          make_tag(83, 202, reg='M', dt='BIT', bit_offset=0)], 'M200,3', ['M200', 'M201', 'M202']),
+        ([make_tag(84, 200, reg='M', dt='BIT', bit_offset=3)], 'M203', ['M203']),
+        ([make_tag(96, 200, reg='M', dt='BIT', bit_offset=3),
+          make_tag(97, 200, reg='M', dt='BIT', bit_offset=4)], 'M203,2', ['M203', 'M204']),
+        ([make_tag(85, 100, reg='D', dt='BIT', bit_offset=3)], 'D100.3', ['D100.3']),
+        ([make_tag(86, 100, reg='D', dt='BIT', bit_offset=3),
+          make_tag(87, 100, reg='D', dt='BIT', bit_offset=4),
+          make_tag(88, 100, reg='D', dt='BIT', bit_offset=5),
+          make_tag(89, 100, reg='D', dt='BIT', bit_offset=6)], 'D100.3,4', ['D100.3', 'D100.4', 'D100.5', 'D100.6']),
+        ([make_tag(90, 200, reg='M', dt='BIT', bit_offset=0),
+          make_tag(91, 201, reg='M', dt='BIT', bit_offset=0),
+          make_tag(92, 202, reg='M', dt='BIT', bit_offset=0),
+          make_tag(93, 203, reg='M', dt='BIT', bit_offset=0)], 'M200,4', ['M200', 'M201', 'M202', 'M203']),
+    ]
+    for case_tags, expected_address, expected_keys in contract_cases:
+        planned = MC_DRIVER.plan_blocks(case_tags)
+        assert len(planned) == 1 and planned[0]['address'] == expected_address, planned
+        actual_keys = [MC_DRIVER.expected_key(tag) for tag in planned[0]['tags']]
+        assert actual_keys == expected_keys, (expected_address, actual_keys, expected_keys)
+        for tag, key in zip(planned[0]['tags'], expected_keys):
+            assert MC_DRIVER.extract(tag) == f'$lookup(payload, "{key}")'
+        if expected_address in probe_keys:
+            assert probe_keys[expected_address] == expected_keys, expected_address
+    assert MC_DRIVER.validate(SimpleNamespace(**make_tag(94, 200, reg='M', dt='BIT', bit_offset=3)), None) == []
+    word_bit_errors = MC_DRIVER.validate(SimpleNamespace(**make_tag(95, 100, reg='D', dt='BIT', bit_offset=16)), None)
+    assert any('0-15' in error for error in word_bit_errors), word_bit_errors
+    print('[OK] 位设备/字设备位：地址 + 预期 key 集合 + MC 探针契约')
+
+    # ---- P0-3：类型、地址进制与 FX X/Y 统一换算 ----
+    uint_tags = [make_tag(100, 100, dt='UINT16'), make_tag(101, 101, dt='UINT16')]
+    uint_block = MC_DRIVER.plan_blocks(uint_tags)
+    assert len(uint_block) == 1 and uint_block[0]['address'] == 'DUINT100,2', uint_block
+    assert [MC_DRIVER.expected_key(tag) for tag in uint_block[0]['tags']] == ['D100', 'D101']
+    assert MC_DRIVER.type_spec('UINT16') == ('UINT', 1)
+    assert probe_keys['DUINT100,2'] == ['D100', 'D101']
+
+    hex_cases = [
+        (make_tag(102, '1A', reg='W'), 'W1A,1', 'W1A'),
+        (make_tag(103, '1A', reg='B', dt='BIT', bit_offset=0), 'B1A', 'B1A'),
+        (make_tag(104, '1A', reg='X', dt='BIT', bit_offset=0), 'X1A', 'X1A'),
+    ]
+    for tag, expected_address, expected_key in hex_cases:
+        planned = MC_DRIVER.plan_blocks([tag])
+        assert len(planned) == 1 and planned[0]['address'] == expected_address, planned
+        assert MC_DRIVER.expected_key(tag) == expected_key
+        if expected_address in probe_keys:
+            assert probe_keys[expected_address] == [expected_key]
+
+    fx_device = make_device(id=105, plc_series='FX3U')
+    fx_driver = MCDriver(octal_xy=True, device=fx_device)
+    fx_cases = [('X', 10, 'X8'), ('X', 17, 'XF'), ('Y', 10, 'Y8')]
+    for reg, addr, expected in fx_cases:
+        tag = make_tag(105, addr, reg=reg, dt='BIT', bit_offset=0)
+        assert fx_driver.parse_address(tag, fx_device) == int(str(addr), 8)
+        planned = fx_driver.plan_blocks([tag])
+        assert len(planned) == 1 and planned[0]['address'] == expected, planned
+        assert fx_driver.expected_key(tag) == expected
+        assert probe_keys[expected] == [expected]
+    fx_flows = build_flows(model, fx_device, [make_tag(105, 10, reg='X', dt='BIT', bit_offset=0)])
+    fx_read = [n for n in fx_flows if n['type'] == 'MC Read'][0]
+    fx_assemble = [n for n in fx_flows if n.get('name') == '块内装配'][0]
+    assert fx_read['address'] == 'X8'
+    assert '$lookup(payload, "X8")' in fx_assemble['rules'][0]['to']
+
+    double_tag = SimpleNamespace(**make_tag(106, 300, dt='DOUBLE'))
+    double_errors = MC_DRIVER.validate(double_tag, make_device())
+    assert any('不支持 8 字节 DOUBLE' in error for error in double_errors), double_errors
+    from exceptions.exception import ServiceException as FlowServiceException
+    try:
+        FlowGeneratorService._validate_inputs([make_device()], [double_tag])
+        raise AssertionError('DOUBLE 应在生成期被拒绝')
+    except FlowServiceException as e:
+        assert '不支持 8 字节 DOUBLE' in (e.message or '')
+    try:
+        MC_DRIVER.plan_blocks([make_tag(106, 300, dt='DOUBLE')])
+        raise AssertionError('driver 不应静默生成 DOUBLE 读取')
+    except ValueError as e:
+        assert 'DOUBLE' in str(e)
+
+    default_order = SimpleNamespace(**make_tag(107, 400, dt='INT32', byte_order='LITTLE_ENDIAN', word_order='LOW_FIRST'))
+    assert MC_DRIVER.validate(default_order, make_device()) == []
+    for field, value, label in [('byte_order', 'BIG_ENDIAN', '字节序'), ('word_order', 'HIGH_FIRST', '字序')]:
+        tag = SimpleNamespace(**make_tag(108, 400, dt='INT32', **{field: value}))
+        errors = MC_DRIVER.validate(tag, make_device())
+        assert any(label in error and '不支持' in error for error in errors), (field, errors)
+    print('[OK] 类型与地址（UINT16 / DOUBLE拒绝 / 十六进制 / FX八进制换算 / 顺序拦截）')
 
     # ---- 生成 flows.json ----
     device = make_device()
@@ -157,7 +253,7 @@ def main():
     bad_changes = [n for n in flows if n['type'] == 'change' and '标BAD' in (n.get('name') or '')]
     assert len(bad_changes) == len(reads), '每块应有一条 BAD 装配支路'
     for r in reads:
-        assert len(r['wires'][1]) == 3, '错误脚应同时接 BAD 装配、告警限速与重连限速'
+        assert len(r['wires'][1]) == 2, '错误脚应只接 BAD 装配与告警限速'
     joins = [n for n in flows if n['type'] == 'join']
     assert joins and joins[0]['timeout'] != '' and joins[0]['count'] == '3', 'join 应有超时兜底且 count=块数'
     # BAD 装配内容：raw/eng 置空、quality=BAD
@@ -174,13 +270,17 @@ def main():
 
     # ---- JSONata 装配抽查 ----
     from module_flowgen.service import flow_builders as fb
-    expr = fb.block_assemble_expr([make_tag(1, 100, transform_type='linear', transform_slope_a=1.5, transform_offset_b=10)], False)
+    expr = fb.block_assemble_expr([make_tag(1, 100, transform_type='linear', transform_slope_a=1.5, transform_offset_b=10)], MC_DRIVER.extract)
     assert '$lookup(payload, "D100")' in expr
     assert '"tag_id": 1' in expr
     assert '$exists' in expr and 'UNCERTAIN' in expr, '点位缺失应降级 UNCERTAIN（OPT-04）'
     assert 'isGood' not in expr, '好路不依赖 isGood（评审 A3：isGood 从未被节点转发）'
     final = fb.final_assemble_expr(66, {'id': 101, 'device_name': '冲压线1', 'host_pc_ip': '10.81.8.34'}, False)
     assert '"node_id": 66' in final and '"device_id": 101' in final
+    assert '"value_count": $count($vals)' in final
+    assert '"good_count"' in final and '"bad_count"' in final and '"uncertain_count"' in final
+    comm = fb.comm_expr(False)
+    assert 'quality="BAD"' in comm and '$exists(problem)' in comm and '$count(payload.values) > 0' in comm
     pg = fb.pg_sql_expr(66, {'id': 101}, False)
     assert 'INSERT INTO public.plc_data_log' in pg
     print('[OK] JSONata 装配表达式')
@@ -288,16 +388,20 @@ def main():
     assert fx_auto['plcType'] == 'FX' and fx_auto['octalInputOutput'] is True
     print('[OK] 社区节点配置面（plcType 覆盖 / octal 显式与自动推导）')
 
-    # ---- 断线重连支路（reinitialize 指令回接 MC Read） ----
-    recon_rl = [n for n in flows if n.get('name') == '重连限速']
-    recon_chg = [n for n in flows if n.get('name') == '重连指令']
-    assert len(recon_rl) == 1 and len(recon_chg) == 1, '应有重连限速 + 重连指令节点'
-    assert recon_chg[0]['rules'][0]['to'] == 'reinitialize', '重连指令应置 topic=reinitialize'
+    # ---- P0-2：30s connect 心跳，不依赖有 bug 的 autoConnect，也不使用 reinitialize ----
+    heartbeat = [n for n in flows if n.get('name') == '重连心跳']
+    reconnect = [n for n in flows if n.get('name') == '重连指令']
+    assert len(heartbeat) == 1 and len(reconnect) == 1, '每设备应有重连 inject + connect change'
+    assert heartbeat[0]['type'] == 'inject' and float(heartbeat[0]['repeat']) == 30.0
+    assert heartbeat[0]['wires'] == [[reconnect[0]['id']]], '重连 inject 应接 connect 指令节点'
+    assert reconnect[0]['rules'][0]['to'] == 'connect', '重连指令必须是 read.js 识别的 topic=connect'
     first_read = [n for n in flows if n['type'] == 'MC Read'][0]
-    assert recon_chg[0]['wires'] == [[first_read['id']]], '重连指令应回接首个 MC Read'
+    assert reconnect[0]['wires'] == [[first_read['id']]], '共享连接池只需回接首个 MC Read'
     for r in [n for n in flows if n['type'] == 'MC Read']:
-        assert recon_rl[0]['id'] in r['wires'][1], '每个 MC Read 错误脚应接重连限速'
-    print('[OK] 断线重连支路（reinitialize 回接）')
+        assert len(r['wires'][1]) == 2, '错误脚只接 BAD 装配与告警限速'
+    flow_text = json.dumps(flows, ensure_ascii=False)
+    assert 'reinitialize' not in flow_text and '自动重连由节点包' not in flow_text
+    print('[OK] 断线恢复（30s topic=connect 心跳，旧指令与错误描述已清除）')
 
     # ---- Modbus 支路 ----
     from module_flowgen.service.generator_service import FlowGeneratorService as FG
@@ -309,11 +413,40 @@ def main():
     blocks = FG._merge_blocks_modbus(mb_tags, [], '测试设备')
     sig = sorted((b['fc'], b['start'], b['regs']) for b in blocks)
     assert sig == [('Coil', 0, 1), ('HoldingRegister', 0, 3), ('HoldingRegister', 10, 1)], f'块合并错误: {sig}'
+    di_blocks = FG._merge_blocks_modbus([
+        make_tag(29, 4, reg='DI', dt='BOOL'),
+        make_tag(30, 6, reg='DISCRETE', dt='BOOL'),
+    ], [], '测试设备')
+    di_sig = sorted((b['fc'], b['start'], b['regs']) for b in di_blocks)
+    # 5.23.2 modbus-read/functionCodeModbusRead：FC2 的 dataType 是 Input，不是 DiscreteInput。
+    assert di_sig == [('Input', 4, 1), ('Input', 6, 1)], f'DI/DISCRETE 应映射 FC02 Input: {di_sig}'
+    assert all(b['key'] == f'{b["fc"]}:{b["start"]}+{b["regs"]}' and b['poll_ms'] is None for b in di_blocks)
+    lower_blocks = FG._merge_blocks_modbus([make_tag(37, 0, reg='hr'), make_tag(38, 1, reg='HR')], [], '测试设备')
+    assert len(lower_blocks) == 1 and lower_blocks[0]['fc'] == 'HoldingRegister' and lower_blocks[0]['regs'] == 2
 
     mb_dev = make_device(id=109, device_name='汇川H5U', plc_port=502, driver_code='modbus_tcp',
                          protocol_params={'unitId': 3})
+    assert MODBUS_DRIVER.validate(SimpleNamespace(**make_tag(31, 10, reg='HR', dt='BIT', bit_offset=3)), mb_dev) == []
+    hr_bit_missing = MODBUS_DRIVER.validate(SimpleNamespace(**make_tag(32, 10, reg='HR', dt='BIT')), mb_dev)
+    assert any('未填位偏移' in error for error in hr_bit_missing), hr_bit_missing
+    assert MODBUS_DRIVER.validate(SimpleNamespace(**make_tag(33, 5, reg='CR', dt='BOOL')), mb_dev) == []
+    float_errors = MODBUS_DRIVER.validate(SimpleNamespace(**make_tag(34, 0, reg='HR', dt='FLOAT')), mb_dev)
+    assert any('buffer-parser' in error for error in float_errors), float_errors
+    range_errors = MODBUS_DRIVER.validate(SimpleNamespace(**make_tag(39, 65536, reg='HR')), mb_dev)
+    assert any('0-65535' in error for error in range_errors), range_errors
+    FlowGeneratorService._validate_inputs([mb_dev], [SimpleNamespace(**make_tag(35, 4, reg='DI', dt='BOOL', device_id=109))])
+    FlowGeneratorService._validate_inputs([make_device(), mb_dev], [
+        SimpleNamespace(**make_tag(41, 100, reg='D', device_id=101)),
+        SimpleNamespace(**make_tag(42, 5, reg='CR', dt='BOOL', device_id=109)),
+    ])
+    try:
+        FlowGeneratorService._validate_inputs([mb_dev], [SimpleNamespace(**make_tag(36, 10, reg='HR', dt='BIT', device_id=109))])
+        raise AssertionError('Modbus HR 字区 BIT 缺位偏移应在生成期被拒绝')
+    except FlowServiceException as e:
+        assert '未填位偏移' in (e.message or '')
     model_mb0 = FlowGenerateModel(site_id=66, block_gap=0)
     mb = FG._build_device_tab_modbus(model_mb0, 66, mb_dev, mb_tags, api_key='k')
+    assert all(n.get('edgelink_gen') is True and n.get('site_id') == 66 and n.get('device_id') == 109 for n in mb)
     mbc = [n for n in mb if n['type'] == 'modbus-client']
     mbr = [n for n in mb if n['type'] == 'modbus-read']
     assert len(mbc) == 1 and mbc[0]['tcpHost'] == '192.168.1.10' and mbc[0]['tcpPort'] == '502' and mbc[0]['unit_id'] == 3
@@ -378,11 +511,18 @@ def main():
     print('[OK] 版本回执（心跳带 flow_version，kill switch 已取消）')
 
     # ---- 标签页前缀自定义 + 合并部署/漂移检测的认门规则 ----
-    from module_flowgen.service.deploy_service import _gen_tab_matchers, _merge_flows, _scoped_match
+    from module_flowgen.service.deploy_service import (
+        _gen_tab_matchers, _known_gen_ids, _merge_flows, _preserve_pg_credentials, _scoped_match,
+    )
     model_el = FlowGenerateModel(site_id=66, tab_prefix='EL_')
     el = build_flows(model_el, make_device(id=120), [make_tag(60, 700)])
     el_tab = [n for n in el if n['type'] == 'tab'][0]
     assert el_tab['label'] == 'EL_采集_冲压线1', f'自定义前缀未生效: {el_tab["label"]}'
+    assert all(
+        n.get('edgelink_gen') is True and n.get('site_id') == 66
+        and n.get('device_id') == 120 and n.get('gen_version') == GENERATOR_VERSION
+        for n in el
+    ), 'MC 设备页所有节点都应带生成 marker'
     prefixes, exact = _gen_tab_matchers(el + [{'id': 't2', 'type': 'tab', 'label': '基础设施'}])
     assert prefixes == {'EL_'} and exact == {'基础设施'}, f'认门规则推断失败: {prefixes} {exact}'
     # 合并部署：GEN_ 残留 + 新前缀 payload + 用户程序 → GEN_ 被摘、用户保留
@@ -396,11 +536,57 @@ def main():
     assert 'usertab1' in kept_ids and 'usernode1' in kept_ids, '用户程序必须保留'
     assert 'oldgen1' not in kept_ids and 'oldgennode1' not in kept_ids, 'GEN_ 残留必须摘除'
     assert removed == 2
-    # 漂移：一致场景
+    # marker：改名旧 tab、被拖到用户 tab 的同现场节点都清理；其他现场不误删
+    marked_tab = {'id': 'marked-old', 'type': 'tab', 'label': '用户改名的页面', 'edgelink_gen': True, 'site_id': 66}
+    marked_moved = {'id': 'marked-moved', 'type': 'comment', 'z': 'usertab1', 'name': '旧生成节点',
+                    'edgelink_gen': True, 'site_id': 66, 'wires': []}
+    other_site = {'id': 'other-site', 'type': 'tab', 'label': '其他现场', 'edgelink_gen': True, 'site_id': 67}
+    marked_live = [user_tab, user_node, marked_tab, marked_moved, other_site]
+    merged, removed = _merge_flows(marked_live, el, set())
+    kept_ids = {n['id'] for n in merged}
+    assert 'marked-old' not in kept_ids and 'marked-moved' not in kept_ids and removed == 2
+    assert 'usertab1' in kept_ids and 'usernode1' in kept_ids and 'other-site' in kept_ids
+    # 删除 PG 目标：同现场旧全局 config 被 marker 清理，用户手工 PG config 不受影响
+    old_pg = {'id': 'old-pg', 'type': 'postgreSQLConfig', 'name': '旧目标', 'edgelink_gen': True, 'site_id': 66}
+    user_pg = {'id': 'user-pg', 'type': 'postgreSQLConfig', 'name': '用户目标'}
+    merged, removed = _merge_flows([user_tab, user_node, old_pg, user_pg], el, set())
+    kept_ids = {n['id'] for n in merged}
+    assert 'old-pg' not in kept_ids and removed == 1
+    assert 'user-pg' in kept_ids and 'usertab1' in kept_ids and 'usernode1' in kept_ids
+    # 漂移：一致场景；同现场 marker 残留判漂移，其他现场 marker 不影响
     live_ok = [user_tab, user_node] + el
     assert _scoped_match(live_ok, el) is True, '用户节点不应算漂移'
-    # 漂移：有 GEN_ 残留 → 不一致
     assert _scoped_match(live + el, el) is False, 'GEN_ 残留应判漂移'
+    assert _scoped_match(live_ok + [marked_tab, marked_moved], el) is False, '同现场 marker 残留应判漂移'
+    assert _scoped_match(live_ok + [other_site], el) is True, '其他现场 marker 不应误判'
+    # 全历史 id 并集：不是只取当前和最新 release
+    import asyncio
+    from module_flowgen.dao.flowgen_dao import FlowgenDao
+    original_get_payloads = FlowgenDao.get_release_payloads
+    async def fake_get_payloads(_db, _site_id):
+        return [json.dumps([{'id': 'history-1'}]), json.dumps([{'id': 'history-2'}])]
+    FlowgenDao.get_release_payloads = fake_get_payloads
+    try:
+        known = asyncio.run(_known_gen_ids(None, 66, [{'id': 'current'}]))
+        assert known == {'current', 'history-1', 'history-2'}, known
+    finally:
+        FlowgenDao.get_release_payloads = original_get_payloads
+    # PG 凭证只回填到部署副本，原 release 对象不变；显式新凭证不被旧值覆盖
+    payload_pg = fb.make_pg_config('pg1', '采集库', '127.0.0.1', 5432, 'db1')
+    live_pg = dict(payload_pg, user='live_user', password='live_pass')
+    restored = _preserve_pg_credentials([live_pg], [payload_pg])
+    assert restored[0]['user'] == 'live_user' and restored[0]['password'] == 'live_pass'
+    assert 'user' not in payload_pg and 'password' not in payload_pg
+    custom_pg = fb.make_pg_config('pg1', '采集库', '127.0.0.1', 5432, 'db1', user='new_user', password='')
+    preserved = _preserve_pg_credentials([live_pg], [custom_pg])
+    assert preserved[0]['user'] == 'new_user' and preserved[0]['password'] == ''
+    from scripts.validate_flowgen_against_nodes import validate as validate_node_fields
+    meta_node = {'id': 'meta', 'type': 'change', 'edgelink_gen': True, 'site_id': 66,
+                 'device_id': 120, 'gen_version': GENERATOR_VERSION, 'wires': []}
+    type_index = {'change': (set(), 'change.js')}
+    assert validate_node_fields([meta_node], type_index, set()) == [], 'marker 应登记为合法元数据'
+    assert len(validate_node_fields([dict(meta_node, unexpected=1)], type_index, set())) == 1, '其他未知字段仍应拒绝'
+    print('[OK] PG 凭证保留 + 生成 marker + 全历史/跨现场合并清理')
     # 漂移：无前缀的"基础设施"精确匹配不被误判（空前缀灾难回归防护）
     infra_only = [{'id': 'ti', 'type': 'tab', 'label': '基础设施'}]
     live_user = [{'id': 'u1', 'type': 'tab', 'label': '张三的页面'}] + infra_only
@@ -413,6 +599,7 @@ def main():
     ]
     editor_normalized = [
         {'id': 'n1', 'type': 'change', 'name': '块内装配', 'g': 'grp1', 'x': 700, 'y': 200,
+         'edgelink_gen': True, 'site_id': 66, 'device_id': 101, 'gen_version': '1.1.1',
          'rules': [{'t': 'set', 'p': 'payload'}], 'wires': [['n2']], 'action': '', 'property': '', 'from': '', 'to': ''},
         {'id': 'c1', 'type': 'postgreSQLConfig', 'name': '采集库', 'host': '127.0.0.1', 'hostFieldType': 'str',
          'port': '5432', 'portFieldType': 'num', 'database': 'd1', 'databaseFieldType': 'str',
@@ -436,6 +623,7 @@ def main():
 
     # ---- 基础设施 tab：共享配置 + flows 上传 + 无 key 字段 ----
     infra = FG._build_infra_tab(FlowGenerateModel(site_id=66, enable_pg=False), 'k', '10.0.0.1', [])
+    assert all(n.get('edgelink_gen') is True and n.get('site_id') == 66 and n.get('gen_version') == GENERATOR_VERSION for n in infra)
     assert infra[0]['type'] == 'tab' and infra[0]['label'] == '基础设施', '基础设施页应排第一且不带前缀'
     srv = [n for n in infra if n['type'] == 'site-health-server'][0]
     sh = [n for n in infra if n['type'] == 'site-health'][0]
@@ -455,6 +643,60 @@ def main():
     st = fb.pg_sql_expr(66, {'id': 49}, False, fields=['eng_value', 'ts'], pg_schema='edgelink', pg_table='my_table')
     assert 'INSERT INTO edgelink.my_table (device_id,tag_id,quality,eng_value,ts)' in st, st[:150]
     print('[OK] PG 插入列可配（子集 + 白名单防注入 + 模式表名可配 + 必填列防呆）')
+
+    # ---- P0-4b：flows/快照/上传下载统一脱敏（只动输出副本，不回写） ----
+    from utils.sensitive_util import REDACTED_VALUE, redact_flows, redact_flows_json, redact_response_data
+    secret_flows = [
+        fb.make_pg_config('pg1', '采集库', '127.0.0.1', 5432, 'db1', user='pg_user', password='pg_pass'),
+        dict(fb.make_mqtt_broker('mqtt1', 'MQTT broker', '127.0.0.1', 1883), user='mqtt_user', password='mqtt_pass'),
+        {'id': 'http1', 'type': 'http request', 'headers': [
+            {'keyType': 'other', 'keyValue': 'X-API-Key', 'valueType': 'other', 'valueValue': 'edge-secret'}]},
+        {'id': 'sh1', 'type': 'site-health', 'key': 'site-secret'},
+        {'id': 'teams1', 'type': 'function', 'teamsWebhook': 'https://teams.example/hook'},
+        {'id': 'cred1', 'type': 'mqtt-broker', 'password': '__PWRD__'},
+    ]
+    original_flows = json.loads(json.dumps(secret_flows, ensure_ascii=False))
+    redacted = redact_flows(secret_flows)
+    assert redacted[0]['user'] == REDACTED_VALUE and redacted[0]['password'] == REDACTED_VALUE
+    assert redacted[1]['user'] == REDACTED_VALUE and redacted[1]['password'] == REDACTED_VALUE
+    assert redacted[2]['headers'][0]['valueValue'] == REDACTED_VALUE
+    assert redacted[3]['key'] == REDACTED_VALUE and redacted[4]['teamsWebhook'] == REDACTED_VALUE
+    assert redacted[5]['password'] == '__PWRD__', 'credential 占位符不得误伤'
+    assert secret_flows == original_flows, '脱敏不得修改原对象'
+    redacted_text = redact_flows_json(json.dumps(secret_flows, ensure_ascii=False))
+    for secret in ('pg_user', 'pg_pass', 'mqtt_user', 'mqtt_pass', 'edge-secret', 'site-secret', 'teams.example/hook'):
+        assert secret not in redacted_text, secret
+    response = redact_response_data({'teamsWebhook': 'https://teams.example/hook',
+                                     'rows': [{'notifyTarget': 'ops@example.com'}]})
+    assert response['teamsWebhook'] == REDACTED_VALUE and response['rows'][0]['notifyTarget'] == REDACTED_VALUE
+    restored_placeholder = _preserve_pg_credentials([original_flows[0]], [redacted[0]])
+    assert restored_placeholder[0]['user'] == REDACTED_VALUE and restored_placeholder[0]['password'] == REDACTED_VALUE, \
+        '恢复脱敏文件时不得把占位符与真实凭证混淆'
+    print('[OK] 输出脱敏（PG/MQTT/API Key/site Key/通知地址，原对象不变，恢复需重录）')
+
+    # ---- P0-4c：Node-RED adminAuth 使用 Bearer token（Basic 不是本机 Node-RED 支持策略） ----
+    from config.env import AppConfig
+    from module_flowgen.service.deploy_service import _edge_client
+    original_admin_token = AppConfig.nodered_admin_token
+    import asyncio
+    try:
+        AppConfig.nodered_admin_token = 'edge-admin-token'
+        client = _edge_client()
+        try:
+            request = client.build_request('GET', 'http://127.0.0.1:1880/flows')
+            assert request.headers['authorization'] == 'Bearer edge-admin-token'
+        finally:
+            asyncio.run(client.aclose())
+        AppConfig.nodered_admin_token = ''
+        client = _edge_client()
+        try:
+            request = client.build_request('GET', 'http://127.0.0.1:1880/flows')
+            assert 'authorization' not in request.headers, '未配置 token 时应保持无认证兼容'
+        finally:
+            asyncio.run(client.aclose())
+    finally:
+        AppConfig.nodered_admin_token = original_admin_token
+    print('[OK] Node-RED Admin API Bearer token（配置即生效，空值兼容旧边缘）')
 
     print('\n全部冒烟断言通过。')
 
